@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Docker / Local data
+postgres-data/
+redis-data/
+minio-data/
+
+# OS
+.DS_Store
+
+# วิจัยต้นฉบับ — ห้าม commit (มีข้อมูลส่วนตัว)
+*.docx
+
+# Local junk / installers — อย่าให้หลุดเข้า git history (โดยเฉพาะ .exe ก้อนใหญ่)
+*.exe
+*.zip
+files.zip
+
+# Claude Code — lock + local settings (ห้าม commit)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json

@@ -1,0 +1,381 @@
+// ============================================================
+// Prisma Schema — Concert Anti-Bot System
+// ============================================================
+// Datasource: PostgreSQL 16 (BIGSERIAL primary keys ตามที่ user ขอ)
+// Phase coverage:
+//   Phase 2 ✅: User, Account, Session, VerificationToken
+//   Phase 3 ✅: Concert, Zone, Seat, TicketType, Order, OrderItem
+//   Phase 4-8 ⚪: QueueToken, SeatHold, Payment, BotEvent, AuditLog (จะเพิ่มใน phase ถัดไป)
+//
+// อ้างอิงเต็มที่ docs/04_ER_DIAGRAM.md
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// 1. AUTH (Phase 2) — รองรับ NextAuth v5 + Email/Password
+// ============================================================
+
+model User {
+  id            BigInt    @id @default(autoincrement())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  phone         String?
+  image         String?
+  // argon2id hash — null ถ้า login ผ่าน Google เท่านั้น
+  passwordHash  String?
+  role          UserRole  @default(USER)
+  // คะแนนความน่าเชื่อถือ ใช้ตัดสินใจ anti-bot escalation (0-100)
+  trustScore    Int       @default(50)
+  // กัน brute-force login
+  failedLoginCount Int    @default(0)
+  lockedUntil   DateTime?
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts    Account[]
+  sessions    Session[]
+  orders      Order[]
+  queueTokens QueueToken[]
+  tickets     Ticket[]
+
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+// NextAuth v5 — OAuth link (Google)
+model Account {
+  id                BigInt  @id @default(autoincrement())
+  userId            BigInt
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           BigInt   @id @default(autoincrement())
+  sessionToken String   @unique
+  userId       BigInt
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================
+// 2. CONCERT (Phase 3) — งานคอนเสิร์ต + zone + seat
+// ============================================================
+
+model Concert {
+  id                  BigInt        @id @default(autoincrement())
+  title               String        @db.VarChar(255)
+  slug                String        @unique @db.VarChar(255)
+  description         String        @db.Text
+  coverImageUrl       String?       @db.VarChar(500)
+  venue               String        @db.VarChar(255)
+  eventAt             DateTime
+  saleStartAt         DateTime
+  saleEndAt           DateTime
+  maxTicketsPerUser   Int           @default(4)
+  status              ConcertStatus @default(DRAFT)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  zones       Zone[]
+  orders      Order[]
+  queueTokens QueueToken[]
+
+  @@index([slug])
+  @@index([status, saleStartAt])
+  @@map("concerts")
+}
+
+enum ConcertStatus {
+  DRAFT       // กำลังเตรียม
+  SCHEDULED   // ตั้งเวลาขายแล้ว
+  ON_SALE     // กำลังขาย
+  SOLD_OUT    // ขายหมด
+  ENDED       // จบงานแล้ว
+}
+
+model Zone {
+  id          BigInt  @id @default(autoincrement())
+  concertId   BigInt
+  name        String  @db.VarChar(50) // VIP, R1, R2
+  description String? @db.VarChar(255)
+  price       Decimal @db.Decimal(10, 2) // THB
+  totalSeats  Int
+  color       String  @default("#ef4444") @db.VarChar(7) // สีบน seat map
+
+  concert Concert @relation(fields: [concertId], references: [id], onDelete: Cascade)
+  seats   Seat[]
+
+  @@index([concertId])
+  @@map("zones")
+}
+
+model Seat {
+  id         BigInt     @id @default(autoincrement())
+  zoneId     BigInt
+  rowLabel   String     @db.VarChar(10) // A, B, C...
+  seatNumber Int
+  status     SeatStatus @default(AVAILABLE)
+  createdAt  DateTime   @default(now())
+
+  zone       Zone        @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  orderItem  OrderItem?
+  ticket     Ticket?
+
+  @@unique([zoneId, rowLabel, seatNumber])
+  @@index([zoneId, status])
+  @@map("seats")
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD      // มี hold (Redis lock) — sync มาที่นี่ตอน confirm
+  SOLD
+  BLOCKED   // admin ปิดที่นั่งนี้
+}
+
+// ============================================================
+// 3. ORDER (Phase 3) — minimal version; Payment จะเพิ่ม Phase 7
+// ============================================================
+
+model Order {
+  id          BigInt      @id @default(autoincrement())
+  userId      BigInt
+  concertId   BigInt
+  totalAmount Decimal     @db.Decimal(10, 2)
+  currency    String      @default("THB") @db.VarChar(3)
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+  paidAt      DateTime?
+  expiresAt   DateTime    // ถ้า pending เกินเวลานี้ → cancel auto
+
+  user    User        @relation(fields: [userId], references: [id])
+  concert Concert     @relation(fields: [concertId], references: [id])
+  items   OrderItem[]
+  payment Payment?
+  tickets Ticket[]
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING     // รอจ่ายเงิน
+  PAID        // จ่ายแล้ว ออกตั๋วแล้ว
+  CANCELLED   // ยกเลิก / timeout
+  REFUNDED    // คืนเงิน
+}
+
+model OrderItem {
+  id      BigInt  @id @default(autoincrement())
+  orderId BigInt
+  seatId  BigInt  @unique // 1 ที่นั่ง 1 order item
+  price   Decimal @db.Decimal(10, 2) // snapshot ราคา
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  seat  Seat  @relation(fields: [seatId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ============================================================
+// 7. PAYMENT + TICKET (Phase 7)
+// ============================================================
+// Payment — บันทึกการชำระเงิน (PromptPay + EasySlip verify)
+model Payment {
+  id          BigInt        @id @default(autoincrement())
+  orderId     BigInt        @unique // 1 order 1 payment
+  method      PaymentMethod @default(PROMPTPAY)
+  amount      Decimal       @db.Decimal(10, 2)
+  currency    String        @default("THB") @db.VarChar(3)
+  status      PaymentStatus @default(PENDING)
+  // ref จาก slip (transaction id ของธนาคาร) — UNIQUE กันใช้สลิปซ้ำ
+  slipRef     String?       @unique @db.VarChar(255)
+  slipImageUrl String?      @db.VarChar(500) // เก็บใน MinIO
+  senderName  String?       @db.VarChar(255) // ชื่อผู้โอน (จาก EasySlip)
+  paidAt      DateTime?
+  createdAt   DateTime      @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("payments")
+}
+
+enum PaymentMethod {
+  PROMPTPAY
+  OMISE // optional future (card/truemoney)
+}
+
+enum PaymentStatus {
+  PENDING   // รอโอน + upload สลิป
+  VERIFYING // กำลัง verify สลิป
+  SUCCESS   // ยืนยันแล้ว เงินเข้า
+  FAILED    // สลิปผิด / ยอดไม่ตรง
+}
+
+// Ticket — ตั๋วที่ออกหลังจ่ายเงินสำเร็จ
+model Ticket {
+  id       BigInt   @id @default(autoincrement())
+  orderId  BigInt
+  seatId   BigInt   @unique // 1 ที่นั่งออกตั๋วได้ครั้งเดียว
+  userId   BigInt
+  qrCode   String   @unique @db.VarChar(255) // สแกนตอนเข้างาน
+  price    Decimal  @db.Decimal(10, 2)
+  issuedAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+  seat  Seat  @relation(fields: [seatId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([orderId])
+  @@map("tickets")
+}
+
+// ============================================================
+// 4. QUEUE (Phase 4) — Virtual Waiting Room (audit record)
+// ============================================================
+// ⚠️ กลไกคิวจริง (ลำดับ + การปล่อย batch) อยู่ใน Redis (เร็ว + atomic)
+//    ตารางนี้เก็บ audit/snapshot เพื่อ:
+//      - วิเคราะห์ความเป็นธรรมใน thesis (เก็บ enteredAt + randomScore)
+//      - กู้คืนถ้า Redis หาย
+//      - ตรวจสอบย้อนหลังว่าใครเข้าคิวเมื่อไหร่ ได้ token อะไร
+model QueueToken {
+  id              BigInt           @id @default(autoincrement())
+  token           String           @unique @db.VarChar(64) // secure random — client ถือไว้
+  concertId       BigInt
+  userId          BigInt?          // null ได้ถ้ายังไม่ login (กันคิวด้วย fingerprint)
+  fingerprintHash String?          @db.VarChar(64) // ผูกกับ device กัน 1 คนถือหลาย slot
+  ip              String?          @db.VarChar(45)
+  // fairness fields — เก็บไว้พิสูจน์ว่าไม่ลำเอียงใน thesis
+  timeBucket      BigInt           // window ที่เข้าคิว (epoch ms / bucketSize) — คนใน bucket เดียวกันเสมอภาค
+  randomScore     Int              // 0-999999 สุ่มภายใน bucket → ตัดสินลำดับแบบสุ่ม ไม่เอาความเร็วระดับ ms
+  status          QueueTokenStatus @default(WAITING)
+  position        Int? // ตำแหน่งล่าสุดที่ snapshot (อาจ stale — ดู Redis สำหรับ real-time)
+  enteredAt       DateTime         @default(now())
+  admittedAt      DateTime? // เวลาที่ถูกปล่อยเข้าห้องเลือกที่นั่ง
+  expiresAt       DateTime // TTL ของ admit window
+
+  concert Concert @relation(fields: [concertId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([concertId, status])
+  @@index([token])
+  @@map("queue_tokens")
+}
+
+enum QueueTokenStatus {
+  WAITING   // อยู่ในห้องรอ
+  ADMITTED  // ถูกปล่อยให้เข้าเลือกที่นั่งแล้ว
+  EXPIRED   // หมดเวลา admit ไม่ทันใช้
+  CONVERTED // ใช้ token แล้ว (ไปจองสำเร็จ)
+  LEFT      // ออกจากคิวเอง
+}
+
+// ============================================================
+// 5. ANTI-BOT (Phase 5-6) — บันทึกทุกการตรวจจับเพื่อ dashboard + thesis
+// ============================================================
+// เก็บทุกครั้งที่ระบบประเมิน bot score (ก่อนเข้าคิว) — ใช้:
+//   - admin ดู dashboard ว่ามีบอทมากแค่ไหน (Phase 8)
+//   - thesis วิเคราะห์ false positive rate / สัดส่วน bot vs human
+//   - audit ย้อนหลังว่าทำไม request ถูก block/challenge
+model BotEvent {
+  id              BigInt        @id @default(autoincrement())
+  userId          BigInt?       // null ถ้ายังไม่ login
+  ip              String?       @db.VarChar(45)
+  userAgent       String?       @db.VarChar(500)
+  fingerprintHash String?       @db.VarChar(64)
+  // คะแนน 0-100 (ยิ่งสูงยิ่งน่าจะเป็นบอท) — รวมจากทุกสัญญาณ
+  score           Int
+  // ผลการตัดสินใจ
+  action          BotAction
+  // signals ที่ fire (เก็บเป็น JSON: { "turnstile": "pass", "ua": "suspicious", ... })
+  signals         Json
+  // จุดที่ตรวจ (queue_join / seat_select / ...) — ขยายได้
+  checkpoint      String        @default("queue_join") @db.VarChar(50)
+  createdAt       DateTime      @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@map("bot_events")
+}
+
+enum BotAction {
+  ALLOW     // ผ่าน — score ต่ำ
+  CHALLENGE // ให้ทำ CAPTCHA/ยืนยันเพิ่ม — score กลาง (กัน false positive)
+  BLOCK     // ปฏิเสธ — score สูงมาก
+}
+
+// ============================================================
+// 6. BEHAVIOR (Phase 6) — Layer 2: วิเคราะห์พฤติกรรมจริง
+// ============================================================
+// เก็บ feature ที่สรุปจาก raw behavior events (mouse/key/scroll) ฝั่ง client
+// ใช้:
+//   - จับบอทที่ผ่าน Turnstile/UA check ได้ (บอทขยับเมาส์เป็นเส้นตรง, timing สม่ำเสมอ)
+//   - เก็บ dataset ไป train ML / วิเคราะห์ใน thesis (human vs bot behavior)
+// หมายเหตุ: เก็บ "feature สรุป" ไม่ใช่ raw ทุก pixel (privacy + ประหยัด storage)
+model BehaviorSession {
+  id                  BigInt   @id @default(autoincrement())
+  sessionKey          String   @unique @db.VarChar(64) // ผูกกับ queue session ฝั่ง client
+  userId              BigInt?
+  // ----- features ที่คำนวณฝั่ง client -----
+  mouseMoveCount      Int      @default(0) // จำนวนครั้งขยับเมาส์
+  keyPressCount       Int      @default(0)
+  // ความแปรปรวนของ timing ระหว่าง event (ms) — มนุษย์ไม่สม่ำเสมอ, บอทสม่ำเสมอ → variance ต่ำ
+  mouseTimingVariance Float    @default(0)
+  // entropy ของทิศทางการเคลื่อนเมาส์ (0=เส้นตรงล้วน/บอท, สูง=สุ่มแบบมนุษย์)
+  mousePathEntropy    Float    @default(0)
+  // เวลารวมที่อยู่บนหน้า (ms) — บอทมักเร็วผิดมนุษย์
+  dwellTimeMs         Int      @default(0)
+  // คะแนน behavior 0-100 (สูง = น่าจะบอท) คำนวณจาก features ข้างบน
+  behaviorScore       Int      @default(0)
+  isLikelyBot         Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  @@index([sessionKey])
+  @@index([createdAt])
+  @@map("behavior_sessions")
+}

@@ -1,0 +1,69 @@
+# Docker Compose สำหรับ dev environment local-only
+# รัน: docker compose up -d
+# Service: Postgres 16 + Redis 7.4 + MinIO
+# Volume mount = persistent local data (ไม่หาย restart)
+
+services:
+  # ฐานข้อมูลหลัก — ใช้ Postgres 16 + BIGSERIAL id (ตามที่ user ขอ id เป็นตัวเลข)
+  postgres:
+    image: postgres:16.6-alpine
+    container_name: concert-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-concert}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-concert_antibot}
+      # ตั้ง timezone เป็นไทยเพื่อให้ created_at สื่อความหมาย
+      TZ: Asia/Bangkok
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-concert}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Redis ใช้สำหรับ queue (virtual waiting room) + distributed lock + rate limit
+  redis:
+    image: redis:7.4-alpine
+    container_name: concert-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # MinIO เก็บไฟล์ (โปสเตอร์คอนเสิร์ต, slip การโอน)
+  # S3-compatible API — ใช้ AWS SDK ติดต่อได้เลย
+  minio:
+    image: minio/minio:latest
+    container_name: concert-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Web Console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+# Persistent volume — ข้อมูลไม่หายแม้ restart container
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
