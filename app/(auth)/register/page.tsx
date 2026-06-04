@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { AuthTabs } from "@/components/auth-tabs";
 import { RegisterForm } from "@/components/register-form";
+import { GoogleSignInButton } from "@/components/google-signin-button";
 
 export default function RegisterPage() {
   return (
@@ -14,6 +15,8 @@ export default function RegisterPage() {
       <AuthTabs active="register" />
 
       <RegisterForm />
+
+      <GoogleSignInButton label="สมัครด้วย Google" />
 
       <p className="mt-6 text-center text-sm text-neutral-600">
         มีบัญชีอยู่แล้ว?{" "}
