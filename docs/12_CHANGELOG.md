@@ -38,9 +38,10 @@
 - **N3 (MED)** `cancelOrder` race กับ submitSlip; **N5 (MED)** admin read page ไม่มี server-side role check (พึ่ง middleware); **N4 (MED)** behavior Layer 2 เก็บคะแนนแต่ไม่ enforce
 - go-live blocker ใหม่: `NEXTAUTH_URL=localhost`, sweeper cron ยังไม่ schedule, ไม่มี app container, `migrate dev` แทน `deploy`
 - รายละเอียด + action ทั้งหมดอยู่ใน [17_GO_LIVE_CHECKLIST.md](17_GO_LIVE_CHECKLIST.md) §4
+- ✅ **แก้แล้วรอบนี้: N1, N3, N4, N5** — N1/N3 แยกเป็น `lib/order-finalize.ts` (interactive `$transaction` + conditional claim order `PENDING`+`expiresAt>now`→PAID / seats `HELD`→SOLD, rollback ถ้าไม่ครบ; เงินเข้าแต่ออกตั๋วไม่ได้ → log `REFUND NEEDED`). N5 = `app/(admin)/layout.tsx` server-side role guard. N4 = escalate-only ใน `app/api/queue/join` (spoof-resistant). เหลือ N2/N7/N8/N11 (LOW)
 
 ### ✅ Verified
-- `tsc --noEmit` 0 errors (รวมหลัง wire Resend) · unit **62/62** ผ่าน (8 ไฟล์) · fix F1–F7/H1/H3/H4/F4 ยืนยัน wire เข้า request path จริงทุกตัว (call-graph trace)
+- `tsc --noEmit` 0 errors (รวมหลัง wire Resend + order-finalize) · unit **62/62** ผ่าน (8 ไฟล์) · **concurrency test `scripts/test-n1-race.ts` 7/7** (Postgres จริง: race finalize↔cancel 25 รอบ + expired + seat-freed + double-finalize) · fix F1–F7/H1/H3/H4/F4 ยืนยัน wire เข้า request path จริงทุกตัว (call-graph trace)
 
 ---
 

@@ -60,6 +60,8 @@
 
 > เรื่อง "เงิน" ปลอดภัยในเชิง threat model T1–T10/F1–F8 แล้ว แต่ audit เจอ **race เชิง concurrency** ที่ unit test (pure-logic) มองไม่เห็น
 > รายละเอียดเต็มอยู่ในรายงาน audit — สรุป action ที่นี่
+>
+> ✅ **อัปเดต 2026-06-04 (รอบนี้): N1, N3, N4, N5 แก้แล้ว + เพิ่ม concurrency test** (ดู §5) — เหลือ N2/N7/N8/N11 (LOW)
 
 | # | ระดับ | ปัญหา | ที่ | แนวทางแก้ |
 |---|:---:|------|-----|-----------|
@@ -76,9 +78,17 @@
 
 ## ✅ 5. สิ่งที่โค้ดทำให้แล้วรอบนี้ (2026-06-04)
 
-- ✅ **Resend ส่งอีเมลจริง** — `lib/email.ts` (REST API ผ่าน fetch, ไม่เพิ่ม dependency) + wire `app/actions/auth.ts` (เดิมเป็น `console.log` stub). ใส่ `RESEND_API_KEY` + `EMAIL_FROM` แล้วส่งจริงทันที (`tsc` 0 errors)
+**Security fixes จาก audit:**
+- ✅ **N1 + N3 (race เรื่องเงิน)** — แยก transaction เป็น `lib/order-finalize.ts`: `finalizePaidOrder` (claim order `PENDING`+ยังไม่หมดอายุ→`PAID` + claim seats `HELD`→`SOLD` ใน interactive `$transaction`, rollback ถ้าไม่ครบ) + `cancelPendingOrder` (ยกเลิกเฉพาะ `PENDING`). เงินเข้าแต่ fulfill ไม่ได้ → log `🚨 REFUND NEEDED` (ไม่ resurrect/double-book). `booking.ts` เรียกแทน transaction เดิม
+- ✅ **N5 (admin guard)** — เพิ่ม `app/(admin)/layout.tsx` ทำ `auth()` role check (`redirect('/')` ถ้าไม่ใช่ ADMIN) ครอบทุกหน้า admin server-side ไม่พึ่ง middleware อย่างเดียว
+- ✅ **N4 (behavior Layer 2)** — wire เข้า `app/api/queue/join` แบบ **escalate-only** (botlike → ยก ALLOW→CHALLENGE, ไม่ block, ลดคะแนนไม่ได้ = spoof-resistant) + comment อธิบายว่า signal spoofable เพราะ `/api/behavior` ไม่ auth
+- ✅ **concurrency test** `scripts/test-n1-race.ts` — 7/7 ผ่านกับ Postgres จริง (race finalize↔cancel 25 รอบ + expired + seat-freed + double-finalize)
+
+**Go-live prep:**
+- ✅ **Resend ส่งอีเมลจริง** — `lib/email.ts` (REST API ผ่าน fetch, ไม่เพิ่ม dependency) + wire `app/actions/auth.ts` (เดิมเป็น `console.log` stub). ใส่ `RESEND_API_KEY` + `EMAIL_FROM` แล้วส่งจริงทันที
 - ✅ **`pnpm db:deploy`** script (`prisma migrate deploy`) สำหรับ production migration
 - ✅ **`.gitignore`** กัน `*.exe` / `*.zip` / `.claude` lock+local settings (กัน junk 631MB หลุดเข้า history)
+- ✅ verify รวม: `tsc --noEmit` 0 errors · unit **62/62** · concurrency **7/7**
 
 ---
 

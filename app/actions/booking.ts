@@ -5,8 +5,8 @@
 // ============================================================
 // flow: holdAndCreateOrder → (แสดง QR) → submitSlip → (verify) → issue tickets
 import { z } from "zod";
-import crypto from "node:crypto";
 import { prisma } from "@/lib/prisma";
+import { finalizePaidOrder, cancelPendingOrder } from "@/lib/order-finalize";
 import { auth } from "@/lib/auth";
 import { holdSeats, releaseSeats } from "@/lib/seat-hold";
 import { isAdmitted } from "@/lib/queue";
@@ -244,55 +244,39 @@ export async function submitSlip(input: {
   // F8: หมายเหตุ — ตั้งใจ "ไม่" re-check Redis hold (isHeldBy) ตรงนี้ เพราะ submitSlip
   //     รันหลังยืนยันเงินเข้าแล้ว ถ้า block จะกลายเป็น "ลูกค้าจ่ายแต่ไม่ได้ตั๋ว"
   //     การกันที่นั่งซ้ำพึ่ง unique constraint บน Ticket.seatId + OrderItem.seatId ใน transaction นี้แทน
-  try {
-    // issue tickets + mark paid ใน transaction เดียว (atomic)
-    const seatIds = order.items.map((i) => i.seatId);
-    await prisma.$transaction([
-      // อัปเดต payment
-      prisma.payment.update({
-        where: { orderId: order.id },
-        data: {
-          status: "SUCCESS",
-          slipRef: verify.ref,
-          senderName: verify.senderName,
-          paidAt: verify.transAt ?? new Date(), // เก็บเวลาโอนจริงจากสลิป (ถ้ามี)
-        },
-      }),
-      // อัปเดต order
-      prisma.order.update({
-        where: { id: order.id },
-        data: { status: "PAID", paidAt: new Date() },
-      }),
-      // ที่นั่ง → SOLD
-      prisma.seat.updateMany({
-        where: { id: { in: seatIds } },
-        data: { status: "SOLD" },
-      }),
-      // ออกตั๋ว (1 ใบต่อ 1 ที่นั่ง)
-      ...order.items.map((item) =>
-        prisma.ticket.create({
-          data: {
-            orderId: order.id,
-            seatId: item.seatId,
-            userId: BigInt(userId),
-            qrCode: `TKT-${crypto.randomBytes(16).toString("hex")}`,
-            price: item.price,
-          },
-        })
-      ),
-    ]);
+  // ออกตั๋ว + mark paid แบบ atomic & race-safe (N1) — ดู lib/order-finalize.ts
+  const seatIds = order.items.map((i) => i.seatId);
+  const result = await finalizePaidOrder({
+    orderId: order.id,
+    userId: BigInt(userId),
+    items: order.items.map((i) => ({ seatId: i.seatId, price: i.price })),
+    slipRef: verify.ref,
+    senderName: verify.senderName,
+    paidAt: verify.transAt ?? undefined,
+  });
 
+  if (result.ok) {
     // ปล่อย Redis hold (ที่นั่งเป็น SOLD แล้ว ไม่ต้อง lock)
-    await releaseSeats(
-      seatIds.map((s) => s.toString()),
-      userId
-    );
-
-    return { ok: true, ticketCount: order.items.length };
-  } catch {
-    // slipRef ซ้ำ → unique constraint error (กันใช้สลิปเดียวจองหลายรอบ)
-    return { ok: false, error: "สลิปนี้ถูกใช้ไปแล้ว" };
+    await releaseSeats(seatIds.map((s) => s.toString()), userId);
+    return { ok: true, ticketCount: result.ticketCount };
   }
+
+  if (result.reason === "ORDER_NOT_CLAIMABLE" || result.reason === "SEAT_CONFLICT") {
+    // เงินเข้าแล้ว (slip ผ่าน verify) แต่ order ถูกยกเลิก/หมดอายุ หรือที่นั่งถูกปล่อย ระหว่างรอ verify
+    // ตั้งใจ "ไม่" ออกตั๋ว/ไม่ resurrect order (กัน double-book) — log ดังให้ ops คืนเงินด้วยมือ
+    console.error(
+      `🚨 REFUND NEEDED: ชำระเงินถูกต้อง (slipRef=${verify.ref}, ยอด=${expectedAmount}) ` +
+        `แต่ออกตั๋วไม่ได้ (${result.reason}) order=${order.id} user=${userId} — ต้องคืนเงินด้วยมือ`
+    );
+    return {
+      ok: false,
+      error:
+        "คำสั่งซื้อหมดอายุหรือถูกยกเลิกก่อนยืนยันการชำระเงิน — หากถูกตัดเงินแล้ว ทีมงานจะคืนเงินให้ กรุณาติดต่อฝ่ายบริการ",
+    };
+  }
+
+  // DUPLICATE_SLIP / ERROR — slipRef ซ้ำ (ใช้สลิปเดียวหลายรอบ) หรือพลาดอื่น
+  return { ok: false, error: "สลิปนี้ถูกใช้ไปแล้ว หรือเกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง" };
 }
 
 // ---- 3. ยกเลิก order (ปล่อยที่นั่ง) ----
@@ -310,16 +294,10 @@ export async function cancelOrder(orderId: string): Promise<{ ok: boolean }> {
   }
 
   const seatIds = order.items.map((i) => i.seatId);
-  await prisma.$transaction([
-    prisma.order.update({ where: { id: order.id }, data: { status: "CANCELLED" } }),
-    // ลบ OrderItem ด้วย — เพราะ OrderItem.seatId เป็น @unique ระดับ global
-    // ถ้าไม่ลบ ที่นั่งนี้จะจองใหม่ไม่ได้เลย (สร้าง OrderItem seatId ซ้ำ = unique violation)
-    prisma.orderItem.deleteMany({ where: { orderId: order.id } }),
-    prisma.seat.updateMany({
-      where: { id: { in: seatIds }, status: "HELD" },
-      data: { status: "AVAILABLE" },
-    }),
-  ]);
-  await releaseSeats(seatIds.map((s) => s.toString()), userId);
-  return { ok: true };
+  // ยกเลิกแบบ atomic & race-safe (N3) — ยกเลิกเฉพาะถ้ายัง PENDING (กัน race กับ submitSlip ที่เพิ่งจ่าย)
+  const result = await cancelPendingOrder({ orderId: order.id, userId: BigInt(userId) });
+  if (result.ok) {
+    await releaseSeats(seatIds.map((s) => s.toString()), userId);
+  }
+  return { ok: result.ok };
 }

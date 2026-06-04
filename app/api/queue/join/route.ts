@@ -104,6 +104,24 @@ async function handleJoin(req: NextRequest): Promise<NextResponse> {
     ip,
   });
 
+  // ============================================================
+  // 🛡️ Anti-Bot Layer 2 — behavior analysis (escalate-only, spoof-resistant)
+  // ============================================================
+  // ใช้ behavior score ที่ client ส่งมาเก็บไว้ (sessionKey = fingerprint) เป็น "สัญญาณเสริม"
+  //   ออกแบบให้ "ดันความสงสัยขึ้นได้อย่างเดียว ไม่มีทางลด" — เพราะ /api/behavior ไม่ auth = signal spoofable
+  //   bot ที่ปลอม "เป็นคน" จึงไม่ได้กำไร (อย่างมากเลี่ยง Layer 2 แต่ยังเจอ Layer 1 เต็ม)
+  //   ยกแค่ ALLOW→CHALLENGE (ไม่ block) กัน false positive กับคนจริง (assistive tech ฯลฯ)
+  //   อ่าน DB เฉพาะตอน Layer 1 = ALLOW (จุดเดียวที่ผลเปลี่ยน) — ไม่เพิ่มภาระ hot path เกินจำเป็น
+  if (assessment.action === "ALLOW" && fingerprintHash) {
+    const behavior = await prisma.behaviorSession.findUnique({
+      where: { sessionKey: fingerprintHash },
+      select: { isLikelyBot: true },
+    });
+    if (behavior?.isLikelyBot) {
+      assessment.action = "CHALLENGE"; // มีหลักฐาน botlike จาก Layer 2 → ขอยืนยันเพิ่ม
+    }
+  }
+
   // บันทึก bot event ทุกครั้ง (สำหรับ dashboard + thesis)
   // peak-load: ไม่ await — เป็น audit ไม่ใช่ critical path (สถานะคิวจริงอยู่ใน Redis)
   // เขียนหลังส่ง response ผ่าน after() เพื่อเอา DB write ออกจาก hot path ตอน flash-crowd
