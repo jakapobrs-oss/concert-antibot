@@ -54,6 +54,10 @@ const envSchema = z.object({
   QUEUE_BATCH_SIZE: z.coerce.number().int().positive().default(100),
   SEAT_HOLD_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   BOT_SCORE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
+
+  // per-payer ticket cap — จำนวนตั๋วสูงสุดที่ "1 บัญชีผู้จ่าย" ซื้อได้ต่อ 1 คอนเสิร์ต (ข้ามทุก app account)
+  //   กัน account farming: ปั๊มบัญชีแอปได้ฟรี แต่บัญชีธนาคารจริงปั๊มไม่ไหว → cap ที่ชั้นจ่ายเงิน (ปลอมไม่ได้)
+  PER_PAYER_TICKET_LIMIT: z.coerce.number().int().positive().default(10),
 });
 
 // parse once — throw ถ้า invalid (Next จะ crash ตอน boot, ดีกว่า silent fail)

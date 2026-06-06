@@ -4,7 +4,6 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { formatTHB } from "@/lib/format";
 import { SiteHeader } from "@/components/site-header";
 import { SeatMap } from "@/components/seat-map";
 import { isAdmitted } from "@/lib/queue";

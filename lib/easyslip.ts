@@ -15,6 +15,7 @@ export interface SlipVerifyResult {
   success: boolean;
   amount?: number; // ยอดที่โอนจริง (จากสลิป)
   senderName?: string;
+  senderAccount?: string; // เลขบัญชี/พร็อกซีผู้จ่าย (อาจถูก mask) — ใช้ทำ per-payer cap กัน account farming
   receiverAccount?: string; // เลขบัญชี/พร็อกซีปลายทางที่อ่านได้จากสลิป (อาจถูก mask)
   transAt?: Date; // เวลาที่โอนตามสลิป — ใช้เช็ค freshness (Level 2)
   ref?: string; // transaction ref — ใช้กันสลิปซ้ำ
@@ -108,6 +109,11 @@ async function verifyWithEasySlip(params: {
       d.receiver?.account?.name?.th ??
       "";
 
+    // เลขบัญชี/พร็อกซี "ผู้จ่าย" (shape เดียวกับ receiver) — ใช้เป็นคีย์ per-payer cap
+    //   มัก masked (เช่น xxx-x-x1234-5) แต่เสถียรพอใช้เป็น identity ของบัญชีธนาคารต้นทาง
+    const senderAccount: string =
+      d.sender?.account?.proxy?.account ?? d.sender?.account?.bank?.account ?? "";
+
     // 🔒 ชั้นที่ 2: เช็คว่าเงินเข้าบัญชีของเราจริง (กันแนบสลิปที่โอนหาคนอื่น)
     if (env.PAYMENTS_RECEIVER_CHECK) {
       if (!env.PROMPTPAY_ID) {
@@ -142,6 +148,7 @@ async function verifyWithEasySlip(params: {
       success: true,
       amount: Number(slipAmount),
       senderName,
+      senderAccount,
       receiverAccount,
       transAt,
       ref,

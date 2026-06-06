@@ -235,12 +235,18 @@ model Payment {
   slipRef     String?       @unique @db.VarChar(255)
   slipImageUrl String?      @db.VarChar(500) // เก็บใน MinIO
   senderName  String?       @db.VarChar(255) // ชื่อผู้โอน (จาก EasySlip)
+  // เลขบัญชี/พร็อกซีผู้จ่าย (จาก EasySlip — มัก masked เช่น xxx-x-x1234-5)
+  senderAccount String?     @db.VarChar(255)
+  // คีย์ผู้จ่ายที่ normalize แล้ว (acct:<เลข> หรือ name:<ชื่อ>) — ใช้ทำ "per-payer cap"
+  //   กันขบวนการบอทปั๊มหลาย account แต่จ่ายจากบัญชีธนาคารเดียว (ชั้นที่ปลอมไม่ได้ = โอนเงินจริง)
+  payerKey    String?       @db.VarChar(255)
   paidAt      DateTime?
   createdAt   DateTime      @default(now())
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([status])
+  @@index([payerKey]) // เร่ง query นับตั๋วต่อผู้จ่าย
   @@map("payments")
 }
 

@@ -57,7 +57,7 @@ async function main() {
   const userId = user.id;
   const concertId = concert.id;
   const seats = concert.zones[0].seats.sort((a, b) => a.seatNumber - b.seatNumber);
-  const [s0, s1] = [seats[0], seats[1]];
+  const [s0, s1, s2, s3] = seats;
 
   // ล้างสถานะ order/ticket ของคอนเสิร์ตนี้ + คืนที่นั่งทั้งหมดเป็น AVAILABLE (ใช้ก่อนแต่ละ iteration)
   async function resetState() {
@@ -119,6 +119,7 @@ async function main() {
         finalizePaidOrder({
           orderId: order.id,
           userId,
+          concertId,
           items,
           slipRef: `${tag}-A-${i}`,
           senderName: "Tester",
@@ -172,7 +173,7 @@ async function main() {
     {
       const order = await seedPendingOrder([s0.id, s1.id], { expiresInMin: -1 }); // หมดไปแล้ว 1 นาที
       const items = order.items.map((it) => ({ seatId: it.seatId, price: it.price }));
-      const fin = await finalizePaidOrder({ orderId: order.id, userId, items, slipRef: `${tag}-B` });
+      const fin = await finalizePaidOrder({ orderId: order.id, userId, concertId, items, slipRef: `${tag}-B` });
       const snap = await snapshot(order.id);
       check("ปฏิเสธด้วย ORDER_NOT_CLAIMABLE", !fin.ok && (fin as { reason?: string }).reason === "ORDER_NOT_CLAIMABLE", JSON.stringify(fin));
       check("ไม่ออกตั๋ว + order ยัง PENDING (rollback)", snap.tickets === 0 && snap.orderStatus === "PENDING", JSON.stringify(snap));
@@ -188,7 +189,7 @@ async function main() {
       const items = order.items.map((it) => ({ seatId: it.seatId, price: it.price }));
       // จำลอง: s1 ถูกปล่อย/ขายไปแล้ว (ไม่ใช่ HELD)
       await prisma.seat.update({ where: { id: s1.id }, data: { status: "AVAILABLE" } });
-      const fin = await finalizePaidOrder({ orderId: order.id, userId, items, slipRef: `${tag}-C` });
+      const fin = await finalizePaidOrder({ orderId: order.id, userId, concertId, items, slipRef: `${tag}-C` });
       const snap = await snapshot(order.id);
       check("ปฏิเสธด้วย SEAT_CONFLICT", !fin.ok && (fin as { reason?: string }).reason === "SEAT_CONFLICT", JSON.stringify(fin));
       check("rollback: order ยัง PENDING + 0 ตั๋ว + ไม่มีที่นั่งค้าง SOLD", snap.orderStatus === "PENDING" && snap.tickets === 0 && !snap.seatStatuses.includes("SOLD"), JSON.stringify(snap));
@@ -202,11 +203,77 @@ async function main() {
     {
       const order = await seedPendingOrder([s0.id, s1.id], { expiresInMin: 5 });
       const items = order.items.map((it) => ({ seatId: it.seatId, price: it.price }));
-      const first = await finalizePaidOrder({ orderId: order.id, userId, items, slipRef: `${tag}-D` });
-      const second = await finalizePaidOrder({ orderId: order.id, userId, items, slipRef: `${tag}-D2` });
+      const first = await finalizePaidOrder({ orderId: order.id, userId, concertId, items, slipRef: `${tag}-D` });
+      const second = await finalizePaidOrder({ orderId: order.id, userId, concertId, items, slipRef: `${tag}-D2` });
       const snap = await snapshot(order.id);
       check("ครั้งแรกสำเร็จ, ครั้งสองถูกปฏิเสธ", first.ok === true && second.ok === false, `${JSON.stringify(first)} / ${JSON.stringify(second)}`);
       check("ออกตั๋วแค่ 2 ใบ (ไม่ซ้ำเป็น 4)", snap.tickets === 2, JSON.stringify(snap));
+    }
+
+    // ============================================================
+    // Test E — per-payer cap: บัญชีผู้จ่ายเดียวซื้อเกินเพดานต่อคอนเสิร์ตไม่ได้ (กัน account farming)
+    //   limit=2: order1 (2 ที่/payer P) สำเร็จ → order2 (2 ที่/payer P เดิม) ถูกปฏิเสธ PAYER_LIMIT
+    //   แล้ว payer Q (คนละบัญชี) ซื้อ order2 ได้ → พิสูจน์ว่า cap แยกตามผู้จ่าย ไม่ใช่ global
+    // ============================================================
+    console.log("Test E — per-payer cap (limit=2):");
+    await resetState();
+    {
+      const LIMIT = 2;
+      const payerP = "acct:payer-P";
+      const payerQ = "acct:payer-Q";
+
+      // order1: payer P ซื้อ 2 ใบ (s0,s1) → ถึงเพดานพอดี
+      const o1 = await seedPendingOrder([s0.id, s1.id], { expiresInMin: 5 });
+      const fin1 = await finalizePaidOrder({
+        orderId: o1.id,
+        userId,
+        concertId,
+        items: o1.items.map((it) => ({ seatId: it.seatId, price: it.price })),
+        slipRef: `${tag}-E1`,
+        payerKey: payerP,
+        perPayerLimit: LIMIT,
+      });
+      check("payer P ซื้อใบที่ 1-2 สำเร็จ (ยังไม่เกินเพดาน)", fin1.ok === true, JSON.stringify(fin1));
+
+      // order2: payer P เดิม ซื้ออีก 2 ใบ (s2,s3) → รวมเป็น 4 > 2 → PAYER_LIMIT
+      const o2 = await seedPendingOrder([s2.id, s3.id], { expiresInMin: 5 });
+      const fin2 = await finalizePaidOrder({
+        orderId: o2.id,
+        userId,
+        concertId,
+        items: o2.items.map((it) => ({ seatId: it.seatId, price: it.price })),
+        slipRef: `${tag}-E2`,
+        payerKey: payerP,
+        perPayerLimit: LIMIT,
+      });
+      check(
+        "payer P ซื้อเกินเพดาน → ปฏิเสธด้วย PAYER_LIMIT",
+        !fin2.ok && (fin2 as { reason?: string }).reason === "PAYER_LIMIT",
+        JSON.stringify(fin2)
+      );
+
+      const o2snap = await prisma.order.findUnique({ where: { id: o2.id }, select: { status: true } });
+      const s2s3 = await prisma.seat.findMany({
+        where: { id: { in: [s2.id, s3.id] } },
+        select: { status: true },
+      });
+      check(
+        "order ที่เกินเพดาน rollback (PENDING + ไม่มีที่นั่ง SOLD)",
+        o2snap?.status === "PENDING" && !s2s3.some((r) => r.status === "SOLD"),
+        JSON.stringify({ o2snap, s2s3 })
+      );
+
+      // payer Q (คนละบัญชี) finalize order2 ตัวเดิมได้ → cap แยกตามผู้จ่าย ไม่ใช่ global
+      const fin3 = await finalizePaidOrder({
+        orderId: o2.id,
+        userId,
+        concertId,
+        items: o2.items.map((it) => ({ seatId: it.seatId, price: it.price })),
+        slipRef: `${tag}-E3`,
+        payerKey: payerQ,
+        perPayerLimit: LIMIT,
+      });
+      check("payer Q (บัญชีอื่น) ซื้อได้ตามปกติ (cap แยกตามผู้จ่าย)", fin3.ok === true, JSON.stringify(fin3));
     }
   } finally {
     // ---------- cleanup fixtures ----------

@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { finalizePaidOrder, cancelPendingOrder } from "@/lib/order-finalize";
+import { computePayerKey } from "@/lib/payer-key";
 import { auth } from "@/lib/auth";
 import { holdSeats, releaseSeats } from "@/lib/seat-hold";
 import { isAdmitted } from "@/lib/queue";
@@ -18,7 +19,6 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { exceedsTicketLimit, remainingTicketAllowance } from "@/lib/ticket-limit";
 import { expireStaleOrders } from "@/lib/order-sweeper";
 import { env } from "@/lib/env";
-import { serializeBigInt } from "@/lib/json";
 
 // F1: rate limit ของ submitSlip — กันยิงสลิปรัวเผาโควต้า EasySlip (500/เดือน) + brute-force สลิป
 // key ผูก userId ทั้งคู่ เพื่อกัน attacker เอา orderId ของเหยื่อมา spam ล็อกไม่ให้เหยื่อจ่าย
@@ -146,7 +146,7 @@ export async function holdAndCreateOrder(input: {
       promptPayId,
       expiresAt: expiresAt.toISOString(),
     };
-  } catch (e) {
+  } catch {
     // rollback hold ถ้าสร้าง order พลาด
     await releaseSeats(seatIds, userId);
     return { ok: false, error: "สร้างคำสั่งซื้อไม่สำเร็จ" };
@@ -244,14 +244,24 @@ export async function submitSlip(input: {
   // F8: หมายเหตุ — ตั้งใจ "ไม่" re-check Redis hold (isHeldBy) ตรงนี้ เพราะ submitSlip
   //     รันหลังยืนยันเงินเข้าแล้ว ถ้า block จะกลายเป็น "ลูกค้าจ่ายแต่ไม่ได้ตั๋ว"
   //     การกันที่นั่งซ้ำพึ่ง unique constraint บน Ticket.seatId + OrderItem.seatId ใน transaction นี้แทน
-  // ออกตั๋ว + mark paid แบบ atomic & race-safe (N1) — ดู lib/order-finalize.ts
+  // 🛡️ per-payer cap (anti-scalping): สร้างคีย์ "ผู้จ่าย" จากสลิป
+  //    ข้ามใน dev-mock (verify.devMode) เพราะไม่มีผู้จ่ายจริง — กัน cap บล็อกตอนทดสอบ/demo
+  const payerKey = verify.devMode
+    ? null
+    : computePayerKey({ senderAccount: verify.senderAccount, senderName: verify.senderName });
+
+  // ออกตั๋ว + mark paid แบบ atomic & race-safe (N1) + เช็ค per-payer cap — ดู lib/order-finalize.ts
   const seatIds = order.items.map((i) => i.seatId);
   const result = await finalizePaidOrder({
     orderId: order.id,
     userId: BigInt(userId),
+    concertId: order.concertId,
     items: order.items.map((i) => ({ seatId: i.seatId, price: i.price })),
     slipRef: verify.ref,
     senderName: verify.senderName,
+    senderAccount: verify.senderAccount,
+    payerKey,
+    perPayerLimit: env.PER_PAYER_TICKET_LIMIT,
     paidAt: verify.transAt ?? undefined,
   });
 
@@ -272,6 +282,19 @@ export async function submitSlip(input: {
       ok: false,
       error:
         "คำสั่งซื้อหมดอายุหรือถูกยกเลิกก่อนยืนยันการชำระเงิน — หากถูกตัดเงินแล้ว ทีมงานจะคืนเงินให้ กรุณาติดต่อฝ่ายบริการ",
+    };
+  }
+
+  if (result.reason === "PAYER_LIMIT") {
+    // เงินเข้าแล้ว แต่ "บัญชีผู้จ่าย" รายนี้ซื้อบัตรคอนเสิร์ตนี้ครบเพดานแล้ว (กัน account farming ของขบวนการบอท)
+    // ตั้งใจไม่ออกตั๋ว — มาตรการคือทำให้ "ปั๊มบัญชีแอปแล้วจ่ายจากบัญชีธนาคารเดียว" เสี่ยงจ่ายฟรี
+    console.error(
+      `🚨 REFUND NEEDED (per-payer cap): payerKey=${payerKey} ซื้อครบ ${env.PER_PAYER_TICKET_LIMIT} ใบ/คอนเสิร์ตแล้ว ` +
+        `(slipRef=${verify.ref}, ยอด=${expectedAmount}) order=${order.id} user=${userId} — ต้องคืนเงินด้วยมือ`
+    );
+    return {
+      ok: false,
+      error: `บัญชีที่ใช้ชำระเงินซื้อบัตรคอนเสิร์ตนี้ครบจำนวนสูงสุดต่อผู้ชำระเงินแล้ว (${env.PER_PAYER_TICKET_LIMIT} ใบ) — หากถูกตัดเงินแล้ว ทีมงานจะคืนเงินให้ กรุณาติดต่อฝ่ายบริการ`,
     };
   }
 
