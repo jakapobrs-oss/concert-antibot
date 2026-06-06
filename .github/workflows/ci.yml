@@ -1,0 +1,92 @@
+# CI — typecheck + unit tests ทุก push / PR
+# กัน regression: โค้ดที่ tsc พังหรือ test แดง จะถูกจับก่อน merge
+# (unit test เป็น pure-logic + mock ทั้งหมด → ไม่ต้องมี Postgres/Redis)
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    name: Typecheck & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm อ่านเวอร์ชันจาก field "packageManager" ใน package.json (9.15.0)
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ต้อง generate Prisma client ก่อน tsc (โค้ด import type จาก @prisma/client)
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Typecheck (tsc --noEmit)
+        run: pnpm typecheck
+
+      - name: Unit tests (vitest run)
+        run: pnpm test:run
+
+  # งานที่ 2: integration test เรื่องเงิน (N1/N3 race + per-payer cap) กับ Postgres จริง
+  integration:
+    name: Integration Tests (Postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: concert_antibot
+        ports:
+          - 5432:5432
+        # รอ DB พร้อมก่อนรัน step
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/concert_antibot
+      # dummy secret (>=32 ตัว) ให้ lib/env.ts ผ่าน — ไม่ใช่ของจริง
+      NEXTAUTH_SECRET: ci_dummy_secret_at_least_32_characters_long_xx
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Apply migrations (prisma migrate deploy)
+        run: pnpm db:deploy
+
+      - name: Race + per-payer cap integration test
+        run: pnpm test:race
