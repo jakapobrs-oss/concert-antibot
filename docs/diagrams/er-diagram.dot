@@ -1,0 +1,220 @@
+// ============================================================
+// Concert Anti-Bot — Entity Relationship Diagram
+// Generated from prisma/schema.prisma (14 models) — 2026-06-07
+// Render: dot -Tpng -Gdpi=200 er-diagram.dot -o er-diagram.png
+//         dot -Tpdf er-diagram.dot -o er-diagram.pdf
+//         dot -Tsvg er-diagram.dot -o er-diagram.svg
+// ============================================================
+digraph ER {
+  graph [
+    rankdir=TB,
+    splines=spline,
+    overlap=false,
+    nodesep=0.45,
+    ranksep=1.25,
+    bgcolor="#ffffff",
+    pad=0.5,
+    fontname="Segoe UI",
+    labelloc=t,
+    fontsize=30,
+    fontcolor="#0f172a",
+    label=<<b>Concert Anti-Bot &#8212; Entity Relationship Diagram</b><br/><font point-size="14" color="#64748b">PostgreSQL 16 &#183; 14 entities &#183; crow&#8217;s-foot notation &#183; seat-hold = Redis (no table)</font>>
+  ];
+  node [shape=plaintext, fontname="Segoe UI"];
+  edge [color="#94a3b8", penwidth=1.5, arrowsize=0.9];
+
+  // ========== AUTH ==========
+  subgraph cluster_auth {
+    label=<<b>AUTH</b>  &#183; NextAuth v5 + RBAC>;
+    fontname="Segoe UI"; fontsize=15; fontcolor="#3730a3";
+    style="rounded,filled"; color="#c7d2fe"; fillcolor="#eef2ff"; margin=18; penwidth=1.5;
+
+    USER [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#4f46e5" align="center"><font color="#ffffff" point-size="13"><b>USER</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">email</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">role</font></td><td align="right"><font color="#94a3b8" point-size="8">USER|ADMIN</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">passwordHash</font></td><td align="right"><font color="#94a3b8" point-size="8">argon2id</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">trustScore</font></td><td align="right"><font color="#94a3b8" point-size="8">0-100</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">failedLoginCount</font></td><td align="right"><font color="#94a3b8" point-size="8">lockout</font></td></tr>
+      </table>>];
+
+    ACCOUNT [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#4f46e5" align="center"><font color="#ffffff" point-size="13"><b>ACCOUNT</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">userId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">provider</font></td><td align="right"><font color="#94a3b8" point-size="8">google</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">providerAccountId</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+      </table>>];
+
+    SESSION [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#4f46e5" align="center"><font color="#ffffff" point-size="13"><b>SESSION</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">userId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">sessionToken</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">expires</font></td><td align="right"><font color="#94a3b8" point-size="8">datetime</font></td></tr>
+      </table>>];
+
+    VERIFICATION_TOKEN [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#6366f1" align="center"><font color="#ffffff" point-size="12"><b>VERIFICATION_TOKEN</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">token</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">identifier</font></td><td align="right"><font color="#94a3b8" point-size="8">email</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">expires</font></td><td align="right"><font color="#94a3b8" point-size="8">datetime</font></td></tr>
+      </table>>];
+  }
+
+  // ========== CATALOG ==========
+  subgraph cluster_catalog {
+    label=<<b>CATALOG</b>  &#183; concert / zone / seat>;
+    fontname="Segoe UI"; fontsize=15; fontcolor="#065f46";
+    style="rounded,filled"; color="#a7f3d0"; fillcolor="#ecfdf5"; margin=18; penwidth=1.5;
+
+    CONCERT [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#059669" align="center"><font color="#ffffff" point-size="13"><b>CONCERT</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">slug</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">status</font></td><td align="right"><font color="#94a3b8" point-size="8">5 states</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">venue</font></td><td align="right"><font color="#94a3b8" point-size="8">text</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">saleStartAt</font></td><td align="right"><font color="#94a3b8" point-size="8">enforce</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">maxTicketsPerUser</font></td><td align="right"><font color="#94a3b8" point-size="8">=4</font></td></tr>
+      </table>>];
+
+    ZONE [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#059669" align="center"><font color="#ffffff" point-size="13"><b>ZONE</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">concertId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">name</font></td><td align="right"><font color="#94a3b8" point-size="8">VIP/R1</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">price</font></td><td align="right"><font color="#94a3b8" point-size="8">DECIMAL</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">totalSeats</font></td><td align="right"><font color="#94a3b8" point-size="8">int</font></td></tr>
+      </table>>];
+
+    SEAT [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#059669" align="center"><font color="#ffffff" point-size="13"><b>SEAT</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">zoneId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">rowLabel+seatNumber</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">status</font></td><td align="right"><font color="#94a3b8" point-size="8">4 states</font></td></tr>
+      </table>>];
+  }
+
+  // ========== BOOKING ==========
+  subgraph cluster_booking {
+    label=<<b>BOOKING</b>  &#183; order &#8594; payment &#8594; ticket>;
+    fontname="Segoe UI"; fontsize=15; fontcolor="#92400e";
+    style="rounded,filled"; color="#fde68a"; fillcolor="#fffbeb"; margin=18; penwidth=1.5;
+
+    ORDER [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#d97706" align="center"><font color="#ffffff" point-size="13"><b>ORDER</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">userId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">concertId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">totalAmount</font></td><td align="right"><font color="#94a3b8" point-size="8">DECIMAL</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">status</font></td><td align="right"><font color="#94a3b8" point-size="8">4 states</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">expiresAt</font></td><td align="right"><font color="#94a3b8" point-size="8">+5 min</font></td></tr>
+      </table>>];
+
+    ORDER_ITEM [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#d97706" align="center"><font color="#ffffff" point-size="12"><b>ORDER_ITEM</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">orderId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">seatId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK/UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">price</font></td><td align="right"><font color="#94a3b8" point-size="8">snapshot</font></td></tr>
+      </table>>];
+
+    PAYMENT [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#d97706" align="center"><font color="#ffffff" point-size="13"><b>PAYMENT</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">orderId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK/UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">status</font></td><td align="right"><font color="#94a3b8" point-size="8">4 states</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">slipRef</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">senderAccount</font></td><td align="right"><font color="#94a3b8" point-size="8">payer</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">payerKey</font></td><td align="right"><font color="#db2777" point-size="8"><b>IDX</b></font></td></tr>
+      </table>>];
+
+    TICKET [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#d97706" align="center"><font color="#ffffff" point-size="13"><b>TICKET</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">orderId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">seatId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK/UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">userId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">qrCode</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+      </table>>];
+  }
+
+  // ========== QUEUE ==========
+  subgraph cluster_queue {
+    label=<<b>QUEUE</b>  &#183; virtual waiting room>;
+    fontname="Segoe UI"; fontsize=15; fontcolor="#075985";
+    style="rounded,filled"; color="#bae6fd"; fillcolor="#f0f9ff"; margin=18; penwidth=1.5;
+
+    QUEUE_TOKEN [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#0284c7" align="center"><font color="#ffffff" point-size="12"><b>QUEUE_TOKEN</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">concertId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">userId</font></td><td align="right"><font color="#0369a1" point-size="8"><b>FK?</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">token</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">timeBucket</font></td><td align="right"><font color="#94a3b8" point-size="8">fairness</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">randomScore</font></td><td align="right"><font color="#94a3b8" point-size="8">fairness</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">status</font></td><td align="right"><font color="#94a3b8" point-size="8">5 states</font></td></tr>
+      </table>>];
+  }
+
+  // ========== ANTI-BOT ==========
+  subgraph cluster_antibot {
+    label=<<b>ANTI-BOT</b>  &#183; telemetry (no FK)>;
+    fontname="Segoe UI"; fontsize=15; fontcolor="#9f1239";
+    style="rounded,filled"; color="#fecdd3"; fillcolor="#fff1f2"; margin=18; penwidth=1.5;
+
+    BOT_EVENT [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#e11d48" align="center"><font color="#ffffff" point-size="13"><b>BOT_EVENT</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">userId</font></td><td align="right"><font color="#94a3b8" point-size="8">audit</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">score</font></td><td align="right"><font color="#94a3b8" point-size="8">0-100</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">action</font></td><td align="right"><font color="#94a3b8" point-size="8">3 states</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">signals</font></td><td align="right"><font color="#94a3b8" point-size="8">json</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">checkpoint</font></td><td align="right"><font color="#94a3b8" point-size="8">stage</font></td></tr>
+      </table>>];
+
+    BEHAVIOR_SESSION [label=<
+      <table border="1" color="#cbd5e1" cellborder="0" cellspacing="0" cellpadding="6">
+        <tr><td colspan="2" bgcolor="#e11d48" align="center"><font color="#ffffff" point-size="11"><b>BEHAVIOR_SESSION</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">id</font></td><td align="right"><font color="#b45309" point-size="8"><b>PK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">sessionKey</font></td><td align="right"><font color="#7c3aed" point-size="8"><b>UK</b></font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">mouseTimingVariance</font></td><td align="right"><font color="#94a3b8" point-size="8">float</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">mousePathEntropy</font></td><td align="right"><font color="#94a3b8" point-size="8">float</font></td></tr>
+        <tr><td align="left"><font color="#334155" point-size="10">isLikelyBot</font></td><td align="right"><font color="#94a3b8" point-size="8">bool</font></td></tr>
+      </table>>];
+  }
+
+  // ========== RELATIONSHIPS (crow's-foot: tee=one, crow=many, teeodot=zero-or-one) ==========
+  USER -> ACCOUNT            [dir=both, arrowtail=tee, arrowhead=crow];
+  USER -> SESSION            [dir=both, arrowtail=tee, arrowhead=crow];
+  USER -> ORDER              [dir=both, arrowtail=tee, arrowhead=crow];
+  USER -> TICKET             [dir=both, arrowtail=tee, arrowhead=crow];
+  USER -> QUEUE_TOKEN        [dir=both, arrowtail=teeodot, arrowhead=crow];
+
+  CONCERT -> ZONE            [dir=both, arrowtail=tee, arrowhead=crow];
+  CONCERT -> ORDER           [dir=both, arrowtail=tee, arrowhead=crow];
+  CONCERT -> QUEUE_TOKEN     [dir=both, arrowtail=tee, arrowhead=crow];
+  ZONE -> SEAT               [dir=both, arrowtail=tee, arrowhead=crow];
+
+  ORDER -> ORDER_ITEM        [dir=both, arrowtail=tee, arrowhead=crow];
+  ORDER -> PAYMENT           [dir=both, arrowtail=tee, arrowhead=teeodot];
+  ORDER -> TICKET            [dir=both, arrowtail=tee, arrowhead=crow];
+
+  SEAT -> ORDER_ITEM         [dir=both, arrowtail=tee, arrowhead=teeodot, style=dashed];
+  SEAT -> TICKET             [dir=both, arrowtail=tee, arrowhead=teeodot, style=dashed];
+}

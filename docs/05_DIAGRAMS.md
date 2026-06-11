@@ -2,6 +2,9 @@
 
 > ทุก diagram ใช้ Mermaid เพื่อให้แก้ง่าย + ฝังใน docs ได้
 > ตอน export ขึ้น Word/PDF ใช้ mermaid-cli render เป็น PNG/SVG
+>
+> ✅ **ปรับให้ตรงโค้ดจริง 2026-06-12** — sync กับ `prisma/schema.prisma` + `lib/` + `app/actions/booking.ts`
+> แก้จากฉบับร่างเดิม: payment Stripe → **PromptPay + EasySlip** · คิว SSE → **HTTP poll** · anti-bot 4 ชั้น → **2 ชั้น** · order timeout 15→**5 นาที** · ตัด SeatHold/Audit table ที่ไม่มีจริง (ดูตรงกับ [04_ER_DIAGRAM.md](04_ER_DIAGRAM.md))
 
 ---
 
@@ -10,49 +13,49 @@
 ```mermaid
 flowchart TB
     subgraph Client["Client (Browser)"]
-        UI[Next.js UI<br/>React 19]
+        UI[Next.js 15 UI<br/>React 19]
         FP[FingerprintJS<br/>collector]
-        BH[Behavior collector<br/>mouse/keys/scroll]
+        BH[Behavior collector<br/>mouse/keys/timing]
     end
 
-    subgraph Edge["Edge Layer"]
+    subgraph Edge["Edge"]
         CDN[Cloudflare CDN]
-        WAF[Cloudflare WAF<br/>+ Turnstile]
+        TS[Cloudflare Turnstile<br/>invisible CAPTCHA]
     end
 
     subgraph App["Application Layer (Next.js Server)"]
-        MW[Middleware<br/>rate limit + bot score]
+        MW[Middleware<br/>rate limit + load shed]
         API[Route Handlers<br/>+ Server Actions]
-        Q[Queue Service]
-        AB[Anti-Bot Engine]
-        AUTH[NextAuth<br/>credentials + Google]
+        Q[Queue Service<br/>fairness + admit]
+        AB[Anti-Bot Engine<br/>L1 scoring + L2 behavior]
+        AUTH[NextAuth v5<br/>credentials + Google]
+        PAYSVC[Payment<br/>PromptPay QR + slip verify]
     end
 
     subgraph Data["Data Layer"]
         PG[(PostgreSQL 16<br/>BIGSERIAL ids)]
-        RD[(Redis 7.4<br/>queue + locks + rate)]
+        RD[(Redis 7<br/>queue + seat locks + rate)]
     end
 
-    subgraph External["External"]
-        TS[Turnstile API]
+    subgraph External["External Services"]
         GOO[Google OAuth]
         SMTP[Resend Email]
-        PAY[Stripe/Omise<br/>future]
+        ES[EasySlip API<br/>slip verification]
     end
 
-    UI --> CDN --> WAF --> MW
-    FP --> MW
+    UI --> CDN --> MW
+    FP --> API
     BH --> API
     MW --> API
     API --> Q --> RD
     API --> AB --> RD
     AB --> PG
-    API --> AUTH
-    AUTH --> GOO
+    API --> AUTH --> GOO
     AUTH --> PG
     API --> SMTP
-    API --> PAY
-    WAF --> TS
+    API --> PAYSVC --> ES
+    UI -.->|verify| TS
+    AB -.->|check token| TS
 ```
 
 ---
@@ -97,72 +100,97 @@ sequenceDiagram
     autonumber
     actor U as User
     participant B as Browser
-    participant E as Edge/WAF
     participant A as App Server
-    participant Q as Queue (Redis)
+    participant R as Redis
     participant DB as PostgreSQL
-    participant T as Turnstile
+    participant TS as Turnstile
+    participant ES as EasySlip
 
-    U->>B: Click "Buy Ticket"
-    B->>E: GET /book/123
-    E->>T: Verify (invisible)
-    T-->>E: OK
-    E->>A: Forward + bot_score header
-    A->>A: Check sale_start_at
-    alt Before sale time
-        A-->>B: Redirect /queue/wait
+    U->>B: เปิดหน้าคอนเสิร์ต → กด "เข้าคิว"
+    B->>TS: render invisible Turnstile
+    TS-->>B: token
+    B->>A: join queue (+ turnstileToken, fingerprint)
+    A->>A: Anti-Bot L1 scoring (0-100)
+    alt score >= 70
+        A-->>B: BLOCK 403
+    else 40-69
+        A-->>B: CHALLENGE (Turnstile เพิ่ม)
     end
-    A->>Q: Issue queue token
-    Q-->>A: token + position 1247
-    A-->>B: 302 → /queue?token=...
-    B->>A: SSE /queue/stream
-    A-->>B: position: 1247 → 800 → ... → 0
-    A-->>B: redirect /book/123/select
-    B->>A: GET /book/123/select (with token)
-    A->>DB: SELECT available seats
-    DB-->>A: list
-    A-->>B: render seat map
-    U->>B: pick seats
-    B->>A: POST /seats/hold
-    A->>Q: SETNX seat:lock:X with TTL 5min
-    Q-->>A: OK
-    A->>DB: insert SeatHold
-    A-->>B: hold success, countdown 5:00
-    U->>B: confirm + pay
-    B->>A: POST /order/checkout
-    A->>DB: transaction: order + tickets + seat=sold
-    A->>Q: release locks
-    A-->>B: order confirmed
-    B->>A: GET /my-tickets
-    A-->>B: QR code list
+    A->>R: issue queue token<br/>(fairness: timeBucket + randomScore)
+    R-->>A: WAITING + position
+    loop poll ทุก 2-20 วิ (backoff ตามตำแหน่ง)
+        B->>A: GET /api/queue/status?token=...
+        A->>R: on-demand admit batch
+        A-->>B: position / ADMITTED
+    end
+    A-->>B: ADMITTED → ไปหน้าเลือกที่นั่ง
+    B->>A: GET seats (เฉพาะ token ที่ถูก admit)
+    A->>DB: SELECT seats WHERE status=AVAILABLE
+    DB-->>A: seat list
+    U->>B: เลือกที่นั่ง → ยืนยัน
+    B->>A: holdAndCreateOrder(seatIds, token)
+    A->>R: SET seat:lock:{id} NX EX 300 (all-or-nothing)
+    A->>DB: Order(PENDING, expiresAt=+5m)<br/>+ OrderItems + Payment(PENDING)
+    A->>DB: Seat.status = HELD
+    A-->>B: PromptPay QR + นับถอยหลัง 5:00
+    U->>B: โอนเงิน → อัปโหลดสลิป
+    B->>A: submitSlip(orderId, slipImage)
+    A->>A: rate limit + ตรวจชนิด/ขนาดรูป
+    A->>ES: verify slip
+    ES-->>A: amount, ref, senderAccount, transAt
+    A->>A: ยอดตรง? + สลิปสด? + payerKey ไม่เกินเพดาน?
+    A->>DB: TX: Tickets + Seat=SOLD<br/>+ Payment=SUCCESS (slipRef UNIQUE)
+    A->>R: release seat locks
+    A-->>B: ออกตั๋วสำเร็จ → ดู QR ตั๋ว
 ```
 
 ---
 
 ## 4. Anti-Bot Decision Flow
 
+> ระบบจริงมี **2 ชั้น** (ไม่ใช่ 4): **Layer 1 = scoring** ตอนเข้าคิว (`lib/antibot.ts`) และ **Layer 2 = behavior** ตอนเลือกที่นั่ง (`lib/behavior.ts`) — ผลทั้งสองชั้น log ลง `bot_events` / `behavior_sessions`
+
 ```mermaid
 flowchart TD
-    REQ[Incoming Request] --> L1{Layer 1:<br/>IP/Rate/UA?}
-    L1 -- bad --> BLK1[Block 403]
-    L1 -- ok --> L2{Layer 2:<br/>Header/TLS<br/>fingerprint?}
-    L2 -- suspicious --> CH1[Challenge:<br/>Invisible Turnstile]
-    L2 -- ok --> L3{Layer 3:<br/>Browser FP<br/>+ headless?}
-    L3 -- headless --> CH2[Challenge:<br/>Visible CAPTCHA]
-    L3 -- ok --> L4{Layer 4:<br/>Behavior score}
-    L4 -- low score --> CH2
-    L4 -- ok --> ALLOW[Allow + log]
-    CH1 -- pass --> L4
-    CH1 -- fail --> CH2
-    CH2 -- pass --> STEP[Step-up:<br/>OTP/Email]
-    CH2 -- fail --> BLK2[Block + raise log]
-    STEP -- pass --> ALLOW
-    STEP -- fail --> BLK2
+    REQ[Request เข้าคิว] --> RL{Rate limit<br/>+ load shed?}
+    RL -- เกิน --> B429[429 Too Many]
+    RL -- ok --> L1[Layer 1: Scoring 0-100]
+
+    subgraph L1S["Signals — lib/antibot.ts"]
+        S1[Turnstile pass/fail/missing]
+        S2[User-Agent heuristics]
+        S3[Header completeness]
+        S4[Fingerprint present?]
+    end
+    L1 --- L1S
+
+    L1 --> DEC{score?}
+    DEC -- "&lt; 40" --> ALLOW[ALLOW → ออก queue token]
+    DEC -- "40-69" --> CH[CHALLENGE<br/>Turnstile เพิ่ม]
+    DEC -- "&ge; 70" --> BLK[BLOCK 403]
+    CH -- pass --> ALLOW
+    CH -- fail --> BLK
+
+    ALLOW --> L2[Layer 2: Behavior<br/>ตอนเลือกที่นั่ง]
+    subgraph L2S["Features — lib/behavior.ts"]
+        F1[mouse timing variance<br/>ต่ำ = บอท]
+        F2[mouse path entropy<br/>ต่ำ = เส้นตรง]
+        F3[dwell time / move count]
+    end
+    L2 --- L2S
+    L2 --> BS{behaviorScore}
+    BS -- ปกติ --> OK[ผ่าน — log BehaviorSession]
+    BS -- isLikelyBot --> FLAG[flag + log ไว้ดูใน dashboard]
+
+    BLK --> LOG[(bot_events)]
+    ALLOW --> LOG
 ```
 
 ---
 
 ## 5. Data Flow Diagram (DFD Level 1)
+
+> ไม่มี data store แยกสำหรับ Audit/Report — admin dashboard อ่านตรงจาก `bot_events`/`behavior_sessions` (D4) และ `orders`/`payments` (D5)
 
 ```mermaid
 flowchart LR
@@ -173,31 +201,30 @@ flowchart LR
     P2((2.0<br/>Queue Mgmt))
     P3((3.0<br/>Anti-Bot Engine))
     P4((4.0<br/>Booking))
-    P5((5.0<br/>Payment))
-    P6((6.0<br/>Reporting))
+    P5((5.0<br/>Payment + Slip))
+    P6((6.0<br/>Admin Dashboard))
 
-    D1[(D1: Users)]
-    D2[(D2: Concerts/Seats)]
-    D3[(D3: Queue Tokens)]
-    D4[(D4: Behavior + Bot Logs)]
-    D5[(D5: Orders/Tickets)]
-    D6[(D6: Audit/Reports)]
+    D1[(D1: users / accounts)]
+    D2[(D2: concerts / zones / seats)]
+    D3[(D3: queue_tokens + Redis)]
+    D4[(D4: bot_events + behavior_sessions)]
+    D5[(D5: orders / order_items / payments / tickets)]
 
     U -- credentials --> P1
     P1 -- read/write --> D1
-    U -- buy intent --> P2
+    U -- เข้าคิว --> P2
     P2 -- token --> D3
-    P2 -- behavior --> P3
-    P3 -- score --> D4
-    P3 -- decision --> P2
-    P2 -- allow --> P4
-    P4 -- read/write --> D2
+    P2 -- signals --> P3
+    P3 -- score/decision --> P2
+    P3 -- log --> D4
+    P2 -- admitted --> P4
+    P4 -- read seats --> D2
     P4 -- create order --> P5
-    P5 -- update --> D5
+    P5 -- verify slip + issue tickets --> D5
     A -- query --> P6
     P6 -- read --> D4
     P6 -- read --> D5
-    P6 -- write --> D6
+    P6 -- read --> D2
 ```
 
 ---
@@ -208,37 +235,41 @@ flowchart LR
 flowchart TB
     subgraph App["app/"]
         ROOT[layout.tsx + page.tsx]
-        AUTH_R["(auth)/login, register"]
-        CONCERT_R["(public)/concert/[slug]"]
-        QUEUE_R["queue/[concertId]"]
-        BOOK_R["book/[concertId]"]
-        CO_R["checkout"]
-        ME_R["my-tickets"]
-        ADMIN_R["(admin)/dashboard"]
-        API_R["api/* route handlers"]
+        AUTH_R["(auth)/login · register · verify"]
+        CONCERT_R["(public)/concerts/[slug]"]
+        QUEUE_R["concerts/[slug]/queue"]
+        SEAT_R["concerts/[slug]/seats"]
+        CO_R["(public)/checkout/[orderId]"]
+        ME_R["(public)/account/tickets"]
+        ADMIN_R["(admin)/admin/* concerts·bot-log·sales"]
+        ACT["actions/* booking · auth"]
+        API_R["api/queue/status"]
     end
 
     subgraph Lib["lib/"]
-        AUTH_L[auth.ts NextAuth config]
-        DB_L[db.ts Prisma client]
+        AUTH_L[auth.ts NextAuth]
+        DB_L[prisma.ts]
         REDIS_L[redis.ts ioredis]
-        QUEUE_L[queue/ service]
-        ANTIBOT_L[antibot/ engine]
-        CAPTCHA_L[captcha/ turnstile]
-        FP_L[fingerprint/ verify]
-        PAYMENT_L[payment/ mock+stripe]
+        QUEUE_L[queue.ts fairness/admit]
+        ANTIBOT_L[antibot.ts L1 + behavior.ts L2]
+        TS_L[turnstile.ts]
+        HOLD_L[seat-hold.ts Redis NX]
+        PAY_L[promptpay.ts + easyslip.ts + slip-*.ts]
+        FINAL_L[order-finalize.ts + order-sweeper.ts]
+        LIMIT_L[ticket-limit.ts + payer-key.ts]
+        RL_L[rate-limit.ts + load-shed.ts]
     end
 
     subgraph Comp["components/"]
         UI_C[ui/* shadcn]
-        SEAT_C[SeatMap.tsx]
-        QUEUE_C[QueueWidget.tsx]
-        FORM_C[forms/*]
+        SEAT_C[seat-map.tsx]
+        QUEUE_C[waiting-room.tsx]
+        CO_C[checkout-client.tsx]
+        TS_C[turnstile-widget.tsx]
     end
 
     subgraph PR["prisma/"]
-        SCH[schema.prisma]
-        MIG[migrations/]
+        SCH[schema.prisma 14 models]
         SEED[seed.ts]
     end
 
@@ -247,37 +278,42 @@ flowchart TB
     Lib --> PR
 ```
 
+> หมายเหตุ: โปรเจกต์ใช้ `prisma db push` (ไม่มีโฟลเดอร์ `migrations/`) — `schema.prisma` คือ source of truth
+
 ---
 
 ## 7. State Diagram — Order Lifecycle
 
+> สถานะตรง enum `OrderStatus` = `PENDING · PAID · CANCELLED · REFUNDED` (ไม่มี `FAILED` ใน order — สลิปผิดยอด/ซ้ำจะคง PENDING ให้ลองใหม่จนหมดอายุ)
+
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: user starts checkout
-    Created --> Pending: submit payment
-    Pending --> Paid: provider confirms
-    Pending --> Failed: provider rejects
-    Pending --> Cancelled: timeout 15min
-    Failed --> Pending: retry
-    Paid --> Refunded: admin refund
+    [*] --> Pending: holdAndCreateOrder<br/>(hold ที่นั่ง + PromptPay QR)
+    Pending --> Paid: submitSlip → EasySlip verify ผ่าน<br/>(ออกตั๋ว, seat=SOLD)
+    Pending --> Cancelled: timeout 5 นาที (sweeper)<br/>หรือผู้ใช้กดยกเลิก
+    Pending --> Pending: สลิปยอดไม่ตรง/ซ้ำ → ลองใหม่
+    Paid --> Refunded: admin คืนเงิน (manual)
     Cancelled --> [*]
     Refunded --> [*]
-    Paid --> [*]: tickets issued
+    Paid --> [*]: ตั๋วออกแล้ว
 ```
 
 ---
 
 ## 8. State Diagram — Seat Lifecycle
 
+> สถานะตรง enum `SeatStatus` = `AVAILABLE · HELD · SOLD · BLOCKED` · hold อยู่ใน Redis (`SET NX EX 300`), DB sync `HELD` ตอนสร้าง order
+
 ```mermaid
 stateDiagram-v2
     [*] --> Available
-    Available --> Held: user clicks
-    Held --> Available: TTL 5min expires
-    Held --> Available: user cancels
-    Held --> Sold: order paid
+    Available --> Held: hold (Redis SET NX, TTL 5min)
+    Held --> Available: TTL 5min หมด / ยกเลิก / order expire
+    Held --> Sold: ชำระเงินสำเร็จ (ออกตั๋ว)
+    Available --> Blocked: admin ปิดที่นั่ง
+    Blocked --> Available: admin เปิดคืน
     Sold --> Available: admin refund
-    Sold --> [*]: event ended
+    Sold --> [*]: จบงาน
 ```
 
 ---

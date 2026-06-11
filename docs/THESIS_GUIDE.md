@@ -89,7 +89,7 @@ erDiagram
     ORDER ||--o{ ORDER_ITEM : contains
     ORDER ||--o| PAYMENT : "paid via"
     ORDER ||--o{ TICKET : issues
-    ORDER_ITEM ||--|| SEAT : reserves
+    SEAT ||--o| ORDER_ITEM : "reserved by"
     SEAT ||--o| TICKET : "issued as"
 
     USER {
