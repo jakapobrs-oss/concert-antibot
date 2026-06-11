@@ -16,7 +16,7 @@ export function RegisterForm() {
     <form action={formAction} className="space-y-4">
       {/* error รวม (เช่น อีเมลซ้ำ) */}
       {state?.error && !fieldErr && (
-        <div className="flex items-start gap-2.5 rounded-lg bg-danger-bg p-3 text-sm text-danger">
+        <div className="flex items-start gap-2.5 rounded-lg border border-danger/25 bg-danger/10 p-3 text-sm text-danger">
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <span>{state.error}</span>
         </div>
@@ -57,7 +57,7 @@ export function RegisterForm() {
         {fieldErr?.password ? (
           <FieldError messages={fieldErr.password} />
         ) : (
-          <p className="text-xs text-neutral-500">อย่างน้อย 8 ตัวอักษร</p>
+          <p className="text-xs text-fg-faint">อย่างน้อย 8 ตัวอักษร</p>
         )}
       </div>
 

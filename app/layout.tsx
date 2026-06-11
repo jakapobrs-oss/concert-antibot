@@ -1,19 +1,20 @@
-import type { Metadata } from "next";
-import { Inter, Noto_Sans_Thai } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Anuphan, Chakra_Petch } from "next/font/google";
 import "./globals.css";
 
-// font ภาษาอังกฤษ + ภาษาไทย (preload เพื่อให้ FCP เร็ว)
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
+// ฟอนต์เนื้อหา — Anuphan (ไทย+ละติน อ่านง่าย, variable font)
+const anuphan = Anuphan({
+  subsets: ["thai", "latin"],
+  variable: "--font-anuphan",
   display: "swap",
 });
 
-const notoThai = Noto_Sans_Thai({
-  subsets: ["thai"],
-  variable: "--font-noto-thai",
-  display: "swap",
+// ฟอนต์ display — Chakra Petch (เหลี่ยมแบบจอ LED ใช้กับหัวข้อ/ตัวเลขสำคัญ)
+const chakraPetch = Chakra_Petch({
+  subsets: ["thai", "latin"],
   weight: ["400", "500", "600", "700"],
+  variable: "--font-chakra",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -22,15 +23,20 @@ export const metadata: Metadata = {
     template: "%s | Concert Anti-Bot",
   },
   description:
-    "ระบบจองบัตรคอนเสิร์ตที่มี anti-bot 8 ชั้น + fairness queue เพื่อให้ผู้ใช้จริงทุกคนมีโอกาสเท่ากัน",
+    "ระบบจองบัตรคอนเสิร์ตที่มี anti-bot และ fairness queue เพื่อให้ผู้ใช้จริงทุกคนมีโอกาสเท่ากัน",
+};
+
+// สีแถบ browser บนมือถือให้กลืนกับพื้นเวที
+export const viewport: Viewport = {
+  themeColor: "#171010",
 };
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="th" className={`${inter.variable} ${notoThai.variable}`}>
-      <body className="min-h-screen bg-neutral-50 text-neutral-900 antialiased font-sans">
+    <html lang="th" className={`${anuphan.variable} ${chakraPetch.variable}`}>
+      <body className="min-h-screen bg-ink-950 font-sans text-fg antialiased">
         {children}
       </body>
     </html>

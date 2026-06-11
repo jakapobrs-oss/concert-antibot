@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { SiteHeader } from "@/components/site-header";
 import { WaitingRoom } from "@/components/waiting-room";
-import { Card, CardContent } from "@/components/ui/card";
 import { getTurnstileSiteKey } from "@/lib/turnstile";
 
 export const dynamic = "force-dynamic";
@@ -24,26 +23,28 @@ export default async function QueuePage({
   if (!concert) notFound();
 
   return (
-    <>
+    <div className="flex min-h-screen flex-col">
       <SiteHeader />
-      <main className="mx-auto max-w-lg px-4 py-12">
-        <h1 className="text-center text-lg font-medium text-neutral-600 mb-6">
+      <main className="relative mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-12">
+        {/* แสงสาดจากบนจางๆ ให้ความรู้สึกหน้าเวที */}
+        <div className="bg-spotlight pointer-events-none absolute inset-x-0 top-0 h-72" aria-hidden />
+
+        <p className="relative mb-5 text-center font-display text-sm font-medium text-fg-faint">
           {concert.title}
-        </h1>
-        <Card>
-          <CardContent className="py-10">
-            {concert.status === "ON_SALE" ? (
-              <WaitingRoom
-                concertId={concert.id.toString()}
-                slug={slug}
-                turnstileSiteKey={getTurnstileSiteKey()}
-              />
-            ) : (
-              <p className="text-center text-neutral-500">คอนเสิร์ตนี้ยังไม่เปิดขาย</p>
-            )}
-          </CardContent>
-        </Card>
+        </p>
+
+        <div className="animate-fade-in-up relative overflow-hidden rounded-2xl border border-fg/10 bg-ink-850 px-6 py-10 shadow-lg sm:px-10">
+          {concert.status === "ON_SALE" ? (
+            <WaitingRoom
+              concertId={concert.id.toString()}
+              slug={slug}
+              turnstileSiteKey={getTurnstileSiteKey()}
+            />
+          ) : (
+            <p className="text-center text-fg-faint">คอนเสิร์ตนี้ยังไม่เปิดขาย</p>
+          )}
+        </div>
       </main>
-    </>
+    </div>
   );
 }

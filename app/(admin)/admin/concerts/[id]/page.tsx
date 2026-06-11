@@ -1,14 +1,23 @@
-// Admin — รายละเอียดคอนเสิร์ต + จัดการโซน/ที่นั่ง (เบื้องต้น)
+// Admin — รายละเอียดคอนเสิร์ต + จัดการโซน/ที่นั่ง (เบื้องต้น, โทนเวทีมืด)
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { formatTHB, formatThaiDate } from "@/lib/format";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { updateConcertStatus } from "@/app/actions/concert";
 
 export const dynamic = "force-dynamic";
+
+// tone ของ Badge ตามสถานะ (ชุดเดียวกับหน้า list)
+const statusTone = {
+  DRAFT: "neutral",
+  SCHEDULED: "info",
+  ON_SALE: "success",
+  SOLD_OUT: "danger",
+  ENDED: "neutral",
+} as const;
 
 export default async function AdminConcertDetailPage({
   params,
@@ -33,19 +42,24 @@ export default async function AdminConcertDetailPage({
     <>
       <SiteHeader />
       <main className="mx-auto max-w-4xl px-4 py-8">
-        <Link href="/admin/concerts" className="text-sm text-neutral-500 hover:text-brand-600">
+        <Link
+          href="/admin/concerts"
+          className="text-sm text-fg-faint transition-colors hover:text-brand-300"
+        >
           ← กลับไปรายการ
         </Link>
 
-        <div className="flex items-start justify-between gap-4 mt-2 mb-6 flex-wrap">
+        <div className="mb-6 mt-2 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">{concert.title}</h1>
-            <p className="text-neutral-500">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="font-display text-2xl font-bold text-fg">{concert.title}</h1>
+              <Badge tone={statusTone[concert.status as keyof typeof statusTone] ?? "neutral"}>
+                {concert.status}
+              </Badge>
+            </div>
+            <p className="mt-1 text-fg-faint">
               {concert.venue} · {formatThaiDate(concert.eventAt)}
             </p>
-            <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-neutral-100">
-              {concert.status}
-            </span>
           </div>
           {concert.status !== "ON_SALE" ? (
             <form
@@ -68,31 +82,43 @@ export default async function AdminConcertDetailPage({
           )}
         </div>
 
-        <h2 className="text-lg font-semibold mb-3">โซนที่นั่ง</h2>
+        <h2 className="mb-3 font-display text-lg font-semibold text-fg">โซนที่นั่ง</h2>
         {concert.zones.length === 0 ? (
-          <Card>
-            <CardContent>
-              <p className="text-sm text-neutral-500">
-                ยังไม่มีโซน — ระบบเพิ่มโซน/ที่นั่งผ่าน UI จะมาใน Phase 3.5
-                <br />
-                ตอนนี้ใช้ <code className="bg-neutral-100 px-1 rounded">pnpm db:seed</code> เพื่อใส่ข้อมูลตัวอย่าง
-              </p>
-            </CardContent>
-          </Card>
+          <div className="rounded-xl border border-dashed border-fg/15 bg-ink-900/60 p-6">
+            <p className="text-sm leading-relaxed text-fg-faint">
+              ยังไม่มีโซน — ระบบเพิ่มโซน/ที่นั่งผ่าน UI จะมาใน Phase 3.5
+              <br />
+              ตอนนี้ใช้{" "}
+              <code className="rounded bg-fg/10 px-1.5 py-0.5 font-mono text-xs text-fg-dim">
+                pnpm db:seed
+              </code>{" "}
+              เพื่อใส่ข้อมูลตัวอย่าง
+            </p>
+          </div>
         ) : (
           <div className="space-y-2">
             {concert.zones.map((z) => (
-              <Card key={z.id.toString()} className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: z.color }} />
-                    <span className="font-medium">{z.name}</span>
+              <div
+                key={z.id.toString()}
+                className="rounded-xl border border-fg/10 bg-ink-850 p-4 transition-colors hover:border-fg/20"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="size-3 rounded-full"
+                      style={{ backgroundColor: z.color, boxShadow: `0 0 10px ${z.color}90` }}
+                      aria-hidden
+                    />
+                    <span className="font-display font-medium text-fg">{z.name}</span>
                   </div>
-                  <div className="text-sm text-neutral-600">
-                    {formatTHB(z.price.toString())} · {z._count.seats} ที่นั่ง
+                  <div className="text-sm text-fg-dim">
+                    <span className="text-led font-semibold text-spot-400">
+                      {formatTHB(z.price.toString())}
+                    </span>{" "}
+                    · {z._count.seats} ที่นั่ง
                   </div>
                 </div>
-              </Card>
+              </div>
             ))}
           </div>
         )}

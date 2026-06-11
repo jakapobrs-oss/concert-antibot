@@ -1,4 +1,4 @@
-// Checkout page (Phase 7) — แสดง QR PromptPay + upload สลิป
+// Checkout page (Phase 7) — แสดง QR PromptPay + upload สลิป (โทนเวทีมืด)
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
@@ -46,14 +46,14 @@ export default async function CheckoutPage({
   );
 
   return (
-    <>
+    <div className="flex min-h-screen flex-col">
       <SiteHeader />
-      <main className="mx-auto max-w-lg px-4 py-8">
-        <h1 className="mb-1 text-xl font-bold tracking-tight">ชำระเงิน</h1>
-        <p className="mb-6 text-sm text-neutral-500">{order.concert.title}</p>
+      <main className="mx-auto w-full max-w-lg flex-1 px-4 py-8">
+        <h1 className="mb-1 font-display text-2xl font-bold tracking-tight text-fg">ชำระเงิน</h1>
+        <p className="mb-6 text-sm text-fg-faint">{order.concert.title}</p>
 
         {expired ? (
-          <div className="rounded-lg bg-danger-bg p-4 text-center text-sm text-danger">
+          <div className="rounded-xl border border-danger/25 bg-danger/10 p-5 text-center text-sm text-danger">
             คำสั่งซื้อหมดอายุแล้ว — ที่นั่งถูกปล่อยคืน กรุณาเริ่มจองใหม่
           </div>
         ) : (
@@ -67,6 +67,6 @@ export default async function CheckoutPage({
           />
         )}
       </main>
-    </>
+    </div>
   );
 }

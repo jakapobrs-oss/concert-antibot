@@ -1,12 +1,13 @@
 "use client";
 
-// Waiting Room — client component
+// Waiting Room — client component (โทนเวทีมืด, เลขคิวสไตล์ป้าย LED)
 // flow: fingerprint → join (anti-bot assess) → ถ้า CHALLENGE แสดง Turnstile → retry
 //       → WAITING (poll position) → ADMITTED → redirect ไปเลือกที่นั่ง
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldAlert, Bot, Clock, ShieldCheck, Scale, UserRound, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EqBars } from "@/components/eq-bars";
 import { TurnstileWidget } from "@/components/turnstile-widget";
 import { useFingerprint } from "@/lib/use-fingerprint";
 import { useBehaviorTracker } from "@/lib/use-behavior-tracker";
@@ -176,10 +177,12 @@ export function WaitingRoom({
 
   if (blocked) {
     return (
-      <div className="text-center space-y-4">
-        <div className="text-4xl">🚫</div>
-        <h2 className="text-xl font-semibold">ตรวจพบกิจกรรมผิดปกติ</h2>
-        <p className="text-neutral-600 text-sm">
+      <div className="space-y-4 text-center">
+        <div className="mx-auto grid size-16 place-items-center rounded-full border border-danger/25 bg-danger/10 text-danger">
+          <ShieldAlert className="size-8" />
+        </div>
+        <h2 className="font-display text-xl font-semibold text-fg">ตรวจพบกิจกรรมผิดปกติ</h2>
+        <p className="text-sm leading-relaxed text-fg-dim">
           ระบบปฏิเสธคำขอนี้ หากคุณเป็นผู้ใช้จริง กรุณาลองใหม่จากเบราว์เซอร์ปกติ
         </p>
       </div>
@@ -188,10 +191,12 @@ export function WaitingRoom({
 
   if (needChallenge) {
     return (
-      <div className="text-center space-y-4">
-        <div className="text-4xl">🤖</div>
-        <h2 className="text-xl font-semibold">ยืนยันว่าคุณไม่ใช่บอท</h2>
-        <p className="text-neutral-600 text-sm">กรุณาทำเครื่องหมายด้านล่างเพื่อเข้าคิว</p>
+      <div className="space-y-4 text-center">
+        <div className="mx-auto grid size-16 place-items-center rounded-full border border-warning/25 bg-warning/10 text-warning">
+          <Bot className="size-8" />
+        </div>
+        <h2 className="font-display text-xl font-semibold text-fg">ยืนยันว่าคุณไม่ใช่บอท</h2>
+        <p className="text-sm text-fg-dim">กรุณาทำเครื่องหมายด้านล่างเพื่อเข้าคิว</p>
         <TurnstileWidget
           siteKey={turnstileSiteKey}
           onVerify={(token) => attemptJoin(token)}
@@ -202,9 +207,11 @@ export function WaitingRoom({
 
   if (error) {
     return (
-      <div className="text-center space-y-4">
-        <div className="text-4xl">⏰</div>
-        <p className="text-red-600">{error}</p>
+      <div className="space-y-4 text-center">
+        <div className="mx-auto grid size-16 place-items-center rounded-full border border-fg/15 bg-fg/5 text-fg-dim">
+          <Clock className="size-8" />
+        </div>
+        <p className="text-danger">{error}</p>
         <Button onClick={() => window.location.reload()}>เข้าคิวใหม่</Button>
       </div>
     );
@@ -213,8 +220,8 @@ export function WaitingRoom({
   if (!status) {
     return (
       <div className="space-y-3 text-center">
-        <Loader2 className="mx-auto size-8 animate-spin text-brand-500" />
-        <p className="text-neutral-500">กำลังเข้าคิว…</p>
+        <Loader2 className="mx-auto size-8 animate-spin text-brand-400" />
+        <p className="text-fg-faint">กำลังเข้าคิว…</p>
       </div>
     );
   }
@@ -223,42 +230,72 @@ export function WaitingRoom({
     status.total > 0 ? Math.round(((status.total - status.ahead) / status.total) * 100) : 0;
 
   return (
-    <div className="text-center space-y-6">
-      <div className="text-5xl">🎟️</div>
+    <div className="space-y-6 text-center">
+      <EqBars className="h-5 text-brand-400" />
       <div>
-        <h2 className="text-2xl font-bold mb-1">คุณอยู่ในห้องรอ</h2>
-        <p className="text-neutral-500 text-sm">
+        <h2 className="mb-1.5 font-display text-2xl font-bold text-fg">คุณอยู่ในห้องรอ</h2>
+        <p className="text-sm text-fg-faint">
           ระบบจัดคิวอย่างเป็นธรรม — ทุกคนที่เข้าพร้อมกันมีโอกาสเท่ากัน
         </p>
       </div>
 
-      <div className="bg-brand-50 rounded-xl p-6">
-        <p className="text-sm text-neutral-600 mb-1">ตำแหน่งของคุณ</p>
-        <p className="text-5xl font-bold text-brand-600">{status.position.toLocaleString()}</p>
-        <p className="text-sm text-neutral-500 mt-1">
+      {/* ป้าย LED แสดงตำแหน่งคิว — พระเอกของหน้านี้ */}
+      <div className="relative overflow-hidden rounded-xl border border-spot-400/25 bg-ink-deep p-6">
+        <div className="bg-grain absolute inset-0" aria-hidden />
+        <p className="relative font-display text-sm text-fg-faint">ตำแหน่งของคุณ</p>
+        <p
+          className="text-led relative mt-1 text-6xl font-bold text-spot-300"
+          style={{ textShadow: "0 0 28px oklch(0.8 0.15 78 / 0.45)" }}
+        >
+          {status.position.toLocaleString()}
+        </p>
+        <p className="relative mt-2 text-sm text-fg-faint">
           จากทั้งหมด {status.total.toLocaleString()} คน
         </p>
       </div>
 
       <div>
-        <div className="h-2 bg-neutral-200 rounded-full overflow-hidden">
+        {/* แถบความคืบหน้า — มีแสงวิ่งบอกว่าระบบยังทำงาน */}
+        <div className="relative h-2 overflow-hidden rounded-full bg-ink-700">
           <div
-            className="h-full bg-brand-500 transition-all duration-500"
+            className="relative h-full overflow-hidden rounded-full bg-gradient-to-r from-brand-700 to-brand-500 transition-all duration-500"
             style={{ width: `${progress}%` }}
-          />
+          >
+            <span className="animate-shimmer absolute inset-y-0 w-1/3 bg-white/25" aria-hidden />
+          </div>
         </div>
-        <p className="text-xs text-neutral-400 mt-2">
+        <p className="mt-2 text-xs text-fg-faint">
           กรุณาอย่าปิดหน้านี้ — ระบบจะพาคุณเข้าสู่หน้าเลือกที่นั่งอัตโนมัติเมื่อถึงคิว
         </p>
       </div>
 
-      {/* กล่องกติกาความเป็นธรรม — perceived fairness: ทำให้ผู้ใช้เข้าใจว่าระบบยุติธรรมยังไง */}
-      <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-4 text-left text-sm space-y-2">
-        <p className="font-medium text-neutral-700">🛡️ ระบบนี้ยุติธรรมอย่างไร</p>
-        <ul className="space-y-1.5 text-neutral-600 text-xs">
-          <li>⚖️ <strong>ไม่เอื้อคนเน็ตเร็ว</strong> — ทุกคนที่เข้าช่วงเวลาเดียวกันมีโอกาสเท่ากัน ระบบสุ่มลำดับ ไม่ตัดสินที่ความเร็วระดับเสี้ยววินาที</li>
-          <li>👤 <strong>1 บัญชี = 1 คิว</strong> — เปิดหลายหน้าจอหรือหลายแท็บไม่ช่วยให้ได้เปรียบ ทุกแท็บใช้คิวเดียวกัน</li>
-          <li>🚫 <strong>ไม่มีทางลัด</strong> — ไม่มีการจ่ายเงินแซงคิว ทุกคนผ่านขั้นตอนเดียวกัน</li>
+      {/* กล่องกติกาความเป็นธรรม — perceived fairness: ให้ผู้ใช้เข้าใจว่าระบบยุติธรรมยังไง */}
+      <div className="space-y-2.5 rounded-lg border border-fg/10 bg-ink-900/70 p-4 text-left text-sm">
+        <p className="flex items-center gap-2 font-display font-medium text-fg">
+          <ShieldCheck className="size-4 text-brand-400" />
+          ระบบนี้ยุติธรรมอย่างไร
+        </p>
+        <ul className="space-y-2 text-xs leading-relaxed text-fg-dim">
+          <li className="flex gap-2">
+            <Scale className="mt-0.5 size-3.5 shrink-0 text-spot-400" />
+            <span>
+              <strong className="text-fg">ไม่เอื้อคนเน็ตเร็ว</strong> — ทุกคนที่เข้าช่วงเวลาเดียวกันมีโอกาสเท่ากัน
+              ระบบสุ่มลำดับ ไม่ตัดสินที่ความเร็วระดับเสี้ยววินาที
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <UserRound className="mt-0.5 size-3.5 shrink-0 text-spot-400" />
+            <span>
+              <strong className="text-fg">1 บัญชี = 1 คิว</strong> — เปิดหลายหน้าจอหรือหลายแท็บไม่ช่วยให้ได้เปรียบ
+              ทุกแท็บใช้คิวเดียวกัน
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <Ban className="mt-0.5 size-3.5 shrink-0 text-spot-400" />
+            <span>
+              <strong className="text-fg">ไม่มีทางลัด</strong> — ไม่มีการจ่ายเงินแซงคิว ทุกคนผ่านขั้นตอนเดียวกัน
+            </span>
+          </li>
         </ul>
       </div>
 

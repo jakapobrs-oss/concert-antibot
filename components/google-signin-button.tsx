@@ -11,10 +11,10 @@ export function GoogleSignInButton({ label = "เข้าสู่ระบบ�
 
   return (
     <>
-      <div className="my-5 flex items-center gap-3 text-xs text-neutral-400">
-        <span className="h-px flex-1 bg-neutral-200" />
+      <div className="my-5 flex items-center gap-3 text-xs text-fg-faint">
+        <span className="h-px flex-1 bg-fg/15" />
         หรือ
-        <span className="h-px flex-1 bg-neutral-200" />
+        <span className="h-px flex-1 bg-fg/15" />
       </div>
       <form
         action={async () => {

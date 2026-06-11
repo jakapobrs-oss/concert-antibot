@@ -1,7 +1,8 @@
-// ป้ายสถานะเล็กๆ — ใช้กับสถานะคอนเสิร์ต / ผลตรวจบอท ฯลฯ
+// ป้ายสถานะเล็กๆ (โทนเวทีมืด) — ใช้กับสถานะคอนเสิร์ต / ผลตรวจบอท ฯลฯ
+// พื้นเป็นสีจาง /15 + ตัวหนังสือสีสว่าง อ่านชัดบนการ์ดมืดทุกระดับ
 import type { HTMLAttributes, ReactNode } from "react";
 
-type Tone = "neutral" | "brand" | "success" | "warning" | "danger" | "info";
+type Tone = "neutral" | "brand" | "spot" | "success" | "warning" | "danger" | "info";
 
 interface Props extends HTMLAttributes<HTMLSpanElement> {
   tone?: Tone;
@@ -10,17 +11,19 @@ interface Props extends HTMLAttributes<HTMLSpanElement> {
 }
 
 const toneClass: Record<Tone, string> = {
-  neutral: "bg-neutral-100 text-neutral-700",
-  brand: "bg-brand-50 text-brand-700",
-  success: "bg-success-bg text-success",
-  warning: "bg-warning-bg text-[oklch(0.5_0.13_70)]",
-  danger: "bg-danger-bg text-danger",
-  info: "bg-info-bg text-info",
+  neutral: "bg-fg/10 text-fg-dim",
+  brand: "bg-brand-500/15 text-brand-300",
+  spot: "bg-spot-400/15 text-spot-300",
+  success: "bg-success/12 text-success",
+  warning: "bg-warning/12 text-warning",
+  danger: "bg-danger/12 text-danger",
+  info: "bg-info/12 text-info",
 };
 
 const dotColor: Record<Tone, string> = {
-  neutral: "bg-neutral-400",
+  neutral: "bg-fg-faint",
   brand: "bg-brand-500",
+  spot: "bg-spot-400",
   success: "bg-success",
   warning: "bg-warning",
   danger: "bg-danger",
@@ -30,11 +33,11 @@ const dotColor: Record<Tone, string> = {
 export function Badge({ className = "", tone = "neutral", dot = false, children, ...props }: Props) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${toneClass[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-display text-xs font-medium ${toneClass[tone]} ${className}`}
       {...props}
     >
       {dot && (
-        <span className={`size-1.5 rounded-full ${dotColor[tone]}`} aria-hidden />
+        <span className={`size-1.5 animate-pulse rounded-full ${dotColor[tone]}`} aria-hidden />
       )}
       {children}
     </span>

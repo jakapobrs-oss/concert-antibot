@@ -1,10 +1,11 @@
-// Site header — แถบบนของทุกหน้า (พื้นเวทีดำอมแดง, sticky)
+// Site header — แถบบนของทุกหน้า (กลืนกับพื้นเวทีมืด, sticky)
 // ยังไม่ login → 2 ปุ่มชัดๆ (เข้าสู่ระบบ / สมัครสมาชิก)
 // login แล้ว → เมนูผู้ใช้แบบ dropdown (components/user-menu.tsx)
 import Link from "next/link";
 import { Ticket } from "lucide-react";
 import { auth, signOut } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
+import { EqBars } from "@/components/eq-bars";
 import { UserMenu } from "@/components/user-menu";
 
 export async function SiteHeader() {
@@ -24,16 +25,20 @@ export async function SiteHeader() {
   return (
     <header
       style={{ zIndex: "var(--z-sticky)" }}
-      className="bg-stage sticky top-0 border-b border-white/10 backdrop-blur-sm"
+      className="sticky top-0 border-b border-fg/10 bg-ink-deep/85 backdrop-blur-md"
     >
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
-        {/* โลโก้ */}
-        <Link href="/" className="group flex items-center gap-2 text-white">
-          <span className="grid size-9 place-items-center rounded-lg bg-brand-600 shadow-brand transition-transform duration-200 group-hover:scale-105">
-            <Ticket className="size-5" strokeWidth={2.2} />
+        {/* โลโก้ — ป้ายไฟแดง + ชื่อ + equalizer เล็กๆ ให้รู้ว่าเว็บ "มีชีวิต" */}
+        <Link href="/" className="group flex items-center gap-2.5 text-fg">
+          <span className="grid size-9 place-items-center rounded-lg bg-brand-600 shadow-glow-brand transition-transform duration-200 group-hover:scale-105">
+            <Ticket className="size-5 text-white" strokeWidth={2.2} />
           </span>
-          <span className="text-lg font-bold tracking-tight">
+          <span className="font-display text-lg font-bold tracking-tight">
             Concert<span className="text-brand-400">.</span>
+          </span>
+          {/* equalizer เป็นของตกแต่ง — ซ่อนบนจอเล็กให้ header มีที่พอ */}
+          <span className="hidden sm:block">
+            <EqBars className="h-3 text-brand-400/80" />
           </span>
         </Link>
 
@@ -41,9 +46,11 @@ export async function SiteHeader() {
         <nav className="flex items-center gap-1 sm:gap-2">
           <Link
             href="/concerts"
-            className="rounded-lg px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+            className="whitespace-nowrap rounded-lg px-3 py-2 font-display text-sm font-medium text-fg-dim transition-colors hover:bg-fg/10 hover:text-fg"
           >
-            คอนเสิร์ตทั้งหมด
+            {/* จอเล็กใช้คำสั้น กันแถบ header ล้น */}
+            <span className="sm:hidden">คอนเสิร์ต</span>
+            <span className="hidden sm:inline">คอนเสิร์ตทั้งหมด</span>
           </Link>
 
           {isLoggedIn ? (
@@ -58,12 +65,16 @@ export async function SiteHeader() {
           ) : (
             <div className="ml-1 flex items-center gap-2 sm:ml-2">
               <Link href="/login">
-                <Button variant="ghost" size="sm" className="text-white hover:bg-white/10">
+                <Button variant="ghost" size="sm">
                   เข้าสู่ระบบ
                 </Button>
               </Link>
               <Link href="/register">
-                <Button size="sm">สมัครสมาชิก</Button>
+                <Button size="sm">
+                  {/* จอเล็กใช้คำสั้น กันปุ่มล้นขอบจอ */}
+                  <span className="sm:hidden">สมัคร</span>
+                  <span className="hidden sm:inline">สมัครสมาชิก</span>
+                </Button>
               </Link>
             </div>
           )}

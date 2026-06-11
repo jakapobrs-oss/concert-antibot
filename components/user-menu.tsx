@@ -1,6 +1,6 @@
 "use client";
 
-// เมนูผู้ใช้แบบ dropdown (แสดงเมื่อ login แล้ว)
+// เมนูผู้ใช้แบบ dropdown (แสดงเมื่อ login แล้ว) — โทนเวทีมืด
 // ปิดเมื่อคลิกข้างนอก / กด Escape / เลือกเมนู — เข้าถึงด้วยคีย์บอร์ดได้
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -42,18 +42,18 @@ export function UserMenu({ name, email, isAdmin, signOutAction }: Props) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-full py-1 pl-1 pr-2.5 text-sm text-white/90
-          transition-colors hover:bg-white/10 active:bg-white/15"
+        className="flex items-center gap-2 rounded-full py-1 pl-1 pr-2.5 text-sm text-fg
+          transition-colors hover:bg-fg/10 active:bg-fg/15"
       >
         <span
-          className="grid size-8 place-items-center rounded-full bg-brand-600 text-sm font-semibold text-white"
+          className="grid size-8 place-items-center rounded-full bg-brand-600 font-display text-sm font-semibold text-white"
           aria-hidden
         >
           {initial}
         </span>
         <span className="hidden max-w-32 truncate font-medium sm:block">{name}</span>
         <ChevronDown
-          className={`size-4 text-white/60 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          className={`size-4 text-fg-faint transition-transform duration-200 ${open ? "rotate-180" : ""}`}
           aria-hidden
         />
       </button>
@@ -63,12 +63,12 @@ export function UserMenu({ name, email, isAdmin, signOutAction }: Props) {
           role="menu"
           style={{ zIndex: "var(--z-dropdown)" }}
           className="animate-scale-in absolute right-0 mt-2 w-60 origin-top-right overflow-hidden
-            rounded-xl border border-neutral-200 bg-white shadow-lg"
+            rounded-xl border border-fg/15 bg-ink-800 shadow-lg"
         >
           {/* หัวเมนู — ชื่อ + อีเมล */}
-          <div className="border-b border-neutral-100 px-4 py-3">
-            <p className="truncate text-sm font-semibold text-neutral-900">{name}</p>
-            {email && <p className="truncate text-xs text-neutral-500">{email}</p>}
+          <div className="border-b border-fg/10 px-4 py-3">
+            <p className="truncate text-sm font-semibold text-fg">{name}</p>
+            {email && <p className="truncate text-xs text-fg-faint">{email}</p>}
           </div>
 
           <div className="p-1.5">
@@ -87,13 +87,13 @@ export function UserMenu({ name, email, isAdmin, signOutAction }: Props) {
           </div>
 
           {/* ออกจากระบบ — เรียก server action ผ่าน form */}
-          <div className="border-t border-neutral-100 p-1.5">
+          <div className="border-t border-fg/10 p-1.5">
             <form action={signOutAction}>
               <button
                 type="submit"
                 role="menuitem"
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium
-                  text-danger transition-colors hover:bg-danger-bg"
+                  text-danger transition-colors hover:bg-danger/10"
               >
                 <LogOut className="size-4" />
                 ออกจากระบบ
@@ -122,10 +122,10 @@ function MenuLink({
       href={href}
       role="menuitem"
       onClick={onClick}
-      className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-neutral-700
-        transition-colors hover:bg-neutral-100"
+      className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-fg-dim
+        transition-colors hover:bg-fg/10 hover:text-fg"
     >
-      <span className="text-neutral-400">{icon}</span>
+      <span className="text-fg-faint">{icon}</span>
       {children}
     </Link>
   );

@@ -18,20 +18,20 @@ export default async function LoginPage({
   return (
     <div className="animate-fade-in-up">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">ยินดีต้อนรับกลับ</h1>
-        <p className="mt-1 text-sm text-neutral-500">เข้าสู่ระบบเพื่อจองและดูตั๋วของคุณ</p>
+        <h1 className="font-display text-2xl font-bold tracking-tight text-fg">ยินดีต้อนรับกลับ</h1>
+        <p className="mt-1 text-sm text-fg-faint">เข้าสู่ระบบเพื่อจองและดูตั๋วของคุณ</p>
       </div>
 
       <AuthTabs active="login" />
 
       {registered && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg bg-success-bg p-3 text-sm text-success">
+        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-success/25 bg-success/10 p-3 text-sm text-success">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
           <span>สมัครสมาชิกสำเร็จ — เข้าสู่ระบบได้เลย</span>
         </div>
       )}
       {error && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg bg-danger-bg p-3 text-sm text-danger">
+        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-danger/25 bg-danger/10 p-3 text-sm text-danger">
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <span>เข้าสู่ระบบไม่สำเร็จ — ตรวจสอบอีเมลหรือรหัสผ่านอีกครั้ง</span>
         </div>
@@ -68,9 +68,9 @@ export default async function LoginPage({
 
       <GoogleSignInButton />
 
-      <p className="mt-6 text-center text-sm text-neutral-600">
+      <p className="mt-6 text-center text-sm text-fg-dim">
         ยังไม่มีบัญชี?{" "}
-        <Link href="/register" className="font-semibold text-brand-600 hover:underline">
+        <Link href="/register" className="font-semibold text-brand-300 hover:underline">
           สมัครสมาชิก
         </Link>
       </p>

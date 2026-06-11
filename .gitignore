@@ -60,3 +60,7 @@ files.zip
 # Claude Code — lock + local settings (ห้าม commit)
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+
+# Design tooling output — regenerate ได้ด้วย scripts/shoot-design.ts ไม่ต้องเข้า repo
+.impeccable/
+.shots/

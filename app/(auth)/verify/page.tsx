@@ -16,23 +16,23 @@ export default async function VerifyPage({
     <div className="animate-fade-in-up text-center">
       {result.ok ? (
         <>
-          <div className="mx-auto grid size-16 place-items-center rounded-full bg-success-bg text-success">
+          <div className="mx-auto grid size-16 place-items-center rounded-full border border-success/25 bg-success/10 text-success">
             <CheckCircle2 className="size-8" />
           </div>
-          <h1 className="mt-5 text-2xl font-bold tracking-tight text-neutral-900">
+          <h1 className="mt-5 font-display text-2xl font-bold tracking-tight text-fg">
             ยืนยันอีเมลสำเร็จ
           </h1>
-          <p className="mt-2 text-sm text-neutral-500">บัญชีของคุณพร้อมใช้งานแล้ว</p>
+          <p className="mt-2 text-sm text-fg-faint">บัญชีของคุณพร้อมใช้งานแล้ว</p>
         </>
       ) : (
         <>
-          <div className="mx-auto grid size-16 place-items-center rounded-full bg-danger-bg text-danger">
+          <div className="mx-auto grid size-16 place-items-center rounded-full border border-danger/25 bg-danger/10 text-danger">
             <XCircle className="size-8" />
           </div>
-          <h1 className="mt-5 text-2xl font-bold tracking-tight text-neutral-900">
+          <h1 className="mt-5 font-display text-2xl font-bold tracking-tight text-fg">
             ยืนยันไม่สำเร็จ
           </h1>
-          <p className="mt-2 text-sm text-neutral-500">{result.error}</p>
+          <p className="mt-2 text-sm text-fg-faint">{result.error}</p>
         </>
       )}
 

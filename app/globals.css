@@ -1,64 +1,83 @@
 /* Tailwind 4 — CSS-first config
-   Design system ของ Concert Anti-Bot
-   อารมณ์: เวทีคอนเสิร์ตยามค่ำคืน — แดงเข้ม-ดำ, พลังสูง แต่ดูน่าเชื่อถือ */
+   Design system "Midnight Stage" ของ Concert Anti-Bot
+   คอนเซ็ปต์: กลางคืนหน้าเวที — ทั้งเว็บพื้นดำอมแดงอุ่น มีไฟเวที 2 ดวง
+   · แดง scarlet  = ไฟดวงหลัก → action / แบรนด์ / สถานะร้อน
+   · ทองอำพัน    = ไฟ spotlight → ราคา / เลขคิว / ไฮไลต์
+   ตัวเลขสำคัญ (คิว, นับถอยหลัง) ใช้ฟอนต์ display สไตล์ป้าย LED (Chakra Petch) */
 @import "tailwindcss";
 
 @theme {
-  /* ───────── Typography ───────── */
-  /* ฟอนต์ไทย + อังกฤษ (ตั้ง variable มาจาก next/font ใน layout) */
-  --font-sans: var(--font-noto-thai), var(--font-inter), system-ui, sans-serif;
+  /* ───────── Typography ─────────
+     ตัวแปรฟอนต์มาจาก next/font ใน layout.tsx
+     Anuphan = เนื้อหา (ไทยอ่านง่าย) / Chakra Petch = display + ตัวเลข LED */
+  --font-sans: var(--font-anuphan), system-ui, sans-serif;
+  --font-display: var(--font-chakra), var(--font-anuphan), system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", monospace;
 
-  /* ───────── Brand (แดง — เอกลักษณ์เดิม The Concert) ───────── */
+  /* ───────── Ink (พื้นมืดของทั้งเว็บ — ดำอมแดงอุ่น ไล่จากตื้นไปลึก) ───────── */
+  --color-ink-500: oklch(0.37 0.014 22);
+  --color-ink-600: oklch(0.31 0.014 22);
+  --color-ink-700: oklch(0.26 0.014 22);   /* เส้นขอบเข้ม / แถบ progress พื้น */
+  --color-ink-800: oklch(0.215 0.014 22);  /* surface ยกระดับ (hover, panel ซ้อน) */
+  --color-ink-850: oklch(0.19 0.013 22);   /* surface การ์ดหลัก */
+  --color-ink-900: oklch(0.165 0.012 22);  /* section สลับจังหวะ */
+  --color-ink-950: oklch(0.143 0.011 22);  /* พื้น body */
+  --color-ink-deep: oklch(0.115 0.01 22);  /* ลึกสุด — hero / footer */
+
+  /* ───────── Foreground (ตัวหนังสือบนพื้นมืด — ขาวอุ่น, คุม AA ทุกขั้น) ───────── */
+  --color-fg: oklch(0.965 0.004 75);       /* หลัก ~14:1 บน ink-950 */
+  --color-fg-dim: oklch(0.8 0.008 60);     /* รอง ~8:1 */
+  --color-fg-faint: oklch(0.67 0.01 45);   /* caption ~5:1 — จางสุดที่อนุญาต */
+
+  /* ───────── Brand (แดง scarlet — เอกลักษณ์เดิม จูนให้สดบนพื้นมืด) ───────── */
   --color-brand-50: oklch(0.971 0.013 17.4);
   --color-brand-100: oklch(0.936 0.032 17.7);
   --color-brand-200: oklch(0.885 0.062 18.3);
-  --color-brand-300: oklch(0.808 0.114 19.6);
-  --color-brand-400: oklch(0.704 0.176 22.2);
-  --color-brand-500: oklch(0.637 0.208 25.3);
-  --color-brand-600: oklch(0.577 0.221 27.3); /* primary — ~#dc2626 */
+  --color-brand-300: oklch(0.79 0.115 20);
+  --color-brand-400: oklch(0.715 0.17 23);  /* ตัวหนังสือ/ไอคอนแดงบนพื้นมืด */
+  --color-brand-500: oklch(0.645 0.215 26.5); /* ขอบ / glow / จุด live */
+  --color-brand-600: oklch(0.575 0.222 27.5); /* ปุ่ม primary (ขาวทับผ่าน AA) */
   --color-brand-700: oklch(0.505 0.197 27.5);
-  --color-brand-800: oklch(0.444 0.167 27.0);
-  --color-brand-900: oklch(0.396 0.137 25.7);
-  --color-brand-950: oklch(0.258 0.092 26.0);
+  --color-brand-800: oklch(0.444 0.167 27);
+  --color-brand-900: oklch(0.39 0.13 26);
+  --color-brand-950: oklch(0.26 0.085 26);
 
-  /* ───────── Ink / Stage (ดำอมแดงเล็กน้อย — ใช้กับ header, hero, footer) ───────── */
-  --color-ink-700: oklch(0.32 0.012 25);
-  --color-ink-800: oklch(0.255 0.012 25);
-  --color-ink-900: oklch(0.205 0.012 25);
-  --color-ink-950: oklch(0.165 0.014 25);
+  /* ───────── Spot (ทองอำพัน spotlight — ราคา/เลขคิว/ไฮไลต์) ───────── */
+  --color-spot-200: oklch(0.9 0.1 85);
+  --color-spot-300: oklch(0.855 0.135 82);  /* ตัวเลข LED ใหญ่ */
+  --color-spot-400: oklch(0.8 0.15 78);     /* ราคา / ข้อความอำพัน ~7:1 */
+  --color-spot-500: oklch(0.72 0.15 70);
+  --color-spot-600: oklch(0.6 0.13 60);
 
-  /* ───────── Semantic states ───────── */
-  --color-success: oklch(0.62 0.16 150);
-  --color-success-bg: oklch(0.96 0.03 150);
-  --color-warning: oklch(0.72 0.15 75);
-  --color-warning-bg: oklch(0.97 0.04 85);
-  --color-danger: oklch(0.58 0.22 27);
-  --color-danger-bg: oklch(0.96 0.025 20);
-  --color-info: oklch(0.6 0.14 245);
-  --color-info-bg: oklch(0.96 0.03 245);
+  /* ───────── Semantic states (เวอร์ชันพื้นมืด — ใช้คู่ /10 หรือ /15 เป็นพื้น) ───────── */
+  --color-success: oklch(0.78 0.16 152);
+  --color-warning: oklch(0.83 0.14 85);
+  --color-danger: oklch(0.7 0.19 25);
+  --color-info: oklch(0.78 0.1 230);
 
-  /* ───────── Radius scale ───────── */
+  /* ───────── Radius ───────── */
   --radius-md: 0.625rem;
   --radius-lg: 0.875rem;
   --radius-xl: 1.125rem;
   --radius-2xl: 1.5rem;
 
-  /* ───────── Shadow scale (นุ่ม โทนเทาเย็น ไม่ใช่ดำสนิท) ───────── */
-  --shadow-xs: 0 1px 2px oklch(0.2 0.02 25 / 0.06);
-  --shadow-sm: 0 1px 3px oklch(0.2 0.02 25 / 0.08), 0 1px 2px oklch(0.2 0.02 25 / 0.04);
-  --shadow-md: 0 4px 12px oklch(0.2 0.02 25 / 0.08), 0 2px 4px oklch(0.2 0.02 25 / 0.05);
-  --shadow-lg: 0 12px 28px oklch(0.2 0.02 25 / 0.12), 0 4px 8px oklch(0.2 0.02 25 / 0.06);
-  --shadow-brand: 0 8px 24px oklch(0.577 0.221 27.3 / 0.28);
+  /* ───────── Shadows (พื้นมืด: เงาดำลึก + เงาเรืองแสงไฟเวที) ───────── */
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 3px oklch(0 0 0 / 0.35), 0 1px 2px oklch(0 0 0 / 0.25);
+  --shadow-md: 0 4px 14px oklch(0 0 0 / 0.4), 0 2px 4px oklch(0 0 0 / 0.3);
+  --shadow-lg: 0 16px 40px oklch(0 0 0 / 0.5), 0 4px 10px oklch(0 0 0 / 0.35);
+  --shadow-glow-brand: 0 0 22px oklch(0.645 0.215 26.5 / 0.35);
+  --shadow-glow-brand-lg: 0 0 44px oklch(0.645 0.215 26.5 / 0.45);
+  --shadow-glow-spot: 0 0 26px oklch(0.8 0.15 78 / 0.3);
 
   /* ───────── Motion ───────── */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* semantic z-index scale — เลิกใช้เลข 999 มั่วๆ */
 @layer base {
   :root {
+    /* semantic z-index scale — เลิกใช้เลข 999 มั่วๆ */
     --z-dropdown: 1000;
     --z-sticky: 1100;
     --z-overlay: 1200;
@@ -70,10 +89,14 @@
   html {
     scroll-behavior: smooth;
     -webkit-text-size-adjust: 100%;
+    /* บอก browser ว่าเป็นธีมมืด → scrollbar/ฟอร์ม native เป็นโทนมืดเอง */
+    color-scheme: dark;
   }
 
   body {
     text-rendering: optimizeLegibility;
+    background-color: var(--color-ink-950);
+    color: var(--color-fg);
   }
 
   /* หัวข้อ h1–h3 จัดบรรทัดให้สมดุล อ่านง่าย */
@@ -88,9 +111,14 @@
     text-wrap: pretty;
   }
 
-  /* focus ring กลางสำหรับ accessibility — โทนแบรนด์ */
+  ::selection {
+    background-color: var(--color-brand-600);
+    color: white;
+  }
+
+  /* focus ring กลางสำหรับ accessibility — แดงสว่างมองเห็นชัดบนพื้นมืด */
   :focus-visible {
-    outline: 2px solid var(--color-brand-500);
+    outline: 2px solid var(--color-brand-400);
     outline-offset: 2px;
     border-radius: 2px;
   }
@@ -98,21 +126,60 @@
 
 /* ───────── Utilities เสริม ───────── */
 @layer utilities {
-  /* พื้นเวที — ไล่เฉดดำอมแดง ใช้กับ header/hero/footer */
+  /* พื้นเวทีลึก — ใช้กับ hero / footer / แผงแบรนด์ (มี ambience แดงจางมุมจอ) */
   .bg-stage {
-    background-color: var(--color-ink-950);
+    background-color: var(--color-ink-deep);
     background-image:
-      radial-gradient(60% 120% at 85% 0%, oklch(0.396 0.137 25.7 / 0.55), transparent 60%),
-      radial-gradient(50% 100% at 10% 100%, oklch(0.258 0.092 26 / 0.6), transparent 55%);
+      radial-gradient(58% 110% at 82% -8%, oklch(0.39 0.13 26 / 0.5), transparent 62%),
+      radial-gradient(46% 90% at 8% 104%, oklch(0.26 0.085 26 / 0.55), transparent 58%);
   }
 
-  /* เส้น grid จางๆ เหมือนแสงเวที (ใช้ใน hero) */
+  /* แสง spotlight สาดจากด้านบน (ซ้อนทับใน hero) */
   .bg-spotlight {
     background-image: radial-gradient(
-      120% 80% at 50% -10%,
-      oklch(0.577 0.221 27.3 / 0.35),
+      115% 75% at 50% -12%,
+      oklch(0.575 0.222 27.5 / 0.32),
       transparent 60%
     );
+  }
+
+  /* grain — เม็ดฟิล์มจางๆ กันพื้นไล่เฉดดูแบนเหมือนงาน AI (วางเป็น overlay aria-hidden) */
+  .bg-grain {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
+    opacity: 0.05;
+  }
+
+  /* ตัวเลขสไตล์ป้าย LED — ใช้กับเลขคิว / นับถอยหลัง / ราคาใหญ่ */
+  .text-led {
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+
+  /* แถบ barcode ของตั๋ว (ใช้ตกแต่งการ์ดตั๋ว) */
+  .bg-barcode {
+    background-image: repeating-linear-gradient(
+      90deg,
+      currentColor 0 2px,
+      transparent 2px 5px,
+      currentColor 5px 6px,
+      transparent 6px 11px,
+      currentColor 11px 14px,
+      transparent 14px 17px
+    );
+  }
+
+  /* ขอบรอยปรุของตั๋ว (แนวตั้ง) — เจาะรูกลมเป็นจังหวะเหมือนตั๋วฉีก */
+  .border-perforated-y {
+    background-image: radial-gradient(
+      circle at 50% 50%,
+      var(--color-ink-950) 2.5px,
+      transparent 3px
+    );
+    background-size: 2px 14px;
+    background-repeat: repeat-y;
+    background-position: center;
   }
 }
 
@@ -120,7 +187,7 @@
 @keyframes fade-in-up {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(14px);
   }
   to {
     opacity: 1;
@@ -148,6 +215,87 @@
   }
 }
 
+/* แถบตัววิ่ง marquee — เนื้อหาถูก render ซ้ำ 2 ชุด เลื่อนครึ่งทางแล้ววนใหม่พอดี */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* แท่ง equalizer เด้งตามจังหวะเพลง (สุ่ม delay ที่ตัว component) */
+@keyframes eq-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  35% {
+    transform: scaleY(1);
+  }
+  70% {
+    transform: scaleY(0.55);
+  }
+}
+
+/* แสงไฟเวทีลอยช้าๆ ใน hero */
+@keyframes drift-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translate3d(6%, 4%, 0) scale(1.12);
+    opacity: 0.8;
+  }
+}
+@keyframes drift-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1.05);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translate3d(-5%, -3%, 0) scale(0.95);
+    opacity: 0.7;
+  }
+}
+
+/* เรืองแสงเต้นเป็นจังหวะ — ที่นั่งที่เลือก / องค์ประกอบ live */
+@keyframes glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.645 0.215 26.5 / 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 7px oklch(0.645 0.215 26.5 / 0);
+  }
+}
+
+/* โคลอนกะพริบของนาฬิกา LED */
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+/* แสงวิ่งบนแถบ progress */
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
 .animate-fade-in-up {
   animation: fade-in-up 0.6s var(--ease-out-expo) both;
 }
@@ -157,8 +305,31 @@
 .animate-scale-in {
   animation: scale-in 0.16s var(--ease-out-quart) both;
 }
+.animate-marquee {
+  animation: marquee 28s linear infinite;
+}
+.animate-eq {
+  transform-origin: bottom;
+  animation: eq-bounce 0.9s ease-in-out infinite;
+}
+.animate-drift-a {
+  animation: drift-a 11s ease-in-out infinite;
+}
+.animate-drift-b {
+  animation: drift-b 14s ease-in-out infinite;
+}
+.animate-glow-pulse {
+  animation: glow-pulse 1.6s var(--ease-out-quart) infinite;
+}
+.animate-blink {
+  animation: blink 1s steps(1) infinite;
+}
+.animate-shimmer {
+  animation: shimmer 2.4s var(--ease-out-quart) infinite;
+}
 
-/* เคารพ prefers-reduced-motion — ปิด motion ทั้งหมด */
+/* เคารพ prefers-reduced-motion — ปิด motion ทั้งหมด
+   (ทุก animation ออกแบบให้เฟรมแรกอ่านรู้เรื่อง: marquee หยุดนิ่ง, eq ค้างความสูงต่างกัน) */
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

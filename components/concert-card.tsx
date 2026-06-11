@@ -1,8 +1,10 @@
-// Concert card — แสดงในหน้า landing + listing
+// Concert card — แสดงในหน้า landing + listing (โทนเวทีมืด)
+// โปสเตอร์เต็มด้านบน + ป้ายวันที่แบบบัตรคอนเสิร์ต + equalizer ตอนกำลังขาย
 import Link from "next/link";
-import { MapPin, CalendarDays, Music2 } from "lucide-react";
-import { formatTHB, formatThaiDate } from "@/lib/format";
+import { MapPin, Music2 } from "lucide-react";
+import { formatTHB, formatThaiDateParts } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
+import { EqBars } from "@/components/eq-bars";
 
 interface Zone {
   price: { toString(): string };
@@ -26,16 +28,17 @@ export function ConcertCard({ concert }: { concert: Concert }) {
   const isOnSale = concert.status === "ON_SALE";
   const isUpcoming = concert.status === "SCHEDULED";
   const isSoldOut = concert.status === "SOLD_OUT";
+  const date = formatThaiDateParts(concert.eventAt);
 
   return (
     <Link
       href={`/concerts/${concert.slug}`}
-      className="group block overflow-hidden rounded-xl border border-neutral-200/80 bg-white shadow-sm
-        transition-all duration-200 hover:-translate-y-1 hover:border-neutral-300 hover:shadow-lg
-        focus-visible:-translate-y-1 focus-visible:shadow-lg"
+      className="group block overflow-hidden rounded-xl border border-fg/10 bg-ink-850 shadow-md
+        transition-all duration-200 hover:-translate-y-1 hover:border-brand-500/40 hover:shadow-lg
+        hover:shadow-glow-brand focus-visible:-translate-y-1"
     >
-      {/* โปสเตอร์ — ถ้าไม่มีรูปใช้พื้นไล่เฉดแบรนด์ */}
-      <div className="relative aspect-[3/2] overflow-hidden bg-stage">
+      {/* โปสเตอร์ — ถ้าไม่มีรูปใช้พื้นเวที + โน้ตดนตรี */}
+      <div className="bg-stage relative aspect-[3/2] overflow-hidden">
         {concert.coverImageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -44,41 +47,59 @@ export function ConcertCard({ concert }: { concert: Concert }) {
             className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
-          <div className="grid size-full place-items-center text-white/25">
+          <div className="grid size-full place-items-center text-fg/15">
             <Music2 className="size-12" />
           </div>
         )}
+        {/* ไล่เงาด้านล่างให้ป้ายอ่านชัดบนรูปทุกแบบ */}
+        <div
+          className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-ink-deep/85 to-transparent"
+          aria-hidden
+        />
 
-        {/* ป้ายสถานะ มุมบนซ้าย */}
+        {/* ป้ายสถานะ มุมบนซ้าย — กำลังขายมี equalizer เด้งจริง */}
         <div className="absolute left-3 top-3">
-          {isOnSale && <Badge tone="danger" dot>กำลังขาย</Badge>}
-          {isUpcoming && <Badge tone="info">เร็ว ๆ นี้</Badge>}
-          {isSoldOut && <Badge tone="neutral">เต็มแล้ว</Badge>}
+          {isOnSale && (
+            <Badge tone="brand" className="border border-brand-500/30 bg-ink-deep/80 backdrop-blur-sm">
+              <EqBars className="h-2.5 text-brand-400" />
+              กำลังขาย
+            </Badge>
+          )}
+          {isUpcoming && (
+            <Badge tone="info" className="border border-info/20 bg-ink-deep/80 backdrop-blur-sm">
+              เร็ว ๆ นี้
+            </Badge>
+          )}
+          {isSoldOut && (
+            <Badge tone="neutral" className="border border-fg/15 bg-ink-deep/80 backdrop-blur-sm">
+              เต็มแล้ว
+            </Badge>
+          )}
+        </div>
+
+        {/* ป้ายวันที่แบบปฏิทินบัตรคอนเสิร์ต มุมล่างซ้าย */}
+        <div className="absolute bottom-3 left-3 rounded-lg border border-fg/15 bg-ink-deep/85 px-2.5 py-1.5 text-center backdrop-blur-sm">
+          <p className="text-led text-lg font-bold leading-none text-fg">{date.day}</p>
+          <p className="mt-0.5 text-[10px] font-medium leading-none text-fg-dim">{date.month}</p>
         </div>
       </div>
 
       <div className="space-y-3 p-4">
-        <h3 className="line-clamp-2 font-semibold leading-snug text-neutral-900 group-hover:text-brand-700">
+        <h3 className="line-clamp-2 font-display font-semibold leading-snug text-fg transition-colors group-hover:text-brand-300">
           {concert.title}
         </h3>
 
-        <div className="space-y-1.5 text-sm text-neutral-500">
-          <p className="flex items-center gap-1.5">
-            <MapPin className="size-3.5 shrink-0" />
-            <span className="truncate">{concert.venue}</span>
-          </p>
-          <p className="flex items-center gap-1.5">
-            <CalendarDays className="size-3.5 shrink-0" />
-            {formatThaiDate(concert.eventAt)}
-          </p>
-        </div>
+        <p className="flex items-center gap-1.5 text-sm text-fg-faint">
+          <MapPin className="size-3.5 shrink-0" />
+          <span className="truncate">{concert.venue}</span>
+        </p>
 
-        <div className="flex items-end justify-between border-t border-neutral-100 pt-3">
+        <div className="flex items-end justify-between border-t border-fg/10 pt-3">
           <div>
-            <span className="text-xs text-neutral-400">เริ่มต้น</span>
-            <p className="font-semibold text-neutral-900">{formatTHB(minPrice)}</p>
+            <span className="text-xs text-fg-faint">เริ่มต้น</span>
+            <p className="text-led text-lg font-bold text-spot-300">{formatTHB(minPrice)}</p>
           </div>
-          <span className="text-sm font-medium text-brand-600 transition-transform group-hover:translate-x-0.5">
+          <span className="font-display text-sm font-medium text-brand-300 transition-transform group-hover:translate-x-0.5">
             {isSoldOut ? "ดูรายละเอียด" : "จองตั๋ว"} →
           </span>
         </div>

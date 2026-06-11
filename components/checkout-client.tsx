@@ -1,12 +1,12 @@
 "use client";
 
-// Checkout client (Phase 7) — QR + countdown + upload สลิป → verify
+// Checkout client (Phase 7) — QR + countdown + upload สลิป → verify (โทนเวทีมืด)
+// นาฬิกานับถอยหลังสไตล์ป้าย LED — เหลือน้อยกว่า 1 นาทีเปลี่ยนเป็นสีแดง
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Paperclip, CheckCircle2, AlertCircle } from "lucide-react";
+import { UploadCloud, CheckCircle2, AlertCircle, QrCode } from "lucide-react";
 import { formatTHB } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { submitSlip, cancelOrder } from "@/app/actions/booking";
 
 export function CheckoutClient({
@@ -42,6 +42,7 @@ export function CheckoutClient({
 
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, "0");
   const ss = String(secondsLeft % 60).padStart(2, "0");
+  const urgent = secondsLeft < 60; // นาทีสุดท้าย — เร่งด้วยสีแดง
 
   // อ่านไฟล์สลิปเป็น base64
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -82,9 +83,13 @@ export function CheckoutClient({
 
   if (secondsLeft <= 0) {
     return (
-      <div className="rounded-lg bg-danger-bg p-4 text-center text-sm text-danger">
+      <div className="rounded-xl border border-danger/25 bg-danger/10 p-5 text-center text-sm text-danger">
         หมดเวลาชำระเงิน — ที่นั่งถูกปล่อยคืนแล้ว
-        <Button variant="outline" className="mt-3 w-full" onClick={() => router.push(`/concerts/${concertSlug}`)}>
+        <Button
+          variant="outline"
+          className="mt-4 w-full"
+          onClick={() => router.push(`/concerts/${concertSlug}`)}
+        >
           กลับไปเลือกใหม่
         </Button>
       </div>
@@ -93,86 +98,117 @@ export function CheckoutClient({
 
   return (
     <div className="space-y-4">
-      {/* countdown */}
-      <div className="text-center">
-        <span className="text-sm text-neutral-500">เหลือเวลาชำระเงิน</span>
-        <div className="text-3xl font-bold text-brand-600 tabular-nums">
-          {mm}:{ss}
+      {/* นาฬิกา LED นับถอยหลัง */}
+      <div className="relative overflow-hidden rounded-xl border border-fg/10 bg-ink-deep p-5 text-center">
+        <div className="bg-grain absolute inset-0" aria-hidden />
+        <p className="relative font-display text-sm text-fg-faint">เหลือเวลาชำระเงิน</p>
+        <div
+          className={`text-led relative mt-1 text-5xl font-bold transition-colors ${
+            urgent ? "text-danger" : "text-spot-300"
+          }`}
+          style={{
+            textShadow: urgent
+              ? "0 0 26px oklch(0.7 0.19 25 / 0.5)"
+              : "0 0 26px oklch(0.8 0.15 78 / 0.4)",
+          }}
+        >
+          {mm}
+          <span className="animate-blink">:</span>
+          {ss}
         </div>
+        {urgent && (
+          <p className="relative mt-1.5 text-xs font-medium text-danger">
+            รีบหน่อย! ใกล้หมดเวลาแล้ว
+          </p>
+        )}
       </div>
 
       {/* สรุปที่นั่ง */}
-      <Card>
-        <CardContent className="space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-neutral-500">ที่นั่ง</span>
-            <span className="font-medium text-right">{seatLabels.join(", ")}</span>
+      <div className="rounded-xl border border-fg/10 bg-ink-850 p-5">
+        <div className="flex items-start justify-between gap-3 text-sm">
+          <span className="text-fg-faint">ที่นั่ง</span>
+          <div className="flex flex-wrap justify-end gap-1.5">
+            {seatLabels.map((label) => (
+              <span
+                key={label}
+                className="text-led rounded-md border border-brand-500/25 bg-brand-500/12 px-2 py-0.5 text-xs font-semibold text-brand-300"
+              >
+                {label}
+              </span>
+            ))}
           </div>
-          <div className="flex justify-between border-t border-neutral-100 pt-2">
-            <span className="font-semibold">ยอดชำระ</span>
-            <span className="font-bold text-brand-600">{formatTHB(amount)}</span>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="mt-3 flex items-end justify-between border-t border-fg/10 pt-3">
+          <span className="font-medium text-fg">ยอดชำระ</span>
+          <span className="text-led text-2xl font-bold text-spot-300">{formatTHB(amount)}</span>
+        </div>
+      </div>
 
-      {/* QR PromptPay */}
-      <Card>
-        <CardContent className="text-center space-y-2">
-          <p className="text-sm font-medium">สแกน QR เพื่อโอนเงิน (PromptPay)</p>
+      {/* QR PromptPay — ตัว QR ต้องอยู่บนพื้นขาวเสมอเพื่อให้แอปธนาคารสแกนได้ */}
+      <div className="rounded-xl border border-fg/10 bg-ink-850 p-5 text-center">
+        <p className="flex items-center justify-center gap-1.5 font-display text-sm font-medium text-fg">
+          <QrCode className="size-4 text-brand-400" />
+          สแกน QR เพื่อโอนเงิน (PromptPay)
+        </p>
+        <div className="mx-auto mt-3 w-fit rounded-xl bg-white p-3 shadow-md">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={qrDataUrl} alt="PromptPay QR" className="mx-auto w-56 h-56" />
-          <p className="text-xs text-neutral-500">
-            เปิดแอปธนาคาร → สแกน → ยอดจะขึ้น {formatTHB(amount)} อัตโนมัติ
-          </p>
-        </CardContent>
-      </Card>
+          <img src={qrDataUrl} alt="PromptPay QR" className="size-52" />
+        </div>
+        <p className="mt-3 text-xs text-fg-faint">
+          เปิดแอปธนาคาร → สแกน → ยอดจะขึ้น {formatTHB(amount)} อัตโนมัติ
+        </p>
+      </div>
 
-      {/* upload สลิป */}
-      <Card>
-        <CardContent className="space-y-3">
-          <p className="text-sm font-medium">
-            อัปโหลดสลิปการโอน <span className="text-danger">*</span>
-          </p>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleFile}
-            className="block w-full text-sm text-neutral-600 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-brand-50 file:text-brand-700 file:text-sm hover:file:bg-brand-100"
-          />
+      {/* upload สลิป — dropzone แตะเพื่อเลือกไฟล์ */}
+      <div className="space-y-3 rounded-xl border border-fg/10 bg-ink-850 p-5">
+        <p className="text-sm font-medium text-fg">
+          อัปโหลดสลิปการโอน <span className="text-danger">*</span>
+        </p>
 
-          {/* สถานะไฟล์ที่แนบ */}
+        <label
+          className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-6 text-center transition-colors ${
+            slipBase64
+              ? "border-success/40 bg-success/8"
+              : "border-fg/20 bg-ink-950/50 hover:border-brand-400/60 hover:bg-ink-950/80"
+          }`}
+        >
+          <input type="file" accept="image/*" onChange={handleFile} className="sr-only" />
           {slipBase64 ? (
-            <p className="flex items-center gap-1.5 text-xs text-success">
-              <CheckCircle2 className="size-3.5" />
-              แนบแล้ว: <span className="font-medium">{slipName}</span>
-            </p>
+            <>
+              <CheckCircle2 className="size-7 text-success" />
+              <span className="text-sm font-medium text-success">แนบแล้ว: {slipName}</span>
+              <span className="text-xs text-fg-faint">แตะอีกครั้งเพื่อเปลี่ยนรูป</span>
+            </>
           ) : (
-            <p className="flex items-center gap-1.5 text-xs text-neutral-400">
-              <Paperclip className="size-3.5" />
-              ต้องแนบสลิปก่อนจึงจะยืนยันได้ — ระบบตรวจยอดและบัญชีปลายทางอัตโนมัติ
-            </p>
+            <>
+              <UploadCloud className="size-7 text-fg-faint" />
+              <span className="text-sm font-medium text-fg-dim">แตะเพื่อเลือกรูปสลิป</span>
+              <span className="text-xs text-fg-faint">
+                ระบบตรวจยอดและบัญชีปลายทางกับธนาคารอัตโนมัติ
+              </span>
+            </>
           )}
+        </label>
 
-          {error && (
-            <div className="flex items-start gap-2 rounded-lg bg-danger-bg p-2.5 text-sm text-danger">
-              <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+        {error && (
+          <div className="flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/10 p-2.5 text-sm text-danger">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
-          <Button
-            className="w-full"
-            onClick={handleSubmit}
-            loading={submitting}
-            disabled={submitting || !slipBase64}
-          >
-            {submitting ? "กำลังตรวจสอบสลิป…" : "ยืนยันการชำระเงิน"}
-          </Button>
-          <Button variant="ghost" className="w-full" onClick={handleCancel} disabled={submitting}>
-            ยกเลิก
-          </Button>
-        </CardContent>
-      </Card>
+        <Button
+          className="w-full"
+          onClick={handleSubmit}
+          loading={submitting}
+          disabled={submitting || !slipBase64}
+        >
+          {submitting ? "กำลังตรวจสอบสลิป…" : "ยืนยันการชำระเงิน"}
+        </Button>
+        <Button variant="ghost" className="w-full" onClick={handleCancel} disabled={submitting}>
+          ยกเลิกคำสั่งซื้อ
+        </Button>
+      </div>
     </div>
   );
 }

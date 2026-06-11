@@ -18,3 +18,12 @@ export function formatThaiDate(date: Date | string): string {
     timeZone: "Asia/Bangkok",
   }).format(d);
 }
+
+// แยกวันที่เป็นชิ้น (วัน/เดือนย่อ) — ใช้กับป้ายวันที่บนการ์ดคอนเสิร์ต
+export function formatThaiDateParts(date: Date | string): { day: string; month: string } {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return {
+    day: new Intl.DateTimeFormat("th-TH", { day: "numeric", timeZone: "Asia/Bangkok" }).format(d),
+    month: new Intl.DateTimeFormat("th-TH", { month: "short", timeZone: "Asia/Bangkok" }).format(d),
+  };
+}

@@ -43,7 +43,8 @@ export function TurnstileWidget({
         widgetIdRef.current = window.turnstile.render(ref.current, {
           sitekey: siteKey,
           callback: onVerify,
-          theme: "light",
+          // ธีมมืดให้กลืนกับพื้นเวทีของเว็บ
+          theme: "dark",
         });
       }
     }

@@ -1,11 +1,13 @@
-// Seat map page — แสดงผังที่นั่งแบบ grid ตามโซน
+// Seat map page — แสดงผังที่นั่งแบบ grid ตามโซน (โทนเวทีมืด)
 // 🔒 Phase 4: ต้องผ่านคิว (queue token ที่ถูก admit) ถึงเข้าได้ — กันคนข้ามคิว/บอทยิงตรง
 //    ⚠️ การ "จองจริง" (seat hold + lock + payment) ยังเป็น Phase 7
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { BadgeCheck } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { SiteHeader } from "@/components/site-header";
 import { SeatMap } from "@/components/seat-map";
+import { Badge } from "@/components/ui/badge";
 import { isAdmitted } from "@/lib/queue";
 import { getHeldSeats } from "@/lib/seat-hold";
 
@@ -40,15 +42,15 @@ export default async function SeatsPage({
   // อนุญาตเฉพาะตอน ON_SALE
   if (concert.status !== "ON_SALE") {
     return (
-      <>
+      <div className="flex min-h-screen flex-col">
         <SiteHeader />
-        <main className="mx-auto max-w-2xl px-4 py-12 text-center">
-          <h1 className="text-xl font-semibold mb-2">ยังไม่เปิดขาย</h1>
-          <Link href={`/concerts/${slug}`} className="text-brand-600 underline">
+        <main className="mx-auto max-w-2xl px-4 py-16 text-center">
+          <h1 className="mb-2 font-display text-xl font-semibold text-fg">ยังไม่เปิดขาย</h1>
+          <Link href={`/concerts/${slug}`} className="text-brand-300 underline hover:text-brand-200">
             ← กลับไปหน้ารายละเอียด
           </Link>
         </main>
-      </>
+      </div>
     );
   }
 
@@ -83,14 +85,25 @@ export default async function SeatsPage({
   }));
 
   return (
-    <>
+    <div className="flex min-h-screen flex-col">
       <SiteHeader />
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <Link href={`/concerts/${slug}`} className="text-sm text-neutral-500 hover:text-brand-600">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
+        <Link
+          href={`/concerts/${slug}`}
+          className="text-sm text-fg-faint transition-colors hover:text-brand-300"
+        >
           ← กลับ
         </Link>
-        <h1 className="text-2xl font-bold mt-2 mb-1">{concert.title}</h1>
-        <p className="text-sm text-neutral-500 mb-6">
+
+        <div className="mb-7 mt-2 flex flex-wrap items-center gap-3">
+          <h1 className="font-display text-2xl font-bold text-fg sm:text-3xl">{concert.title}</h1>
+          {/* ผ่านด่านคิวแล้ว — ยืนยันให้ผู้ใช้เห็นว่า gate ทำงาน */}
+          <Badge tone="success">
+            <BadgeCheck className="size-3.5" />
+            ผ่านคิวแล้ว
+          </Badge>
+        </div>
+        <p className="-mt-5 mb-6 text-sm text-fg-faint">
           เลือกที่นั่ง — จำกัด {concert.maxTicketsPerUser} ใบต่อบัญชี
         </p>
 
@@ -101,6 +114,6 @@ export default async function SeatsPage({
           queueToken={qt!}
         />
       </main>
-    </>
+    </div>
   );
 }

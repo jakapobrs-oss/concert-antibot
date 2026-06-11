@@ -1,11 +1,10 @@
-// Admin — รายการคอนเสิร์ตทั้งหมด + เปลี่ยนสถานะ
+// Admin — รายการคอนเสิร์ตทั้งหมด + เปลี่ยนสถานะ (โทนเวทีมืด)
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatThaiDate } from "@/lib/format";
 import { Plus } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { updateConcertStatus } from "@/app/actions/concert";
 
@@ -38,28 +37,36 @@ export default async function AdminConcertsPage() {
     <>
       <SiteHeader />
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold tracking-tight">จัดการคอนเสิร์ต</h1>
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-fg">จัดการคอนเสิร์ต</h1>
           <Link href="/admin/concerts/new">
             <Button leftIcon={<Plus className="size-4" />}>สร้างใหม่</Button>
           </Link>
         </div>
 
         {concerts.length === 0 ? (
-          <p className="text-neutral-500 text-center py-12">ยังไม่มีคอนเสิร์ต</p>
+          <p className="py-12 text-center text-fg-faint">ยังไม่มีคอนเสิร์ต</p>
         ) : (
           <div className="space-y-3">
             {concerts.map((c) => (
-              <Card key={c.id.toString()} className="p-4">
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div>
+              <div
+                key={c.id.toString()}
+                className="rounded-xl border border-fg/10 bg-ink-850 p-4 transition-colors hover:border-fg/20"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold">{c.title}</h3>
+                      <Link
+                        href={`/admin/concerts/${c.id.toString()}`}
+                        className="truncate font-display font-semibold text-fg hover:text-brand-300"
+                      >
+                        {c.title}
+                      </Link>
                       <Badge tone={statusTone[c.status as keyof typeof statusTone] ?? "neutral"}>
                         {statusLabel[c.status] ?? c.status}
                       </Badge>
                     </div>
-                    <p className="text-sm text-neutral-500">
+                    <p className="mt-0.5 text-sm text-fg-faint">
                       {c.venue} · {formatThaiDate(c.eventAt)} · {c._count.zones} โซน
                     </p>
                   </div>
@@ -90,7 +97,7 @@ export default async function AdminConcertsPage() {
                     </Link>
                   </div>
                 </div>
-              </Card>
+              </div>
             ))}
           </div>
         )}

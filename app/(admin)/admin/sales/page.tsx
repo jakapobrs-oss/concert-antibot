@@ -1,18 +1,19 @@
-// Sales Report (Phase 8) — ยอดขาย/รายได้/อัตราขายต่อคอนเสิร์ต
+// Sales Report (Phase 8) — ยอดขาย/รายได้/อัตราขายต่อคอนเสิร์ต (โทนเวทีมืด)
 import Link from "next/link";
+import { BarChart3 } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
-import { Card, CardContent } from "@/components/ui/card";
 import { formatTHB } from "@/lib/format";
 import { getSalesReport } from "@/lib/admin-stats";
 
 export const dynamic = "force-dynamic";
 
+// สีป้ายสถานะคอนเสิร์ตในรายงาน
 const statusStyle: Record<string, string> = {
-  DRAFT: "bg-neutral-100 text-neutral-600",
-  SCHEDULED: "bg-blue-100 text-blue-700",
-  ON_SALE: "bg-green-100 text-green-700",
-  SOLD_OUT: "bg-red-100 text-red-700",
-  ENDED: "bg-neutral-200 text-neutral-500",
+  DRAFT: "bg-fg/10 text-fg-dim",
+  SCHEDULED: "bg-info/12 text-info",
+  ON_SALE: "bg-success/12 text-success",
+  SOLD_OUT: "bg-danger/12 text-danger",
+  ENDED: "bg-fg/8 text-fg-faint",
 };
 
 export default async function SalesReportPage() {
@@ -24,61 +25,62 @@ export default async function SalesReportPage() {
     <>
       <SiteHeader />
       <main className="mx-auto max-w-5xl px-4 py-8">
-        <Link href="/admin" className="text-sm text-neutral-500 hover:text-brand-600">
+        <Link href="/admin" className="text-sm text-fg-faint transition-colors hover:text-brand-300">
           ← กลับแดชบอร์ด
         </Link>
-        <h1 className="text-2xl font-bold mt-2 mb-6">📊 Sales Report</h1>
+        <h1 className="mb-6 mt-2 flex items-center gap-2.5 font-display text-2xl font-bold text-fg">
+          <BarChart3 className="size-6 text-brand-400" />
+          Sales Report
+        </h1>
 
-        {/* สรุปรวม */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <Card>
-            <CardContent>
-              <p className="text-sm text-neutral-500">รายได้รวมทั้งหมด</p>
-              <p className="text-2xl font-bold text-green-600">{formatTHB(totalRevenue)}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent>
-              <p className="text-sm text-neutral-500">ตั๋วที่ขายได้</p>
-              <p className="text-2xl font-bold">{totalSold.toLocaleString()} ใบ</p>
-            </CardContent>
-          </Card>
+        {/* สรุปรวม — แถวเดียวคั่นเส้น */}
+        <div className="mb-6 grid grid-cols-2 overflow-hidden rounded-xl border border-fg/10 bg-ink-850">
+          <div className="p-5">
+            <p className="text-sm text-fg-faint">รายได้รวมทั้งหมด</p>
+            <p className="text-led mt-1 text-2xl font-bold text-success">{formatTHB(totalRevenue)}</p>
+          </div>
+          <div className="border-l border-fg/10 p-5">
+            <p className="text-sm text-fg-faint">ตั๋วที่ขายได้</p>
+            <p className="text-led mt-1 text-2xl font-bold text-fg">
+              {totalSold.toLocaleString()} <span className="text-sm font-normal text-fg-faint">ใบ</span>
+            </p>
+          </div>
         </div>
 
         {/* ตารางต่อคอนเสิร์ต */}
         {report.length === 0 ? (
-          <p className="text-center text-neutral-500 py-12">ยังไม่มีคอนเสิร์ต</p>
+          <p className="py-12 text-center text-fg-faint">ยังไม่มีคอนเสิร์ต</p>
         ) : (
           <div className="space-y-3">
             {report.map((r) => (
-              <Card key={r.id}>
-                <CardContent>
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-semibold">{r.title}</h3>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${statusStyle[r.status]}`}>
-                          {r.status}
-                        </span>
-                      </div>
-                      {/* progress bar ขาย */}
-                      <div className="h-2 bg-neutral-200 rounded-full overflow-hidden max-w-md">
-                        <div
-                          className="h-full bg-brand-500"
-                          style={{ width: `${r.soldRate}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-neutral-500 mt-1">
-                        ขาย {r.soldSeats}/{r.totalSeats} ที่นั่ง ({r.soldRate.toFixed(1)}%)
-                      </p>
+              <div key={r.id} className="rounded-xl border border-fg/10 bg-ink-850 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <h3 className="truncate font-display font-semibold text-fg">{r.title}</h3>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 font-display text-xs font-medium ${statusStyle[r.status]}`}
+                      >
+                        {r.status}
+                      </span>
                     </div>
-                    <div className="text-right">
-                      <p className="text-lg font-bold text-green-600">{formatTHB(r.revenue)}</p>
-                      <p className="text-xs text-neutral-500">{r.paidOrders} คำสั่งซื้อ</p>
+                    {/* progress bar ขาย */}
+                    <div className="h-2 max-w-md overflow-hidden rounded-full bg-ink-700">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-brand-700 to-brand-500"
+                        style={{ width: `${r.soldRate}%` }}
+                      />
                     </div>
+                    <p className="mt-1.5 text-xs text-fg-faint">
+                      ขาย {r.soldSeats}/{r.totalSeats} ที่นั่ง ({r.soldRate.toFixed(1)}%)
+                    </p>
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="text-right">
+                    <p className="text-led text-lg font-bold text-success">{formatTHB(r.revenue)}</p>
+                    <p className="text-xs text-fg-faint">{r.paidOrders} คำสั่งซื้อ</p>
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}

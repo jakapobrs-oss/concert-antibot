@@ -1,9 +1,11 @@
-// Admin — สร้างคอนเสิร์ตใหม่
+// Admin — สร้างคอนเสิร์ตใหม่ (โทนเวทีมืด)
 // หมายเหตุ: สร้างเป็น DRAFT ก่อน, zone/seat เพิ่มในหน้า detail (Phase 3.5)
+import { Lightbulb } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createConcert } from "@/app/actions/concert";
 
@@ -16,7 +18,7 @@ export default function NewConcertPage() {
           <CardHeader>
             <CardTitle>สร้างคอนเสิร์ตใหม่</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-0">
             <form action={createConcert} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="title">ชื่อคอนเสิร์ต</Label>
@@ -25,12 +27,11 @@ export default function NewConcertPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="description">รายละเอียด</Label>
-                <textarea
+                <Textarea
                   id="description"
                   name="description"
                   required
                   rows={4}
-                  className="w-full px-3 py-2 rounded-md border border-neutral-300 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none"
                   placeholder="รายละเอียดคอนเสิร์ต..."
                 />
               </div>
@@ -69,9 +70,12 @@ export default function NewConcertPage() {
                 />
               </div>
 
-              <div className="rounded-md bg-blue-50 p-3 text-sm text-blue-700">
-                💡 สร้างเป็น <strong>DRAFT</strong> ก่อน — เพิ่มโซน/ที่นั่งแล้วค่อยกด &quot;เปิดขาย&quot;
-                (ระบบจัดการโซน/ที่นั่งจะเพิ่มใน Phase 3.5)
+              <div className="flex items-start gap-2.5 rounded-lg border border-info/25 bg-info/10 p-3 text-sm text-info">
+                <Lightbulb className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  สร้างเป็น <strong>DRAFT</strong> ก่อน — เพิ่มโซน/ที่นั่งแล้วค่อยกด &quot;เปิดขาย&quot;
+                  (ระบบจัดการโซน/ที่นั่งจะเพิ่มใน Phase 3.5)
+                </span>
               </div>
 
               <Button type="submit" className="w-full">สร้างคอนเสิร์ต</Button>
