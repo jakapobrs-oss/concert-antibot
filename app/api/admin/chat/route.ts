@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const model = genai.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash", // free-tier: Pro=quota 0, flash ฟรี → 3.5-flash flash ที่ใหม่/เก่งสุดที่ฟรี (2.5-flash = fallback)
       systemInstruction: buildAdminSystemPrompt(pageContext),
       generationConfig: { maxOutputTokens: 1200 },
     });
