@@ -1,13 +1,14 @@
 // POST /api/chat — Gemini chat สำหรับผู้ใช้ทั่วไป (ถามเรื่องจองบัตร/คิว/การชำระเงิน)
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { genai, USER_SYSTEM_PROMPT } from "@/lib/gemini";
+import { genai, buildUserSystemPrompt } from "@/lib/gemini";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 const RATE_LIMIT = { limit: 20, windowMs: 60_000 };
 
 const bodySchema = z.object({
   message: z.string().min(1).max(500),
+  pageContext: z.string().max(1000).optional(),
   history: z
     .array(
       z.object({
@@ -26,7 +27,10 @@ export async function POST(req: NextRequest) {
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "ส่งข้อความถี่เกินไป กรุณารอสักครู่" },
-      { status: 429 }
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) },
+      }
     );
   }
 
@@ -35,12 +39,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ข้อมูลไม่ถูกต้อง" }, { status: 400 });
   }
 
-  const { message, history } = parsed.data;
+  const { message, pageContext, history } = parsed.data;
 
   try {
     const model = genai.getGenerativeModel({
       model: "gemini-2.0-flash",
-      systemInstruction: USER_SYSTEM_PROMPT,
+      systemInstruction: buildUserSystemPrompt(pageContext),
     });
 
     const chat = model.startChat({ history });

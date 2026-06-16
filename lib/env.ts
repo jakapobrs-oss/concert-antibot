@@ -50,6 +50,10 @@ const envSchema = z.object({
   APP_NAME: z.string().default("Concert Anti-Bot"),
   APP_CURRENCY: z.string().default("THB"),
 
+  // Gemini AI (Google AI Studio — free tier 60 req/min)
+  // ขอจาก: https://aistudio.google.com/apikey
+  GEMINI_API_KEY: z.string().optional(),
+
   // Anti-bot tunables
   QUEUE_BATCH_SIZE: z.coerce.number().int().positive().default(100),
   SEAT_HOLD_TTL_SECONDS: z.coerce.number().int().positive().default(300),
@@ -74,6 +78,7 @@ export const isProduction = env.NODE_ENV === "production";
 
 // helper: anti-bot config พร้อมแค่ไหน (Turnstile)
 export const isTurnstileConfigured = !!env.TURNSTILE_SECRET_KEY;
+export const isGeminiConfigured = !!env.GEMINI_API_KEY;
 
 // เตือนดังๆ ตอน boot ถ้า production แต่ payment ยังไม่พร้อม
 // ไม่ throw เพื่อไม่ให้ next build พัง แต่ตัว verifySlip จะ "ปฏิเสธการจ่าย" (fail-closed) เอง

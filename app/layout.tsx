@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Anuphan, Chakra_Petch } from "next/font/google";
+import { ChatContextProvider } from "@/components/chat-context";
 import { ChatWidget } from "@/components/chat-widget";
 import "./globals.css";
 
@@ -38,8 +39,10 @@ export default function RootLayout({
   return (
     <html lang="th" className={`${anuphan.variable} ${chakraPetch.variable}`}>
       <body className="min-h-screen bg-ink-950 font-sans text-fg antialiased">
-        {children}
-        <ChatWidget />
+        <ChatContextProvider>
+          {children}
+          <ChatWidget />
+        </ChatContextProvider>
       </body>
     </html>
   );

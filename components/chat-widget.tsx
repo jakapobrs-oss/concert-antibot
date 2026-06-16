@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, FormEvent } from "react";
 import { MessageCircle, X, Send, Bot, Loader2 } from "lucide-react";
+import { useChatContext } from "@/components/chat-context";
 
 interface Message {
   role: "user" | "model";
@@ -25,6 +26,7 @@ export function ChatWidget() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const { pageContext } = useChatContext();
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -49,7 +51,7 @@ export function ChatWidget() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({ message: text, history, pageContext }),
       });
       const data = await res.json();
       setMessages((prev) => [
@@ -101,7 +103,7 @@ export function ChatWidget() {
                   <Bot className="mt-0.5 size-4 shrink-0 text-brand-400" aria-hidden />
                 )}
                 <p
-                  className={`max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
+                  className={`max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${
                     m.role === "user"
                       ? "bg-brand-600 text-white"
                       : "bg-ink-800 text-fg-dim"

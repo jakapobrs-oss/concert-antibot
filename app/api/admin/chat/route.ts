@@ -1,7 +1,7 @@
 // POST /api/admin/chat — Gemini chat สำหรับ admin (วิเคราะห์ bot log, ยอดขาย, การตั้งค่า)
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { genai, ADMIN_SYSTEM_PROMPT } from "@/lib/gemini";
+import { genai, buildAdminSystemPrompt } from "@/lib/gemini";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { auth } from "@/lib/auth";
 
@@ -9,6 +9,7 @@ const RATE_LIMIT = { limit: 40, windowMs: 60_000 };
 
 const bodySchema = z.object({
   message: z.string().min(1).max(2000),
+  pageContext: z.string().max(2000).optional(),
   history: z
     .array(
       z.object({
@@ -33,7 +34,10 @@ export async function POST(req: NextRequest) {
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "ส่งข้อความถี่เกินไป กรุณารอสักครู่" },
-      { status: 429 }
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) },
+      }
     );
   }
 
@@ -42,12 +46,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ข้อมูลไม่ถูกต้อง" }, { status: 400 });
   }
 
-  const { message, history } = parsed.data;
+  const { message, pageContext, history } = parsed.data;
 
   try {
     const model = genai.getGenerativeModel({
       model: "gemini-2.0-flash",
-      systemInstruction: ADMIN_SYSTEM_PROMPT,
+      systemInstruction: buildAdminSystemPrompt(pageContext),
     });
 
     const chat = model.startChat({ history });

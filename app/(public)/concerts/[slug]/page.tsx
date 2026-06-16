@@ -10,6 +10,7 @@ import { SiteFooter } from "@/components/site-footer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EqBars } from "@/components/eq-bars";
+import { SetChatContext } from "@/components/chat-context";
 
 export const revalidate = 60;
 
@@ -37,8 +38,22 @@ export default async function ConcertDetailPage({
   const isOnSale = concert.status === "ON_SALE";
   const saleNotYet = concert.status === "SCHEDULED";
 
+  const zonesSummary = concert.zones
+    .map((z) => `- ${z.name}: ${Number(z.price).toLocaleString()} บาท (เหลือ ${z._count.seats} ที่นั่ง)`)
+    .join("\n");
+
+  const chatCtx = [
+    `คอนเสิร์ต: ${concert.title}`,
+    `สถานที่: ${concert.venue}`,
+    `วันงาน: ${concert.eventAt.toLocaleDateString("th-TH", { dateStyle: "full" })}`,
+    `สถานะ: ${isOnSale ? "กำลังขาย" : saleNotYet ? "ยังไม่เปิดขาย" : "ปิดการขาย"}`,
+    `จำกัด: ${concert.maxTicketsPerUser} ใบ/บัญชี`,
+    `โซนที่นั่ง:\n${zonesSummary}`,
+  ].join("\n");
+
   return (
     <div className="flex min-h-screen flex-col">
+      <SetChatContext context={chatCtx} />
       <SiteHeader />
 
       {/* Hero — โปสเตอร์เป็นฉากหลัง + ม่านเงาให้ตัวหนังสือเด่น */}

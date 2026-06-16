@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { SiteHeader } from "@/components/site-header";
 import { WaitingRoom } from "@/components/waiting-room";
 import { getTurnstileSiteKey } from "@/lib/turnstile";
+import { SetChatContext } from "@/components/chat-context";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,9 @@ export default async function QueuePage({
 
   return (
     <div className="flex min-h-screen flex-col">
+      <SetChatContext
+        context={`ผู้ใช้กำลังรออยู่ในคิวของคอนเสิร์ต: ${concert.title}\nระบบจะปล่อยผู้ใช้เป็น batch สุ่ม (~100 คน/รอบ) เพื่อความเป็นธรรม`}
+      />
       <SiteHeader />
       <main className="relative mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-12">
         {/* แสงสาดจากบนจางๆ ให้ความรู้สึกหน้าเวที */}

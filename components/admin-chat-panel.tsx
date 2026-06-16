@@ -17,13 +17,17 @@ interface GeminiHistoryItem {
   parts: GeminiPart[];
 }
 
+interface Props {
+  pageContext?: string;
+}
+
 const QUICK_PROMPTS = [
   "Bot score ต่ำกว่า 0.3 หมายความว่าอะไร?",
   "อธิบาย fairness queue ให้ฟัง",
   "วิธีเพิ่ม CAPTCHA threshold",
 ];
 
-export function AdminChatPanel() {
+export function AdminChatPanel({ pageContext }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -54,7 +58,7 @@ export function AdminChatPanel() {
       const res = await fetch("/api/admin/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text.trim(), history }),
+        body: JSON.stringify({ message: text.trim(), history, pageContext }),
       });
       const data = await res.json();
       setMessages((prev) => [
