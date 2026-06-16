@@ -1,9 +1,11 @@
-// POST /api/chat — Gemini chat สำหรับผู้ใช้ทั่วไป (ถามเรื่องจองบัตร/คิว/การชำระเงิน)
+// POST /api/chat — Gemini chat สำหรับผู้ใช้ทั่วไป (ต้อง login)
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { genai, buildUserSystemPrompt } from "@/lib/gemini";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { auth } from "@/lib/auth";
 
+// keyed on userId (ไม่ใช่ IP) — ไม่สามารถ bypass ด้วย XFF spoofing
 const RATE_LIMIT = { limit: 20, windowMs: 60_000 };
 
 const bodySchema = z.object({
@@ -22,8 +24,18 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  const rl = await checkRateLimit({ key: `chat:ip:${ip}`, ...RATE_LIMIT });
+  // ต้อง login — กัน anonymous quota drain + prompt injection
+  const session = await auth();
+  const userId = (session?.user as { id?: string } | undefined)?.id;
+  if (!userId) {
+    return NextResponse.json(
+      { error: "กรุณาเข้าสู่ระบบก่อนใช้งานผู้ช่วย AI" },
+      { status: 401 }
+    );
+  }
+
+  // rate limit ต่อ userId (ไม่ใช่ IP → XFF spoofing ไม่ได้ผล)
+  const rl = await checkRateLimit({ key: `chat:user:${userId}`, ...RATE_LIMIT });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "ส่งข้อความถี่เกินไป กรุณารอสักครู่" },
@@ -45,6 +57,7 @@ export async function POST(req: NextRequest) {
     const model = genai.getGenerativeModel({
       model: "gemini-2.0-flash",
       systemInstruction: buildUserSystemPrompt(pageContext),
+      generationConfig: { maxOutputTokens: 600 },
     });
 
     const chat = model.startChat({ history });

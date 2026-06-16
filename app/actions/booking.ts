@@ -112,27 +112,36 @@ export async function holdAndCreateOrder(input: {
     const totalAmount = seats.reduce((sum, s) => sum + Number(s.zone.price.toString()), 0);
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 นาที (ตรงกับ hold TTL)
 
-    // สร้าง Order + OrderItems + Payment (pending) ใน transaction
-    const order = await prisma.order.create({
-      data: {
-        userId: BigInt(userId),
-        concertId: BigInt(concertId),
-        totalAmount,
-        status: "PENDING",
-        expiresAt,
-        items: {
-          create: seats.map((s) => ({ seatId: s.id, price: s.zone.price })),
+    // สร้าง Order + mark seats HELD ใน transaction เดียวกัน
+    // กัน: crash ระหว่าง 2 ขั้นตอน → order ค้าง + seat DB != Redis → stuck ถาวร
+    // conditional updateMany (where status=AVAILABLE) เป็น compare-and-set — ถ้าไม่ครบ = rollback
+    const order = await prisma.$transaction(async (tx) => {
+      const newOrder = await tx.order.create({
+        data: {
+          userId: BigInt(userId),
+          concertId: BigInt(concertId),
+          totalAmount,
+          status: "PENDING",
+          expiresAt,
+          items: {
+            create: seats.map((s) => ({ seatId: s.id, price: s.zone.price })),
+          },
+          payment: {
+            create: { method: "PROMPTPAY", amount: totalAmount, status: "PENDING" },
+          },
         },
-        payment: {
-          create: { method: "PROMPTPAY", amount: totalAmount, status: "PENDING" },
-        },
-      },
-    });
+      });
 
-    // mark ที่นั่งเป็น HELD ใน DB (sync จาก Redis lock)
-    await prisma.seat.updateMany({
-      where: { id: { in: seatIds.map((s) => BigInt(s)) } },
-      data: { status: "HELD" },
+      // mark HELD แบบ conditional — ถ้ามีที่นั่งถูก race ไปก่อน count จะน้อยกว่า → rollback
+      const held = await tx.seat.updateMany({
+        where: { id: { in: seatIds.map((s) => BigInt(s)) }, status: "AVAILABLE" },
+        data: { status: "HELD" },
+      });
+      if (held.count !== seatIds.length) {
+        throw new Error("SEAT_TAKEN");
+      }
+
+      return newOrder;
     });
 
     // generate PromptPay QR
@@ -146,9 +155,12 @@ export async function holdAndCreateOrder(input: {
       promptPayId,
       expiresAt: expiresAt.toISOString(),
     };
-  } catch {
-    // rollback hold ถ้าสร้าง order พลาด
+  } catch (err) {
+    // rollback Redis hold ถ้าสร้าง order พลาด
     await releaseSeats(seatIds, userId);
+    if (err instanceof Error && err.message === "SEAT_TAKEN") {
+      return { ok: false, error: "ที่นั่งบางที่เพิ่งถูกจองไป กรุณาเลือกใหม่" };
+    }
     return { ok: false, error: "สร้างคำสั่งซื้อไม่สำเร็จ" };
   }
 }

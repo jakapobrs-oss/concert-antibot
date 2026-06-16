@@ -19,6 +19,7 @@
 // ============================================================
 import crypto from "node:crypto";
 import { redis } from "@/lib/redis";
+import { env } from "@/lib/env";
 
 // ---- ค่าคงที่ของระบบคิว (ดึงบางส่วนจาก env ได้) ----
 const BUCKET_SIZE_MS = 2000; // ขนาด time-window: คนเข้าคิวภายใน 2 วิ ถือว่าเสมอภาคกัน
@@ -46,12 +47,31 @@ export interface QueuePosition {
   admitExpiresAt?: number; // epoch ms ที่ admit window จะหมด (ถ้า ADMITTED)
 }
 
+// HMAC-based deterministic random — ป้องกัน leave/rejoin re-roll
+// user+concert เดิมได้ค่าเดิมเสมอ ไม่ว่าจะ rejoin กี่ครั้ง
+function computeDeterministicRandom(userId: string, concertId: string): number {
+  const digest = crypto
+    .createHmac("sha256", env.QUEUE_SCORE_SECRET)
+    .update(`${userId}:${concertId}`)
+    .digest();
+  return digest.readUInt32BE(0) % RANDOM_RANGE;
+}
+
 // คำนวณ fairScore — หัวใจความเป็นธรรม
 // score น้อย = อยู่หน้าคิว
-function computeFairScore(now: number): { bucket: number; random: number; score: number } {
+// ถ้ามี userId → randomScore เป็น deterministic (กัน re-roll)
+// ถ้าไม่มี userId (anonymous) → crypto random ตามเดิม
+function computeFairScore(
+  now: number,
+  userId?: string,
+  concertId?: string
+): { bucket: number; random: number; score: number } {
   const bucket = Math.floor(now / BUCKET_SIZE_MS);
   // ใช้ crypto random (ไม่ใช่ Math.random) เพื่อกัน predict + กระจายสม่ำเสมอ
-  const random = crypto.randomInt(0, RANDOM_RANGE);
+  const random =
+    userId && concertId
+      ? computeDeterministicRandom(userId, concertId)
+      : crypto.randomInt(0, RANDOM_RANGE);
   // score = bucket * RANGE + random → bucket สำคัญกว่า, random ตัดสินภายใน bucket
   const score = bucket * RANDOM_RANGE + random;
   return { bucket, random, score };
@@ -98,7 +118,8 @@ export async function joinQueue(params: {
 
   // 2. สร้าง slot ใหม่
   const token = crypto.randomBytes(32).toString("hex");
-  const { bucket, random, score } = computeFairScore(now);
+  // ถ้า login ใช้ HMAC แทน random → ออกจากคิวแล้วกลับมา ได้ลำดับเดิม (กัน re-roll)
+  const { bucket, random, score } = computeFairScore(now, params.userId, params.concertId);
 
   const pipeline = redis.pipeline();
   pipeline.zadd(keys.queue(params.concertId), score, token);

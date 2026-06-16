@@ -54,6 +54,11 @@ const envSchema = z.object({
   // ขอจาก: https://aistudio.google.com/apikey
   GEMINI_API_KEY: z.string().optional(),
 
+  // Queue fairness — HMAC secret สำหรับคำนวณ deterministic randomScore ต่อ userId+concert
+  // กัน leave/rejoin re-roll: user เดิม+concert เดิม ได้ randomScore เดิมเสมอ
+  // สร้างด้วย: openssl rand -base64 32
+  QUEUE_SCORE_SECRET: z.string().min(16).default("insecure-default-change-in-production"),
+
   // Anti-bot tunables
   QUEUE_BATCH_SIZE: z.coerce.number().int().positive().default(100),
   SEAT_HOLD_TTL_SECONDS: z.coerce.number().int().positive().default(300),

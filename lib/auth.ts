@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { env, isGoogleEnabled } from "@/lib/env";
 
 // schema validate login input
@@ -32,16 +33,25 @@ const providers: Provider[] = [
       const parsed = loginSchema.safeParse(credentials);
       if (!parsed.success) return null;
 
-      // 2. หา user
+      // 2. rate limit ต่อ email — กัน password spray (หลาย account ใช้ <= 5 ครั้ง/account เลี่ยง lockout)
+      //    ใช้ key ตาม email ไม่ใช่ IP (IP spoofable, email ไม่) — silent fail = response เหมือนผิดรหัส
+      const emailRl = await checkRateLimit({
+        key: `login:email:${parsed.data.email}`,
+        limit: 10,
+        windowMs: 15 * 60_000, // 10 ครั้ง/15 นาที ต่อ email
+      });
+      if (!emailRl.allowed) return null;
+
+      // 3. หา user
       const user = await prisma.user.findUnique({
         where: { email: parsed.data.email },
       });
       if (!user || !user.passwordHash) return null;
 
-      // 3. เช็ค lock — ถ้า locked อยู่ ห้าม login
+      // 4. เช็ค lock — ถ้า locked อยู่ ห้าม login
       if (user.lockedUntil && user.lockedUntil > new Date()) return null;
 
-      // 4. verify password
+      // 5. verify password
       const ok = await verifyPassword(user.passwordHash, parsed.data.password);
       if (!ok) {
         // เพิ่ม failed count — ถ้าผิดเกิน 5 ครั้ง lock 15 นาที

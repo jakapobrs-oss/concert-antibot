@@ -57,7 +57,8 @@ export async function finalizePaidOrder(params: {
   const seatIds = params.items.map((i) => i.seatId);
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(
+      async (tx) => {
       // 0) per-payer cap (anti-scalping): นับตั๋วที่ "ผู้จ่ายรายนี้" ได้ไปแล้วสำหรับคอนเสิร์ตนี้ (ข้ามทุก app account)
       //    กันขบวนการปั๊มบัญชีแอปแล้วจ่ายจากบัญชีธนาคารเดียว — บังคับที่ชั้น payment ที่ปลอมไม่ได้ (โอนเงินจริง)
       //    ทำใน 同 transaction กับการ claim → ถ้า 2 สลิปของผู้จ่ายเดียวกันชนกัน อย่างมากหลุดได้แค่ขอบ (ดู test)
@@ -112,7 +113,15 @@ export async function finalizePaidOrder(params: {
           },
         });
       }
-    });
+    },
+    {
+      // Serializable กันการ race condition ของ per-payer cap (count-then-check)
+      // ถ้า 2 transaction ยิงพร้อมกัน PostgreSQL จะ abort ตัวใดตัวหนึ่ง → retry ที่ caller
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5_000,
+      timeout: 10_000,
+    }
+    );
 
     return { ok: true, ticketCount: params.items.length };
   } catch (e) {

@@ -10,6 +10,7 @@ import { SeatMap } from "@/components/seat-map";
 import { Badge } from "@/components/ui/badge";
 import { isAdmitted } from "@/lib/queue";
 import { getHeldSeats } from "@/lib/seat-hold";
+import { auth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic"; // ที่นั่งเปลี่ยนตลอด ต้อง fresh
 
@@ -39,6 +40,11 @@ export default async function SeatsPage({
 
   if (!concert) notFound();
 
+  // ต้อง login — queue join บังคับ login แล้ว และ token ผูกกับ userId
+  const session = await auth();
+  const userId = (session?.user as { id?: string } | undefined)?.id;
+  if (!userId) redirect("/login");
+
   // อนุญาตเฉพาะตอน ON_SALE
   if (concert.status !== "ON_SALE") {
     return (
@@ -54,9 +60,9 @@ export default async function SeatsPage({
     );
   }
 
-  // 🔒 Queue gate — ต้องมี queue token ที่ถูก admit ถึงเข้าได้
-  // ไม่มี token หรือ token ยังไม่ถูกปล่อย → เด้งไปห้องรอ
-  const admitted = qt ? await isAdmitted(qt, concert.id.toString()) : false;
+  // 🔒 Queue gate — ต้องมี queue token ที่ถูก admit + เป็นของ user คนนี้จริง
+  // ส่ง userId กัน token sharing (คนหนึ่งผ่านคิว แล้วแชร์ token ให้คนอื่น)
+  const admitted = qt ? await isAdmitted(qt, concert.id.toString(), userId) : false;
   if (!admitted) {
     redirect(`/concerts/${slug}/queue`);
   }

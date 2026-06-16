@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     const model = genai.getGenerativeModel({
       model: "gemini-2.0-flash",
       systemInstruction: buildAdminSystemPrompt(pageContext),
+      generationConfig: { maxOutputTokens: 1200 },
     });
 
     const chat = model.startChat({ history });

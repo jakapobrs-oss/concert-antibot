@@ -16,22 +16,40 @@ const nextConfig: NextConfig = {
       { protocol: "http", hostname: "localhost", port: "9000" }, // MinIO
     ],
   },
-  // Security headers — หน้า checkout จัดการเงินจริง ต้องกัน clickjacking + MIME-sniff
-  // (CSP เต็มรูปแบบยังไม่ใส่เพราะต้อง allowlist Turnstile/Next inline — ทำเป็น follow-up)
+  // Security headers — หน้า checkout จัดการเงินจริง ต้องกัน clickjacking + MIME-sniff + XSS
   async headers() {
+    const isProd = process.env.NODE_ENV === "production";
+
+    // CSP: 'unsafe-inline' สำหรับ script/style เพราะ Next.js 15 inject inline scripts ตอน hydration
+    // ได้ประโยชน์หลักจาก: object-src 'none', base-uri 'self', frame-src Turnstile เท่านั้น
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: http://localhost:9000",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "frame-src https://challenges.cloudflare.com",
+      "object-src 'none'",    // กัน Flash/plugin
+      "base-uri 'self'",      // กัน base-tag injection
+      "form-action 'self'",   // กัน cross-origin form submit
+    ].join("; ");
+
     const headers = [
-      { key: "X-Frame-Options", value: "DENY" }, // กัน clickjacking หน้าจ่ายเงิน
-      { key: "X-Content-Type-Options", value: "nosniff" }, // กัน MIME-sniffing
+      { key: "Content-Security-Policy", value: csp },
+      { key: "X-Frame-Options", value: "DENY" },
+      { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
       { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
     ];
-    // HSTS — เฉพาะ production (dev ใช้ http://localhost จะใช้ไม่ได้)
-    if (process.env.NODE_ENV === "production") {
+
+    if (isProd) {
       headers.push({
         key: "Strict-Transport-Security",
         value: "max-age=31536000; includeSubDomains",
       });
     }
+
     return [{ source: "/:path*", headers }];
   },
 };

@@ -10,6 +10,7 @@ import { joinQueue } from "@/lib/queue";
 import { assessRequest } from "@/lib/antibot";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { acquireInflight, releaseInflight } from "@/lib/load-shed";
+import { getClientIp } from "@/lib/get-ip";
 
 const bodySchema = z.object({
   concertId: z.string().min(1),
@@ -71,16 +72,27 @@ async function handleJoin(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "คอนเสิร์ตนี้ยังไม่เปิดขาย" }, { status: 403 });
   }
 
-  // ดึง user (ถ้า login) + ip
+  // ดึง user + ip
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? undefined;
+
+  // ต้อง login — กัน anonymous multi-slot (Sybil) ที่ทำลาย fairness queue
+  if (!userId) {
+    return NextResponse.json(
+      { error: "กรุณาเข้าสู่ระบบก่อนเข้าคิว", action: "LOGIN_REQUIRED" },
+      { status: 401 }
+    );
+  }
+
+  const ip = getClientIp(req);
   const userAgent = req.headers.get("user-agent");
+  const ipOrUser = userId ? `user:${userId}` : `ip:${ip ?? "unknown"}`;
 
   // ============================================================
   // 🚦 Rate Limit (Layer 2) — กันยิงรัวต่อ IP
   // ============================================================
-  const rlKey = `queue_join:ip:${ip ?? "unknown"}`;
+  // rate limit keyed on userId (not IP) — XFF spoofing ไม่ได้ผล
+  const rlKey = `queue_join:${ipOrUser}`;
   const rl = await checkRateLimit({ key: rlKey, ...RATE_LIMIT });
   if (!rl.allowed) {
     return NextResponse.json(
