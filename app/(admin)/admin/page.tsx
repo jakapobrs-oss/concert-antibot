@@ -4,6 +4,7 @@ import { Music2, Flame, Users, Ticket, ShieldCheck, BarChart3 } from "lucide-rea
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { EqBars } from "@/components/eq-bars";
+import { AdminChatPanel } from "@/components/admin-chat-panel";
 import { formatTHB } from "@/lib/format";
 import { getOverviewStats, getLiveQueueStats } from "@/lib/admin-stats";
 
@@ -119,6 +120,11 @@ export default async function AdminDashboard() {
               Sales Report
             </Button>
           </Link>
+        </div>
+
+        {/* Gemini AI Assistant */}
+        <div className="mt-6">
+          <AdminChatPanel />
         </div>
       </main>
     </>
