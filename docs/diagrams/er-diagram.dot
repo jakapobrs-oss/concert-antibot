@@ -1,6 +1,7 @@
 // ============================================================
 // Concert Anti-Bot — Entity Relationship Diagram
 // Generated from prisma/schema.prisma (14 models) — 2026-06-07
+// Layout pass 2026-06-12: cross-cluster FK = constraint=false + concentrate + newrank (ลดเส้นตัดกัน)
 // Render: dot -Tpng -Gdpi=200 er-diagram.dot -o er-diagram.png
 //         dot -Tpdf er-diagram.dot -o er-diagram.pdf
 //         dot -Tsvg er-diagram.dot -o er-diagram.svg
@@ -9,9 +10,11 @@ digraph ER {
   graph [
     rankdir=TB,
     splines=spline,
+    concentrate=true,
+    newrank=true,
     overlap=false,
-    nodesep=0.45,
-    ranksep=1.25,
+    nodesep=0.5,
+    ranksep=1.3,
     bgcolor="#ffffff",
     pad=0.5,
     fontname="Segoe UI",
@@ -200,21 +203,21 @@ digraph ER {
   }
 
   // ========== RELATIONSHIPS (crow's-foot: tee=one, crow=many, teeodot=zero-or-one) ==========
+  // intra-cluster = โครงสร้างหลัก (มี constraint คุมการจัดอันดับในกล่อง)
   USER -> ACCOUNT            [dir=both, arrowtail=tee, arrowhead=crow];
   USER -> SESSION            [dir=both, arrowtail=tee, arrowhead=crow];
-  USER -> ORDER              [dir=both, arrowtail=tee, arrowhead=crow];
-  USER -> TICKET             [dir=both, arrowtail=tee, arrowhead=crow];
-  USER -> QUEUE_TOKEN        [dir=both, arrowtail=teeodot, arrowhead=crow];
-
   CONCERT -> ZONE            [dir=both, arrowtail=tee, arrowhead=crow];
-  CONCERT -> ORDER           [dir=both, arrowtail=tee, arrowhead=crow];
-  CONCERT -> QUEUE_TOKEN     [dir=both, arrowtail=tee, arrowhead=crow];
   ZONE -> SEAT               [dir=both, arrowtail=tee, arrowhead=crow];
-
   ORDER -> ORDER_ITEM        [dir=both, arrowtail=tee, arrowhead=crow];
   ORDER -> PAYMENT           [dir=both, arrowtail=tee, arrowhead=teeodot];
   ORDER -> TICKET            [dir=both, arrowtail=tee, arrowhead=crow];
 
-  SEAT -> ORDER_ITEM         [dir=both, arrowtail=tee, arrowhead=teeodot, style=dashed];
-  SEAT -> TICKET             [dir=both, arrowtail=tee, arrowhead=teeodot, style=dashed];
+  // cross-cluster FK = constraint=false → route อย่างเดียว ไม่บิด rank (ลดเส้นตัดกันมั่ว)
+  USER -> ORDER              [dir=both, arrowtail=tee, arrowhead=crow, constraint=false];
+  USER -> TICKET             [dir=both, arrowtail=tee, arrowhead=crow, constraint=false];
+  USER -> QUEUE_TOKEN        [dir=both, arrowtail=teeodot, arrowhead=crow, constraint=false];
+  CONCERT -> ORDER           [dir=both, arrowtail=tee, arrowhead=crow, constraint=false];
+  CONCERT -> QUEUE_TOKEN     [dir=both, arrowtail=tee, arrowhead=crow, constraint=false];
+  SEAT -> ORDER_ITEM         [dir=both, arrowtail=tee, arrowhead=teeodot, style=dashed, constraint=false];
+  SEAT -> TICKET             [dir=both, arrowtail=tee, arrowhead=teeodot, style=dashed, constraint=false];
 }
