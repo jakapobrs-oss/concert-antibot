@@ -15,8 +15,13 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // url = connection ผ่าน pooler (pgbouncer) — ใช้ตอน runtime serverless บน Vercel
+  //   Neon: ใช้ host ที่มี "-pooler" (กัน connection ระเบิดเวลามีหลาย serverless instance)
+  url       = env("DATABASE_URL")
+  // directUrl = connection ตรง ไม่ผ่าน pooler — Prisma ใช้ตอน migrate deploy เท่านั้น
+  //   Neon: ใช้ host ปกติ (ไม่มี -pooler). local docker: ตั้งให้เท่ากับ DATABASE_URL ได้
+  directUrl = env("DIRECT_URL")
 }
 
 // ============================================================

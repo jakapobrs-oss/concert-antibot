@@ -3,6 +3,10 @@ import type { NextConfig } from "next";
 // Next.js config — local-only, ไม่มี image domain ภายนอก (ใช้ MinIO localhost)
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // argon2 เป็น native addon (.node binary) — ต้องให้ Next ทรีตเป็น external package
+  // ไม่งั้นตอน bundle เป็น serverless function จะหา binary ไม่เจอ → runtime error
+  // "Cannot find module argon2" บน Vercel (ใช้ตอน hash/verify รหัสผ่าน login)
+  serverExternalPackages: ["argon2"],
   // หมายเหตุ: ไม่เปิด typedRoutes เพราะใช้ template-literal href (`/concerts/${slug}`)
   // ซึ่งจะ type error กับ typedRoutes — ปิดไว้เพื่อความเสถียรของ build
   experimental: {

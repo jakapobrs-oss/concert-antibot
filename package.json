@@ -5,7 +5,8 @@
   "description": "ระบบจองบัตรคอนเสิร์ตที่มี anti-bot 2 ชั้น (scoring + behavior) + fairness queue (โปรเจ็คจบ ป.ตรี)",
   "scripts": {
     "dev": "next dev --turbo",
-    "build": "next build",
+    "build": "prisma migrate deploy && next build",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
@@ -17,6 +18,7 @@
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts",
     "sweep": "tsx scripts/sweep-orders.ts",
+    "check:env": "tsx scripts/check-env.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:race": "tsx scripts/test-n1-race.ts",
