@@ -9,7 +9,8 @@ const RATE_LIMIT = { limit: 40, windowMs: 60_000 };
 
 const bodySchema = z.object({
   message: z.string().min(1).max(2000),
-  pageContext: z.string().max(2000).optional(),
+  // .nullish() รับ null ด้วย (panel อาจส่ง null ตอนยังไม่มี context) — .optional() รับแค่ undefined
+  pageContext: z.string().max(2000).nullish(),
   history: z
     .array(
       z.object({

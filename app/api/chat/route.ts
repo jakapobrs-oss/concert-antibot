@@ -10,7 +10,9 @@ const RATE_LIMIT = { limit: 20, windowMs: 60_000 };
 
 const bodySchema = z.object({
   message: z.string().min(1).max(500),
-  pageContext: z.string().max(1000).optional(),
+  // .nullish() ไม่ใช่ .optional(): widget ส่ง pageContext:null ตอนหน้าไม่มี context
+  // ถ้าใช้ .optional() (รับแค่ undefined) จะ reject null → 400 ทุกข้อความ
+  pageContext: z.string().max(1000).nullish(),
   history: z
     .array(
       z.object({
