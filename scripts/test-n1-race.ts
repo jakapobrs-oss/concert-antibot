@@ -8,7 +8,8 @@
 //   - finalize ซ้ำ → ออกตั๋วได้ครั้งเดียว
 // สร้าง fixture ของตัวเอง (slug unique) แล้วลบทิ้งใน finally — ไม่แตะ seed จริง
 import { prisma } from "../lib/prisma";
-import { finalizePaidOrder, cancelPendingOrder } from "../lib/order-finalize";
+import { finalizePaidOrder, cancelPendingOrder, reserveSeatsForOrder } from "../lib/order-finalize";
+import { expireStaleOrders } from "../lib/order-sweeper";
 
 let pass = 0;
 let fail = 0;
@@ -58,6 +59,7 @@ async function main() {
   const concertId = concert.id;
   const seats = concert.zones[0].seats.sort((a, b) => a.seatNumber - b.seatNumber);
   const [s0, s1, s2, s3] = seats;
+  const zonePrice = concert.zones[0].price; // Decimal(1000) — ใช้ตอนเรียก reserveSeatsForOrder ตรงๆ
 
   // ล้างสถานะ order/ticket ของคอนเสิร์ตนี้ + คืนที่นั่งทั้งหมดเป็น AVAILABLE (ใช้ก่อนแต่ละ iteration)
   async function resetState() {
@@ -274,6 +276,102 @@ async function main() {
         perPayerLimit: LIMIT,
       });
       check("payer Q (บัญชีอื่น) ซื้อได้ตามปกติ (cap แยกตามผู้จ่าย)", fin3.ok === true, JSON.stringify(fin3));
+    }
+
+    // ============================================================
+    // Test F — sweeper (Codex #4): ปล่อยเฉพาะที่นั่งของ order ที่ "ตัวเองยกเลิก" เท่านั้น
+    //   บั๊กเดิม: อ่าน seatIds นอก tx → ถ้าที่นั่งถูก order ใหม่ re-book ระหว่างนั้น = เผลอปล่อยของ order ใหม่
+    // ============================================================
+    console.log("Test F — sweeper race (#4):");
+    // F-a: order หมดอายุถูกกวาด แต่ order ที่ยัง active (คนละที่นั่ง) ต้องไม่ถูกแตะ
+    await resetState();
+    {
+      const expired = await seedPendingOrder([s0.id], { expiresInMin: -1 }); // หมดอายุแล้ว
+      const active = await seedPendingOrder([s1.id], { expiresInMin: 5 }); // ยัง active
+      const swept = await expireStaleOrders({ concertId });
+      const [expSnap, actSnap, seatRows] = await Promise.all([
+        prisma.order.findUnique({ where: { id: expired.id }, select: { status: true } }),
+        prisma.order.findUnique({ where: { id: active.id }, select: { status: true } }),
+        prisma.seat.findMany({ where: { id: { in: [s0.id, s1.id] } }, orderBy: { id: "asc" }, select: { id: true, status: true } }),
+      ]);
+      const s0status = seatRows.find((r) => r.id === s0.id)?.status;
+      const s1status = seatRows.find((r) => r.id === s1.id)?.status;
+      check("กวาด order หมดอายุ 1 ใบ (return=1)", swept === 1, `swept=${swept}`);
+      check("order หมดอายุ → CANCELLED + ที่นั่งคืนเป็น AVAILABLE", expSnap?.status === "CANCELLED" && s0status === "AVAILABLE", JSON.stringify({ expSnap, s0status }));
+      check("order active ไม่ถูกแตะ → ยัง PENDING + ที่นั่งยัง HELD", actSnap?.status === "PENDING" && s1status === "HELD", JSON.stringify({ actSnap, s1status }));
+    }
+
+    // F-b: re-book — ที่นั่งที่ order เดิม(หมดอายุ)เคยถือ ถูกกวาดคืนแล้ว order ใหม่จองต่อ
+    //      sweeper รอบถัดไปต้องไม่ปล่อยที่นั่งของ order ใหม่ (active) ทิ้ง
+    await resetState();
+    {
+      const oldOrder = await seedPendingOrder([s0.id], { expiresInMin: -1 });
+      await expireStaleOrders({ concertId }); // กวาด oldOrder → s0 AVAILABLE
+      const reOrder = await seedPendingOrder([s0.id], { expiresInMin: 5 }); // order ใหม่จอง s0 ต่อ (active)
+      const swept2 = await expireStaleOrders({ concertId }); // รอบสอง — ต้องไม่แตะ reOrder
+      const [reSnap, s0row] = await Promise.all([
+        prisma.order.findUnique({ where: { id: reOrder.id }, select: { status: true } }),
+        prisma.seat.findUnique({ where: { id: s0.id }, select: { status: true } }),
+      ]);
+      check("re-book: sweeper รอบสองไม่กวาดอะไรเพิ่ม (return=0)", swept2 === 0, `swept2=${swept2}`);
+      check("re-book: ที่นั่งของ order ใหม่ยัง HELD ไม่ถูกปล่อยผิด", reSnap?.status === "PENDING" && s0row?.status === "HELD", JSON.stringify({ reSnap, s0row }));
+      check("old order ที่ถูกกวาดไปแล้วยัง CANCELLED", (await prisma.order.findUnique({ where: { id: oldOrder.id }, select: { status: true } }))?.status === "CANCELLED");
+    }
+
+    // F-c: ยิง sweeper พร้อมกันหลายตัว (cron + on-read) บน order หมดอายุเดียวกัน → กวาดได้ครั้งเดียว ไม่ crash
+    await resetState();
+    {
+      const expired = await seedPendingOrder([s0.id, s1.id], { expiresInMin: -1 });
+      const results = await Promise.all([
+        expireStaleOrders({ concertId }),
+        expireStaleOrders({ concertId }),
+        expireStaleOrders({ concertId }),
+      ]);
+      const totalSwept = results.reduce((a, b) => a + b, 0);
+      const seatRows = await prisma.seat.findMany({ where: { id: { in: [s0.id, s1.id] } }, select: { status: true } });
+      check("concurrent sweeper: order ถูกกวาดรวมแค่ครั้งเดียว (Σreturn=1)", totalSwept === 1, `results=${JSON.stringify(results)}`);
+      check("concurrent sweeper: ที่นั่งคืนครบเป็น AVAILABLE ไม่ค้าง", seatRows.every((r) => r.status === "AVAILABLE"), JSON.stringify(seatRows));
+      check("concurrent sweeper: order → CANCELLED", (await prisma.order.findUnique({ where: { id: expired.id }, select: { status: true } }))?.status === "CANCELLED");
+    }
+
+    // ============================================================
+    // Test G — reserveSeatsForOrder (Codex #5): 2 คำขอจอง "คนละที่นั่ง" พร้อมกันต้องไม่ข้ามลิมิตตั๋วต่อ user
+    //   บั๊กเดิม: นับ committed นอก tx ไม่มี lock → ทั้งคู่อ่าน 0 → ผ่านทั้งคู่ → รวมเกินโควตา
+    //   fix: advisory xact lock ต่อ (user, concert) → serialize การนับ+สร้าง
+    // ============================================================
+    console.log("Test G — concurrent reserve vs ticket limit (#5, 15 รอบ):");
+    let gOk = true;
+    let gDetail = "";
+    for (let i = 0; i < 15; i++) {
+      await resetState();
+      const LIMIT = 2; // ต่อ user ต่อคอนเสิร์ตนี้
+      const expiresAt = new Date(Date.now() + 5 * MIN);
+      // 2 คำขอ ยิงพร้อมกัน แต่ละอันขอ 2 ที่นั่ง (คนละที่นั่ง) → รวม 4 > LIMIT 2
+      const [r1, r2] = await Promise.all([
+        reserveSeatsForOrder({ userId, concertId, items: [{ seatId: s0.id, price: zonePrice }, { seatId: s1.id, price: zonePrice }], maxTicketsPerUser: LIMIT, expiresAt }),
+        reserveSeatsForOrder({ userId, concertId, items: [{ seatId: s2.id, price: zonePrice }, { seatId: s3.id, price: zonePrice }], maxTicketsPerUser: LIMIT, expiresAt }),
+      ]);
+      const okCount = [r1, r2].filter((r) => r.ok).length;
+      const limitCount = [r1, r2].filter((r) => !r.ok && (r as { reason?: string }).reason === "LIMIT").length;
+      // ยอดที่นั่ง HELD จริงต้องไม่เกิน LIMIT
+      const heldSeats = await prisma.seat.count({ where: { zone: { concertId }, status: "HELD" } });
+      const committed = await prisma.orderItem.count({
+        where: { order: { userId, concertId, OR: [{ status: "PAID" }, { status: "PENDING", expiresAt: { gt: new Date() } }] } },
+      });
+      if (okCount !== 1 || limitCount !== 1 || heldSeats !== LIMIT || committed !== LIMIT) {
+        gOk = false;
+        gDetail = `รอบ ${i}: ok=${okCount} limit=${limitCount} held=${heldSeats} committed=${committed} (ต้อง ok=1 limit=1 held=2 committed=2)`;
+        break;
+      }
+    }
+    check("15 รอบ: สำเร็จพอดี 1 คำขอ, อีกอันชน LIMIT, ที่นั่ง HELD รวมไม่เกินโควตา", gOk, gDetail);
+
+    // G-b: คำขอเดียวที่พอดีโควตา ต้องผ่าน (lock ไม่ over-reject)
+    await resetState();
+    {
+      const r = await reserveSeatsForOrder({ userId, concertId, items: [{ seatId: s0.id, price: zonePrice }, { seatId: s1.id, price: zonePrice }], maxTicketsPerUser: 2, expiresAt: new Date(Date.now() + 5 * MIN) });
+      const held = await prisma.seat.count({ where: { zone: { concertId }, status: "HELD" } });
+      check("คำขอเดียวพอดีโควตา (2/2) ผ่านปกติ + ที่นั่ง HELD ครบ 2", r.ok === true && held === 2, `${JSON.stringify(r)} held=${held}`);
     }
   } finally {
     // ---------- cleanup fixtures ----------

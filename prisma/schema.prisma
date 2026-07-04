@@ -52,6 +52,10 @@ model User {
   orders      Order[]
   queueTokens QueueToken[]
   tickets     Ticket[]
+  // named ticket: รายการที่นั่งที่ user นี้ถูกตั้งเป็น "ผู้ถือ" (อาจซื้อโดยคนอื่น)
+  heldItems     OrderItem[]    @relation("ItemHolder")
+  // คำขอคืนบัตรที่เงินต้องคืนให้ user นี้ (ผู้ซื้อ)
+  ticketReturns TicketReturn[] @relation("ReturnPayer")
 
   @@index([email])
   @@map("users")
@@ -165,7 +169,9 @@ model Seat {
 
   zone       Zone        @relation(fields: [zoneId], references: [id], onDelete: Cascade)
   orderItem  OrderItem?
-  ticket     Ticket?
+  // 1 ที่นั่งมีได้หลายตั๋ว "ในประวัติ" (ตั๋วที่ถูกคืนแล้ว + ตั๋วปัจจุบัน) — ตั๋ว active
+  // ถูกบังคับใบเดียวด้วย partial unique index (WHERE returnedAt IS NULL) ใน migration
+  tickets    Ticket[]
 
   @@unique([zoneId, rowLabel, seatNumber])
   @@index([zoneId, status])
@@ -217,11 +223,16 @@ model OrderItem {
   orderId BigInt
   seatId  BigInt  @unique // 1 ที่นั่ง 1 order item
   price   Decimal @db.Decimal(10, 2) // snapshot ราคา
+  // named ticket: ผู้ถือบัตรของที่นั่งนี้ — commit ตอน checkout ก่อนจ่าย แก้ไม่ได้หลังจ่าย
+  // null = ยังไม่ระบุ (default ตอนออกตั๋ว = ผู้ซื้อ)
+  holderUserId BigInt?
 
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  seat  Seat  @relation(fields: [seatId], references: [id])
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  seat   Seat  @relation(fields: [seatId], references: [id])
+  holder User? @relation("ItemHolder", fields: [holderUserId], references: [id])
 
   @@index([orderId])
+  @@index([holderUserId])
   @@map("order_items")
 }
 
@@ -265,25 +276,68 @@ enum PaymentStatus {
   VERIFYING // กำลัง verify สลิป
   SUCCESS   // ยืนยันแล้ว เงินเข้า
   FAILED    // สลิปผิด / ยอดไม่ตรง
+  // Codex #3: เงินเข้าจริง (สลิปผ่าน verify) แต่ออกตั๋วไม่ได้ (order ตาย/ที่นั่งหลุด/ชน payer cap)
+  // → ทีมงานต้องคืนเงินด้วยมือ — เก็บใน DB ให้ตามได้ ไม่ใช่แค่ console log
+  REFUND_REQUIRED
+  REFUNDED // ทีมงานโอนเงินคืนแล้ว (admin กดยืนยันจากหน้า refunds)
 }
 
 // Ticket — ตั๋วที่ออกหลังจ่ายเงินสำเร็จ
+// named ticket: userId = "ผู้ถือ" (holder — default คือผู้ซื้อ), Order.userId = ผู้ซื้อ (payer)
 model Ticket {
   id       BigInt   @id @default(autoincrement())
   orderId  BigInt
-  seatId   BigInt   @unique // 1 ที่นั่งออกตั๋วได้ครั้งเดียว
+  // ⚠️ unique เฉพาะตั๋วที่ยังไม่ถูกคืน — partial unique index "tickets_seatId_active_key"
+  //    (WHERE returnedAt IS NULL) สร้างใน migration เพราะ Prisma ไม่รองรับ partial index ใน schema
+  seatId   BigInt
   userId   BigInt
-  qrCode   String   @unique @db.VarChar(255) // สแกนตอนเข้างาน
+  qrCode   String   @unique @db.VarChar(255) // legacy static QR (Phase 3 เปลี่ยนเป็น dynamic แล้ว)
   price    Decimal  @db.Decimal(10, 2)
   issuedAt DateTime @default(now())
+  // snapshot ชื่อผู้ถือ ณ ตอนออกตั๋ว — จนท.หน้างานใช้เทียบบัตรประชาชน (ชื่อบนบัตรแก้ไม่ได้)
+  holderName  String   @default("")
+  // check-in กันใช้ซ้ำ: 1 บัตรสแกนเข้าได้ครั้งเดียว
+  checkedInAt DateTime?
+  // secret สำหรับ dynamic QR (HMAC หมุนตามเวลา) — ห้ามส่งไป client เด็ดขาด
+  qrSecret    String   @default("")
+  // คืนบัตรเข้าระบบแล้ว (ที่นั่งกลับเข้า pool) — ตั๋วใบนี้ใช้เข้างานไม่ได้อีก
+  returnedAt  DateTime?
 
-  order Order @relation(fields: [orderId], references: [id])
-  seat  Seat  @relation(fields: [seatId], references: [id])
-  user  User  @relation(fields: [userId], references: [id])
+  order  Order         @relation(fields: [orderId], references: [id])
+  seat   Seat          @relation(fields: [seatId], references: [id])
+  user   User          @relation(fields: [userId], references: [id])
+  return TicketReturn?
 
   @@index([userId])
   @@index([orderId])
+  @@index([seatId])
   @@map("tickets")
+}
+
+// คำขอคืนบัตร — ที่นั่งกลับเข้า pool ขายผ่านคิวปกติ, เงินคืน "ราคาหน้าบัตร" ให้ผู้ซื้อเดิม
+// (ตั้งใจไม่ให้เลือกผู้รับบัตรตอนคืน — กันเป็นช่อง resale/โอนอำพราง ตามกฎเหล็ก docs/19)
+model TicketReturn {
+  id           BigInt       @id @default(autoincrement())
+  ticketId     BigInt       @unique
+  orderId      BigInt
+  payerUserId  BigInt // ผู้ซื้อ — เงินคืนไปหาคนนี้
+  holderUserId BigInt? // ผู้ถือ ณ ตอนคืน (audit)
+  amount       Decimal      @db.Decimal(10, 2) // ราคาหน้าบัตร (จาก Ticket.price)
+  seatLabel    String // snapshot "โซน/แถว/เลขที่นั่ง" ไว้ดูย้อนหลังหลัง OrderItem ถูกลบ
+  status       RefundStatus @default(PENDING)
+  createdAt    DateTime     @default(now())
+  refundedAt   DateTime?
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  payer  User   @relation("ReturnPayer", fields: [payerUserId], references: [id])
+
+  @@index([status])
+  @@map("ticket_returns")
+}
+
+enum RefundStatus {
+  PENDING  // รอทีมงานโอนเงินคืน
+  REFUNDED // คืนเงินแล้ว (admin กดยืนยัน)
 }
 
 // ============================================================

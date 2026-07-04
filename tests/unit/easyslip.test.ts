@@ -15,6 +15,8 @@ interface LoadOpts {
   promptPayId?: string;
   receiverCheck?: boolean;
   receiverMatch?: boolean;
+  receiverName?: string; // ค่า env PAYMENTS_RECEIVER_NAME (undefined = ไม่ตั้ง = ข้ามเช็คชื่อ)
+  receiverNameMatch?: boolean; // ผล mock ของ receiverNameMatches
 }
 
 // โหลด verifySlip ใหม่พร้อม mock env/slip-match/slip-date ตาม config ที่ต้องการ
@@ -25,6 +27,8 @@ async function loadVerifySlip(opts: LoadOpts = {}) {
     promptPayId = "0812345678",
     receiverCheck = true,
     receiverMatch = true,
+    receiverName = undefined,
+    receiverNameMatch = true,
   } = opts;
 
   vi.resetModules();
@@ -33,6 +37,7 @@ async function loadVerifySlip(opts: LoadOpts = {}) {
       EASYSLIP_API_KEY: isEasySlipConfigured ? "test-key" : "",
       PROMPTPAY_ID: promptPayId,
       PAYMENTS_RECEIVER_CHECK: receiverCheck,
+      PAYMENTS_RECEIVER_NAME: receiverName,
     },
     isEasySlipConfigured,
     isProduction,
@@ -40,6 +45,7 @@ async function loadVerifySlip(opts: LoadOpts = {}) {
   // mock การจับคู่ receiver (มี unit test แยกใน slip-match.test.ts แล้ว) — ที่นี่คุมผล true/false ตรงๆ
   vi.doMock("@/lib/slip-match", () => ({
     receiverMatchesPromptPay: () => receiverMatch,
+    receiverNameMatches: () => receiverNameMatch,
   }));
   vi.doMock("@/lib/slip-date", () => ({
     parseSlipDate: (s?: string) => (s ? new Date(s) : undefined),
@@ -189,5 +195,60 @@ describe("verifySlip — มี key: เรียก EasySlip จริง (mock
     const r = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
     expect(r.success).toBe(false);
     expect(r.error).toContain("EasySlip");
+  });
+
+  // ---- ชั้นที่ 2.5 (Codex #1): เช็คชื่อบัญชีผู้รับ — กันบัญชี attacker ที่เลขท้ายพ้องกับร้าน ----
+  it("ชั้นที่ 2.5: ตั้ง PAYMENTS_RECEIVER_NAME + ชื่อผู้รับตรง → ผ่าน", async () => {
+    const verifySlip = await loadVerifySlip({
+      isEasySlipConfigured: true,
+      receiverName: "จักรภพ ยมรัตน์",
+      receiverNameMatch: true,
+    });
+    stubFetchJson(
+      okBody({
+        receiver: { account: { proxy: { account: "0xx-xxx-5678" }, name: { th: "นาย จักรภพ ย." } } },
+      })
+    );
+    const r = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
+    expect(r.success).toBe(true);
+  });
+
+  it("ชั้นที่ 2.5: ❌ ชื่อผู้รับไม่ตรง → ปฏิเสธ (เลขท้ายพ้องกันแต่เป็นบัญชีคนอื่น)", async () => {
+    const verifySlip = await loadVerifySlip({
+      isEasySlipConfigured: true,
+      receiverName: "จักรภพ ยมรัตน์",
+      receiverNameMatch: false,
+    });
+    stubFetchJson(
+      okBody({
+        receiver: { account: { proxy: { account: "0xx-xxx-5678" }, name: { th: "นาย คนอื่น จริงๆ" } } },
+      })
+    );
+    const r = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("ชื่อบัญชีผู้รับ");
+  });
+
+  it("ชั้นที่ 2.5: ❌ สลิปไม่มีชื่อผู้รับเลย → ปฏิเสธ (ตรวจไม่ได้ = fail-closed)", async () => {
+    const verifySlip = await loadVerifySlip({
+      isEasySlipConfigured: true,
+      receiverName: "จักรภพ ยมรัตน์",
+      receiverNameMatch: true, // ต่อให้ matcher ใจดี แต่ไม่มีชื่อให้เทียบ → ต้องปฏิเสธก่อนถึง matcher
+    });
+    stubFetchJson(okBody()); // okBody เดิมมีแต่ proxy account ไม่มีชื่อผู้รับ
+    const r = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("ชื่อบัญชีผู้รับ");
+  });
+
+  it("ชั้นที่ 2.5: ไม่ได้ตั้ง PAYMENTS_RECEIVER_NAME → ข้ามเช็คชื่อ (พฤติกรรมเดิมไม่พัง)", async () => {
+    const verifySlip = await loadVerifySlip({
+      isEasySlipConfigured: true,
+      receiverName: undefined,
+      receiverNameMatch: false, // matcher บอกไม่ตรง แต่ไม่ได้ตั้ง env → ไม่เรียกใช้
+    });
+    stubFetchJson(okBody());
+    const r = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
+    expect(r.success).toBe(true);
   });
 });

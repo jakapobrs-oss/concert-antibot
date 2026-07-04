@@ -46,6 +46,10 @@ export const envSchema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
+  // ชื่อบัญชีผู้รับเงินที่คาดหวัง (ใส่ได้หลายชื่อคั่น comma เช่น "จักรภพ ยมรัตน์,Jakapob Y")
+  // ตั้งแล้ว = สลิปต้องมีชื่อผู้รับตรงด้วย — ปิดช่อง "บัญชี attacker เองที่เลขท้ายพ้องกับร้าน"
+  // (เลขบัญชีบนสลิปถูก mask จนเทียบได้บางหลัก แต่ชื่อบัญชีปลอมไม่ได้) — แนะนำให้ตั้งบน production
+  PAYMENTS_RECEIVER_NAME: z.string().optional(),
 
   // App
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -69,6 +73,13 @@ export const envSchema = z.object({
   // per-payer ticket cap — จำนวนตั๋วสูงสุดที่ "1 บัญชีผู้จ่าย" ซื้อได้ต่อ 1 คอนเสิร์ต (ข้ามทุก app account)
   //   กัน account farming: ปั๊มบัญชีแอปได้ฟรี แต่บัญชีธนาคารจริงปั๊มไม่ไหว → cap ที่ชั้นจ่ายเงิน (ปลอมไม่ได้)
   PER_PAYER_TICKET_LIMIT: z.coerce.number().int().positive().default(10),
+
+  // ---- Named ticket (docs/19) ----
+  // อายุบัญชีขั้นต่ำ (วัน) ของ "ผู้ถือที่ไม่ใช่ผู้ซื้อ" — กัน scalper ให้ลูกค้าสมัครบัญชีใหม่มารับบัตร
+  //   (เกณฑ์ ~1 เดือนตามที่ user เลือก) 0 = ปิดเช็ค (สะดวกตอน dev/demo ที่บัญชีเพิ่งสร้าง)
+  HOLDER_MIN_ACCOUNT_AGE_DAYS: z.coerce.number().int().min(0).default(30),
+  // คืนบัตรได้ถึงกี่ชั่วโมงก่อนเริ่มงาน — ให้ระบบมีเวลาขายที่นั่งที่คืนมารอบใหม่
+  RETURN_CUTOFF_HOURS: z.coerce.number().int().min(0).default(24),
 
   // Vercel Cron — secret กัน endpoint /api/cron/sweep ถูกเรียกมั่วจากภายนอก
   //   ตั้งบน Vercel → Vercel แนบ header "Authorization: Bearer <CRON_SECRET>" ตอนยิง cron ให้เอง

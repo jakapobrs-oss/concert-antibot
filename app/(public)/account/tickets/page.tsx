@@ -1,14 +1,17 @@
-// หน้าตั๋วของฉัน (Phase 7) — แสดงตั๋วที่จองสำเร็จ + QR สำหรับเข้างาน
+// หน้าตั๋วของฉัน (Phase 7 + docs/19 named ticket) — ตั๋วที่ "ฉันเป็นผู้ถือ" + QR เข้างานแบบหมุน
 // การ์ดออกแบบเป็น "ตั๋วจริง": ฝั่ง QR พื้นขาว + รอยปรุ + แถบ barcode
+// QR เป็น dynamic (หมุนทุก ~30 วิ ผ่าน server action) — ภาพแคปหน้าจอใช้เข้างานไม่ได้
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import QRCode from "qrcode";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { env } from "@/lib/env";
 import { formatTHB, formatThaiDate } from "@/lib/format";
-import { PartyPopper, MapPin, CalendarDays, Ticket } from "lucide-react";
+import { PartyPopper, MapPin, CalendarDays, Ticket, UserRound, CheckCircle2 } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
+import { TicketEntryQr } from "@/components/ticket-entry-qr";
+import { TicketReturnButton } from "@/components/ticket-return-button";
 
 export const dynamic = "force-dynamic";
 
@@ -23,32 +26,39 @@ export default async function TicketsPage({
   const userId = (session?.user as { id?: string } | undefined)?.id;
   if (!userId) redirect("/login?callbackUrl=/account/tickets");
 
-  // ดึงตั๋วทั้งหมดของ user (หรือเฉพาะ order ถ้าระบุ)
+  // ตั๋วที่ user นี้เป็น "ผู้ถือ" (named ticket: คนอื่นซื้อให้ก็โผล่ที่นี่) — ไม่รวมใบที่คืนแล้ว
   const tickets = await prisma.ticket.findMany({
     where: {
       userId: BigInt(userId),
+      returnedAt: null,
       ...(orderId ? { orderId: BigInt(orderId) } : {}),
     },
     include: {
       seat: { include: { zone: { include: { concert: true } } } },
+      order: { select: { userId: true } },
     },
     orderBy: { issuedAt: "desc" },
   });
 
-  // gen QR สำหรับแต่ละตั๋ว
-  const ticketsWithQr = await Promise.all(
-    tickets.map(async (t) => ({
-      id: t.id.toString(),
-      qrCode: t.qrCode,
-      qrDataUrl: await QRCode.toDataURL(t.qrCode, { width: 200, margin: 1 }),
-      concertTitle: t.seat.zone.concert.title,
-      venue: t.seat.zone.concert.venue,
-      eventAt: t.seat.zone.concert.eventAt,
-      zoneName: t.seat.zone.name,
-      seat: `${t.seat.rowLabel}${t.seat.seatNumber}`,
-      price: t.price.toString(),
-    }))
-  );
+  const now = Date.now();
+  const cutoffMs = env.RETURN_CUTOFF_HOURS * 60 * 60 * 1000;
+
+  const ticketCards = tickets.map((t) => ({
+    id: t.id.toString(),
+    holderName: t.holderName,
+    checkedIn: !!t.checkedInAt,
+    concertTitle: t.seat.zone.concert.title,
+    venue: t.seat.zone.concert.venue,
+    eventAt: t.seat.zone.concert.eventAt,
+    zoneName: t.seat.zone.name,
+    seat: `${t.seat.rowLabel}${t.seat.seatNumber}`,
+    price: t.price.toString(),
+    // คืนได้เฉพาะ: ฉันเป็นผู้ซื้อ + ยังไม่เช็คอิน + ยังไม่พ้นเส้นตายคืน
+    canReturn:
+      t.order.userId === BigInt(userId) &&
+      !t.checkedInAt &&
+      now < t.seat.zone.concert.eventAt.getTime() - cutoffMs,
+  }));
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -62,7 +72,7 @@ export default async function TicketsPage({
         )}
         <h1 className="mb-6 font-display text-3xl font-bold tracking-tight text-fg">ตั๋วของฉัน</h1>
 
-        {ticketsWithQr.length === 0 ? (
+        {ticketCards.length === 0 ? (
           <div className="rounded-xl border border-dashed border-fg/15 bg-ink-900/60 py-16 text-center">
             <Ticket className="mx-auto size-10 text-fg/20" />
             <p className="mt-3 text-fg-faint">ยังไม่มีตั๋ว</p>
@@ -75,16 +85,18 @@ export default async function TicketsPage({
           </div>
         ) : (
           <div className="space-y-4">
-            {ticketsWithQr.map((t, i) => (
+            {ticketCards.map((t, i) => (
               <article
                 key={t.id}
                 className="animate-fade-in-up relative flex overflow-hidden rounded-xl border border-fg/10 bg-ink-850 shadow-md"
                 style={{ animationDelay: `${i * 70}ms` }}
               >
-                {/* ฝั่ง QR — ต้องพื้นขาวเพื่อให้เครื่องสแกนหน้างานอ่านได้ */}
+                {/* ฝั่ง QR — ต้องพื้นขาวเพื่อให้เครื่องสแกนหน้างานอ่านได้ (dynamic — หมุนเองใน client) */}
                 <div className="grid shrink-0 place-items-center bg-white p-4">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={t.qrDataUrl} alt={`QR ตั๋ว ${t.concertTitle} ที่นั่ง ${t.seat}`} className="size-28" />
+                  <TicketEntryQr
+                    ticketId={t.id}
+                    alt={`QR ตั๋ว ${t.concertTitle} ที่นั่ง ${t.seat}`}
+                  />
                 </div>
 
                 {/* รอยปรุระหว่างซีก QR กับรายละเอียด + รูเจาะบน-ล่างแบบตั๋วฉีก */}
@@ -106,6 +118,16 @@ export default async function TicketsPage({
                   <p className="flex items-center gap-1.5 text-fg-faint">
                     <CalendarDays className="size-3.5 shrink-0" /> {formatThaiDate(t.eventAt)}
                   </p>
+                  {/* ชื่อผู้ถือ — จนท.หน้างานเทียบกับบัตรประชาชน */}
+                  <p className="flex items-center gap-1.5 font-medium text-fg">
+                    <UserRound className="size-3.5 shrink-0 text-brand-300" />
+                    <span className="truncate">{t.holderName || "(ไม่มีชื่อบนตั๋ว)"}</span>
+                    {t.checkedIn && (
+                      <span className="ml-1 inline-flex items-center gap-0.5 rounded-md bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+                        <CheckCircle2 className="size-3" /> เช็คอินแล้ว
+                      </span>
+                    )}
+                  </p>
                   <p className="pt-0.5">
                     <span className="text-led mr-2 rounded-md border border-brand-500/25 bg-brand-500/12 px-2 py-0.5 text-xs font-semibold text-brand-300">
                       โซน {t.zoneName} · {t.seat}
@@ -113,11 +135,10 @@ export default async function TicketsPage({
                     <span className="text-led font-bold text-spot-300">{formatTHB(t.price)}</span>
                   </p>
                   <div className="flex items-end justify-between gap-3 pt-1">
-                    <p className="truncate font-mono text-xs text-fg-faint">
-                      {t.qrCode.slice(0, 20)}…
-                    </p>
+                    <p className="text-xs text-fg-faint">บัตรผูกชื่อ — โอน/ขายต่อไม่ได้</p>
                     <div className="bg-barcode h-5 w-20 shrink-0 text-fg/25" aria-hidden />
                   </div>
+                  {t.canReturn && <TicketReturnButton ticketId={t.id} />}
                 </div>
               </article>
             ))}

@@ -8,7 +8,7 @@
 //        - production → ปฏิเสธทันที (fail-closed) ไม่แจกตั๋วฟรีเด็ดขาด
 //        - development → mock ผ่าน (ยังบังคับต้องแนบสลิป) + เตือนดังๆ ว่าไม่ใช่การตรวจจริง
 import { env, isEasySlipConfigured, isProduction } from "@/lib/env";
-import { receiverMatchesPromptPay } from "@/lib/slip-match";
+import { receiverMatchesPromptPay, receiverNameMatches } from "@/lib/slip-match";
 import { parseSlipDate } from "@/lib/slip-date";
 
 export interface SlipVerifyResult {
@@ -130,6 +130,28 @@ async function verifyWithEasySlip(params: {
           devMode: false,
           error: "สลิปนี้ไม่ได้โอนเข้าบัญชีของระบบ — ตรวจสอบบัญชีปลายทางอีกครั้ง",
         };
+      }
+      // 🔒 ชั้นที่ 2.5 (Codex #1): เลขบัญชีบนสลิปถูก mask จนบางเจ้าเทียบได้แค่เลขท้าย
+      //    → บัญชีของ attacker เองที่ "เลขท้ายพ้องกับร้าน" อาจรอดชั้นบน
+      //    ถ้าตั้ง PAYMENTS_RECEIVER_NAME ต้องเช็คชื่อบัญชีผู้รับให้ตรงด้วย (ชื่อปลอมไม่ได้)
+      //    สลิปไม่มีชื่อผู้รับเลย = ตรวจไม่ได้ = ปฏิเสธ (fail-closed เหมือนนโยบายข้ออื่น)
+      if (env.PAYMENTS_RECEIVER_NAME) {
+        const expectedNames = env.PAYMENTS_RECEIVER_NAME.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const nameCandidates = [
+          d.receiver?.account?.name?.th,
+          d.receiver?.account?.name?.en,
+          d.receiver?.name,
+        ].filter((v): v is string => typeof v === "string" && v.length > 0);
+        const nameOk = nameCandidates.some((nm) => receiverNameMatches(nm, expectedNames));
+        if (!nameOk) {
+          return {
+            success: false,
+            devMode: false,
+            error: "ชื่อบัญชีผู้รับในสลิปไม่ตรงกับบัญชีของระบบ — ตรวจสอบบัญชีปลายทางอีกครั้ง",
+          };
+        }
       }
     }
 

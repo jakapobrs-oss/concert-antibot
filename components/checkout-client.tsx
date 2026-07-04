@@ -8,12 +8,14 @@ import { UploadCloud, CheckCircle2, AlertCircle, QrCode } from "lucide-react";
 import { formatTHB } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { submitSlip, cancelOrder } from "@/app/actions/booking";
+import { HolderAssign, type HolderItem } from "@/components/holder-assign";
 
 export function CheckoutClient({
   orderId,
   amount,
   qrDataUrl,
   seatLabels,
+  holderItems,
   expiresAt,
   concertSlug,
 }: {
@@ -21,6 +23,7 @@ export function CheckoutClient({
   amount: number;
   qrDataUrl: string;
   seatLabels: string[];
+  holderItems: HolderItem[];
   expiresAt: string;
   concertSlug: string;
 }) {
@@ -143,6 +146,9 @@ export function CheckoutClient({
           <span className="text-led text-2xl font-bold text-spot-300">{formatTHB(amount)}</span>
         </div>
       </div>
+
+      {/* named ticket: ระบุผู้ถือบัตรต่อที่นั่ง (แก้ได้จนกว่าจะจ่าย — จ่ายแล้วล็อกถาวร) */}
+      <HolderAssign orderId={orderId} items={holderItems} />
 
       {/* QR PromptPay — ตัว QR ต้องอยู่บนพื้นขาวเสมอเพื่อให้แอปธนาคารสแกนได้ */}
       <div className="rounded-xl border border-fg/10 bg-ink-850 p-5 text-center">

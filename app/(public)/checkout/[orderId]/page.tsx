@@ -23,7 +23,13 @@ export default async function CheckoutPage({
     where: { id: BigInt(orderId) },
     include: {
       concert: { select: { title: true, slug: true } },
-      items: { include: { seat: { include: { zone: { select: { name: true } } } } } },
+      items: {
+        include: {
+          seat: { include: { zone: { select: { name: true } } } },
+          // named ticket: ผู้ถือที่ระบุไว้แล้ว (null = ผู้ซื้อถือเอง)
+          holder: { select: { name: true, email: true } },
+        },
+      },
       payment: true,
     },
   });
@@ -45,6 +51,13 @@ export default async function CheckoutPage({
     (i) => `${i.seat.zone.name} ${i.seat.rowLabel}${i.seat.seatNumber}`
   );
 
+  // named ticket: รายการที่นั่ง + ผู้ถือปัจจุบัน สำหรับฟอร์มระบุผู้ถือ (แก้ได้จนกว่าจะจ่าย)
+  const holderItems = order.items.map((i) => ({
+    itemId: i.id.toString(),
+    seatLabel: `${i.seat.zone.name} ${i.seat.rowLabel}${i.seat.seatNumber}`,
+    holderName: i.holder ? (i.holder.name?.trim() || i.holder.email) : null,
+  }));
+
   return (
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
@@ -62,6 +75,7 @@ export default async function CheckoutPage({
             amount={amount}
             qrDataUrl={dataUrl}
             seatLabels={seatLabels}
+            holderItems={holderItems}
             expiresAt={order.expiresAt.toISOString()}
             concertSlug={order.concert.slug}
           />
