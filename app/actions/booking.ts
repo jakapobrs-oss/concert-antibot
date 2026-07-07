@@ -17,7 +17,7 @@ import { computePayerKey } from "@/lib/payer-key";
 import { auth } from "@/lib/auth";
 import { holdSeats, releaseSeats } from "@/lib/seat-hold";
 import { findSeatsInConcert } from "@/lib/booking-guards";
-import { isAdmitted } from "@/lib/queue";
+import { isAdmitted, releaseAdmittedByUser } from "@/lib/queue";
 import { generatePromptPayQR } from "@/lib/promptpay";
 import { verifySlip } from "@/lib/easyslip";
 import { isSlipFresh } from "@/lib/slip-freshness";
@@ -300,6 +300,9 @@ export async function submitSlip(input: {
   if (result.ok) {
     // ปล่อย Redis hold (ที่นั่งเป็น SOLD แล้ว ไม่ต้อง lock)
     await releaseSeats(seatIds.map((s) => s.toString()), userId);
+    // คืนความจุคิวทันที (capacity-aware self-refill): ผู้ใช้ได้ตั๋วแล้ว ออกจากห้องเลือกที่นั่งถาวร
+    //   → เปิดช่องให้คิวถัดไปเข้าไม่ต้องรอ admit TTL หมด. best-effort — พลาดก็ไม่กระทบผลการจ่าย
+    await releaseAdmittedByUser(order.concertId.toString(), userId).catch(() => {});
     return { ok: true, ticketCount: result.ticketCount };
   }
 

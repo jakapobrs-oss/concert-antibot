@@ -20,6 +20,7 @@
 import crypto from "node:crypto";
 import { redis } from "@/lib/redis";
 import { env } from "@/lib/env";
+import { computeAdmitLimit } from "@/lib/admit-policy";
 
 // ---- ค่าคงที่ของระบบคิว (ดึงบางส่วนจาก env ได้) ----
 const BUCKET_SIZE_MS = 2000; // ขนาด time-window: คนเข้าคิวภายใน 2 วิ ถือว่าเสมอภาคกัน
@@ -206,16 +207,40 @@ export async function getQueueStatus(token: string): Promise<QueuePosition> {
   };
 }
 
-// ปล่อยคน N คนแรกจากคิวเข้าห้องเลือกที่นั่ง (เรียกเป็นรอบ ๆ — cron หรือ on-demand)
+// ปล่อยคนจากคิวเข้าห้องเลือกที่นั่ง แบบ "รู้ความจุ" (capacity-aware) — เรียกเป็นรอบ ๆ (on-demand)
+// จำนวนที่ปล่อยจริง = min( batchSize, cap − คนที่ยังเลือกอยู่ข้างใน(inside), ที่นั่งที่เหลือ(seatsLeft) )
+//   - cap: ความจุห้องเลือกที่นั่ง — ไม่ส่ง = ไม่จำกัดด้วยความจุ (ใช้ในเทสคิวล้วนที่ไม่มี DB)
+//   - seatsLeft: ที่นั่ง AVAILABLE ที่เหลือจริง — caller (route) query จาก DB มาให้
+//                queue.ts ตั้งใจไม่ผูก DB เอง เพื่อให้เทส/แยกส่วนได้ง่าย; ไม่ส่ง = ไม่จำกัดด้วยที่นั่ง
+// self-refill: ก่อนนับ inside จะ prune คน admitted ที่ "หมดเวลา" ออกก่อน → ความจุที่คนข้างในปล่อยคืนมาถูกเติมรอบถัดไปเอง
+// ⚖️ fairness คงเดิม: ยังดึง token หน้าคิว (score ต่ำสุด) ก่อนเสมอ — capacity แค่จำกัด "จำนวน" ไม่แตะ "ลำดับ"
 // คืนจำนวนที่ปล่อยจริง
-export async function admitNext(concertId: string, batchSize: number): Promise<number> {
-  // ดึง N token แรก (score ต่ำสุด = หน้าคิวสุด = ยุติธรรม)
-  const tokens = await redis.zrange(keys.queue(concertId), 0, batchSize - 1);
+export async function admitNext(
+  concertId: string,
+  opts: { batchSize: number; cap?: number; seatsLeft?: number }
+): Promise<number> {
+  const now = Date.now();
+
+  // 0) ล้าง "ghost" — token ที่ admit แล้วหมดเวลา (score=expireAt < now) ยังค้างใน admitted set
+  //    ต้องลบก่อนนับ inside ไม่งั้นนับความจุที่คืนแล้วเป็น "คนข้างใน" → ปล่อยคิวใหม่ไม่ออก
+  //    (แก้ SECURITY_TODO #7 ghost token ไปในตัว)
+  await redis.zremrangebyscore(keys.admitted(concertId), 0, now);
+
+  // 1) นับคนข้างใน (หลัง prune) — เฉพาะเมื่อมี cap เท่านั้น (ไม่มี cap ไม่ต้องแตะ Redis เกินจำเป็น)
+  //    แล้วคำนวณเพดานรอบนี้ผ่าน pure fn (min ของ batch / ความจุที่เหลือ / ที่นั่งที่เหลือ)
+  const inside = opts.cap !== undefined ? await redis.zcard(keys.admitted(concertId)) : undefined;
+  const limit = computeAdmitLimit(opts.batchSize, {
+    cap: opts.cap,
+    inside,
+    seatsLeft: opts.seatsLeft,
+  });
+  if (limit <= 0) return 0; // เต็มความจุ / ที่นั่งหมด → ยังไม่ปล่อยเพิ่มรอบนี้
+
+  // 2) ดึง N token แรก (score ต่ำสุด = หน้าคิวสุด = ยุติธรรม)
+  const tokens = await redis.zrange(keys.queue(concertId), 0, limit - 1);
   if (tokens.length === 0) return 0;
 
-  const now = Date.now();
   const expireAt = now + ADMIT_TTL_SECONDS * 1000;
-
   const pipeline = redis.pipeline();
   for (const token of tokens) {
     // ย้ายออกจากคิวหลัก → ใส่ admitted set (score = เวลาหมดอายุ admit)
@@ -226,6 +251,18 @@ export async function admitNext(concertId: string, batchSize: number): Promise<n
   }
   await pipeline.exec();
   return tokens.length;
+}
+
+// คืนความจุ 1 slot ทันทีเมื่อผู้ใช้ "จ่ายเงินสำเร็จ" — ไม่ต้องรอ TTL 5 นาที
+//   → รอบ admitNext ถัดไปมีความจุว่างดึงคิวถัดไปเข้าแทนได้เร็วขึ้น (self-refill ทันควัน)
+// รับ (concertId, userId) เพราะ submitSlip มี 2 ค่านี้พร้อม แต่ไม่มี queueToken —
+//   หา token ปัจจุบันของผู้ใช้จาก slot key ที่ joinQueue ผูกไว้ (ทุกคนต้อง login → userSlot มีเสมอ)
+// เรียกเฉพาะตอน order PAID เท่านั้น (ผู้ใช้ได้ตั๋วแล้ว ออกจากห้องเลือกที่นั่งถาวร)
+//   ไม่เรียกตอน "ยกเลิก" เพราะผู้ใช้ยังอาจเลือกที่นั่งใหม่ในเวลาที่เหลือของ admit window เดิม
+// idempotent: หา token ไม่เจอ/ไม่อยู่ใน set ก็เงียบ (เผลอเรียกซ้ำ/สอง tab ปลอดภัย)
+export async function releaseAdmittedByUser(concertId: string, userId: string): Promise<void> {
+  const token = await redis.get(keys.userSlot(concertId, userId));
+  if (token) await redis.zrem(keys.admitted(concertId), token);
 }
 
 // ออกจากคิวเอง (user กดยกเลิก)
@@ -273,6 +310,8 @@ export async function getQueueStats(concertId: string): Promise<{
   waiting: number;
   admitted: number;
 }> {
+  // prune ghost (admitted ที่หมดเวลา) ก่อนนับ → เลข admitted ตรงกับ "คนข้างในจริง" (แผงแอดมิน/thesis)
+  await redis.zremrangebyscore(keys.admitted(concertId), 0, Date.now());
   const [waiting, admitted] = await Promise.all([
     redis.zcard(keys.queue(concertId)),
     redis.zcard(keys.admitted(concertId)),

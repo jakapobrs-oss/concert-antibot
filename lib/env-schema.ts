@@ -67,6 +67,10 @@ export const envSchema = z.object({
 
   // Anti-bot tunables
   QUEUE_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  // ความจุ "ห้องเลือกที่นั่ง" (capacity-aware admission) — คนที่อยู่ในหน้าเลือกที่นั่งพร้อมกันได้สูงสุด
+  //   admitNext ปล่อยไม่เกิน (cap − คนที่ยังเลือกอยู่ข้างใน) ต่อรอบ → กันรุมเลือกที่นั่งเกินความจุจริง
+  //   พอคนข้างในจ่ายเสร็จ/หมดเวลา → คืนความจุ (self-refill). ควรตั้ง >= QUEUE_BATCH_SIZE
+  QUEUE_ADMIT_CAP: z.coerce.number().int().positive().default(200),
   SEAT_HOLD_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   BOT_SCORE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
 

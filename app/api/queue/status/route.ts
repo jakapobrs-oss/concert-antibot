@@ -3,11 +3,12 @@
 // เพื่อไม่ต้องมี cron แยก — เหมาะกับ local-only deployment
 import { NextRequest, NextResponse } from "next/server";
 import { getQueueStatus, admitNext } from "@/lib/queue";
+import { countAvailableSeats } from "@/lib/seat-availability";
+import { isQueuePaused, getEffectiveCap } from "@/lib/queue-control";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
+import { env } from "@/lib/env";
 
-// จำนวนที่ปล่อยต่อรอบ (ปรับได้ผ่าน env)
-const BATCH_SIZE = Number(process.env.QUEUE_BATCH_SIZE ?? 100);
 // ปล่อย batch ได้ถี่สุดทุกกี่ ms (กันปล่อยรัวเกิน)
 const ADMIT_INTERVAL_MS = 3000;
 // rate limit: client poll ได้ถี่สุด 30 ครั้ง/นาที/token
@@ -38,8 +39,23 @@ export async function GET(req: NextRequest) {
     const lockKey = `queue:${concertId}:admit-lock`;
     const gotLock = await redis.set(lockKey, "1", "PX", ADMIT_INTERVAL_MS, "NX");
     if (gotLock === "OK") {
-      // เราได้สิทธิ์ปล่อย batch รอบนี้
-      await admitNext(concertId, BATCH_SIZE);
+      // แอดมินสั่งหยุดปล่อยคิวชั่วคราวไหม — ถ้าหยุด ข้ามรอบนี้ (คิวค้างไว้ ไม่ปล่อยเพิ่ม)
+      if (!(await isQueuePaused(concertId))) {
+        // capacity-aware: ไม่เกินความจุห้อง (cap; ใช้ค่า override ของแอดมินถ้ามี) และไม่เกินที่นั่งที่เหลือ
+        let seatsLeft: number | undefined;
+        try {
+          seatsLeft = await countAvailableSeats(concertId);
+        } catch {
+          // นับที่นั่งไม่ได้ (เช่น concertId ไม่ใช่เลข/DB ล่ม) → พึ่ง cap อย่างเดียว
+          // ยังปลอดภัยเพราะ seat-hold (SET NX) กัน double-book ที่ชั้นเลือกที่นั่งอยู่แล้ว
+          seatsLeft = undefined;
+        }
+        await admitNext(concertId, {
+          batchSize: env.QUEUE_BATCH_SIZE,
+          cap: await getEffectiveCap(concertId),
+          seatsLeft,
+        });
+      }
     }
   }
 

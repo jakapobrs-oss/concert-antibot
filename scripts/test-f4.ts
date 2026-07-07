@@ -31,8 +31,8 @@ async function main() {
     tokenA = joined.token;
     check("userA เข้าคิวได้ token", !!tokenA);
 
-    // ปล่อยเข้า (admit) แล้วเช็คสถานะ
-    const admittedCount = await admitNext(concertId, 10);
+    // ปล่อยเข้า (admit) แล้วเช็คสถานะ — เทสคิวล้วน ไม่ส่ง cap/seatsLeft (ไม่จำกัดด้วยความจุ/ที่นั่ง)
+    const admittedCount = await admitNext(concertId, { batchSize: 10 });
     check("admitNext ปล่อย userA เข้า (1 คน)", admittedCount === 1, `got ${admittedCount}`);
 
     check("isAdmitted(token) แบบไม่ส่ง userId → true (backward compatible)", await isAdmitted(tokenA, concertId));
