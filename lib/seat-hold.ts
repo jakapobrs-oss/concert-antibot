@@ -29,41 +29,58 @@ else
 end
 `;
 
+// Lua script: hold หลายที่นั่งแบบ atomic all-or-nothing (Codex §2 #8)
+//   เดิม loop SET NX ทีละที่ = ไม่ atomic → ยิง [A,B] + [B,A] พร้อมกัน ต่างคนคว้าได้คนละที่ แล้ว rollback ทั้งคู่
+//   = ล้มทั้งคู่ (griefing/livelock) ทั้งที่ที่นั่งว่างจริง. Lua รันจบทั้งสคริปต์โดยไม่มี request อื่นแทรกกลาง
+//   → เช็คว่าทุกที่ว่าง (หรือเป็นของเราเอง) "ก่อน" แล้วค่อย set ทั้งหมด: คนแรกที่รันได้ครบชุด คนหลังเห็นชนแล้วถอย
+//   ที่นั่งที่คนอื่นถืออยู่คืนกลับเป็น seatId (ARGV[i+2] ขนานกับ KEYS[i]) ให้ caller เอาไปรายงาน
+const HOLD_MULTI_SCRIPT = `
+local failed = {}
+for i = 1, #KEYS do
+  local cur = redis.call("get", KEYS[i])
+  if cur and cur ~= ARGV[1] then
+    failed[#failed + 1] = ARGV[i + 2]
+  end
+end
+if #failed > 0 then
+  return failed
+end
+for i = 1, #KEYS do
+  redis.call("set", KEYS[i], ARGV[1], "EX", tonumber(ARGV[2]))
+end
+return {}
+`;
+
 export interface HoldResult {
   success: boolean;
   heldSeats: string[]; // seatId ที่ hold สำเร็จ
   failedSeats: string[]; // seatId ที่คนอื่น hold ไปแล้ว
 }
 
-// พยายาม hold หลายที่นั่งพร้อมกัน (atomic ต่อที่นั่ง)
-// ถ้าที่นั่งใดที่นั่งหนึ่ง fail → rollback hold ทั้งหมด (all-or-nothing)
+// พยายาม hold หลายที่นั่งพร้อมกันแบบ atomic all-or-nothing (ผ่าน Lua — กัน partial/griefing)
+//   สำเร็จ → ได้ทุกที่, ไม่สำเร็จ → ไม่ได้ที่เลย + failedSeats = ที่นั่งที่คนอื่นถืออยู่
 export async function holdSeats(params: {
   seatIds: string[];
   userId: string;
 }): Promise<HoldResult> {
   const { seatIds, userId } = params;
-  const held: string[] = [];
-  const failed: string[] = [];
+  if (seatIds.length === 0) return { success: true, heldSeats: [], failedSeats: [] };
 
-  // พยายาม hold ทีละที่ (SET NX)
-  for (const seatId of seatIds) {
-    const ok = await redis.set(lockKey(seatId), userId, "EX", HOLD_TTL_SECONDS, "NX");
-    if (ok === "OK") {
-      held.push(seatId);
-    } else {
-      failed.push(seatId);
-    }
-  }
+  const keys = seatIds.map(lockKey);
+  // eval: KEYS = lock keys, ARGV[1]=userId, ARGV[2]=ttl, ARGV[3..]=seatIds (ขนานกับ KEYS)
+  const failed = (await redis.eval(
+    HOLD_MULTI_SCRIPT,
+    keys.length,
+    ...keys,
+    userId,
+    String(HOLD_TTL_SECONDS),
+    ...seatIds
+  )) as string[];
 
-  // ถ้ามีที่นั่ง fail → rollback (ปล่อยที่ hold ไปแล้ว) = all-or-nothing
   if (failed.length > 0) {
-    for (const seatId of held) {
-      await redis.eval(RELEASE_SCRIPT, 1, lockKey(seatId), userId);
-    }
     return { success: false, heldSeats: [], failedSeats: failed };
   }
-
-  return { success: true, heldSeats: held, failedSeats: [] };
+  return { success: true, heldSeats: seatIds, failedSeats: [] };
 }
 
 // ปล่อย hold (เมื่อ user ยกเลิก หรือ จ่ายเงินเสร็จแล้ว seat เป็น SOLD)

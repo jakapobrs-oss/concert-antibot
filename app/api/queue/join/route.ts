@@ -39,7 +39,8 @@ async function writeAudit(label: string, fn: () => Promise<unknown>) {
 
 export async function POST(req: NextRequest) {
   // 🛑 load shedding — ถ้า in-flight เกินเพดาน ปฏิเสธเร็ว ๆ (กันระบบล่มทั้งหมด)
-  if (!(await acquireInflight("queue_join", MAX_INFLIGHT_JOINS))) {
+  const slot = await acquireInflight("queue_join", MAX_INFLIGHT_JOINS);
+  if (!slot) {
     return NextResponse.json(
       { error: "ระบบกำลังหนาแน่นมาก กรุณารอสักครู่แล้วลองใหม่", action: "OVERLOADED" },
       { status: 503, headers: { "Retry-After": "5" } }
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
   try {
     return await handleJoin(req);
   } finally {
-    await releaseInflight("queue_join");
+    await releaseInflight("queue_join", slot);
   }
 }
 
@@ -59,18 +60,6 @@ async function handleJoin(req: NextRequest): Promise<NextResponse> {
   }
 
   const { concertId, fingerprintHash, turnstileToken } = parsed.data;
-
-  // ตรวจว่าคอนเสิร์ตมีอยู่ + กำลังเปิดขาย (กันเข้าคิวคอนเสิร์ตที่ยังไม่ขาย)
-  const concert = await prisma.concert.findUnique({
-    where: { id: BigInt(concertId) },
-    select: { status: true },
-  });
-  if (!concert) {
-    return NextResponse.json({ error: "ไม่พบคอนเสิร์ต" }, { status: 404 });
-  }
-  if (concert.status !== "ON_SALE") {
-    return NextResponse.json({ error: "คอนเสิร์ตนี้ยังไม่เปิดขาย" }, { status: 403 });
-  }
 
   // ดึง user + ip
   const session = await auth();
@@ -103,6 +92,19 @@ async function handleJoin(req: NextRequest): Promise<NextResponse> {
       },
       { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
     );
+  }
+
+  // ตรวจว่าคอนเสิร์ตมีอยู่ + กำลังเปิดขาย — ทำ "หลัง" auth+rate-limit (Codex §2 #6)
+  //   เดิมอยู่ก่อน gate → ยิง concertId ปลอมรัว ๆ กิน DB ได้ฟรีโดยไม่ต้อง login/ไม่ติด rate-limit
+  const concert = await prisma.concert.findUnique({
+    where: { id: BigInt(concertId) },
+    select: { status: true },
+  });
+  if (!concert) {
+    return NextResponse.json({ error: "ไม่พบคอนเสิร์ต" }, { status: 404 });
+  }
+  if (concert.status !== "ON_SALE") {
+    return NextResponse.json({ error: "คอนเสิร์ตนี้ยังไม่เปิดขาย" }, { status: 403 });
   }
 
   // ============================================================
