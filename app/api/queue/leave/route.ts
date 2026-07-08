@@ -31,15 +31,18 @@ export async function POST(req: NextRequest) {
 
   const { token } = parsed.data;
 
-  // ตรวจว่า token เป็นของ user คนนี้จริง (ถ้า login)
+  // ต้อง login — join บังคับ login อยู่แล้ว = token ทุกใบผูกกับผู้ใช้ จึงเช็คความเป็นเจ้าของได้เสมอ
+  //   เดิมข้ามเช็คตอนไม่ login (`if (userId)`) → logout แล้วยิง token เหยื่อ = เตะเขาออกจากคิวได้ (auth bypass)
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (userId) {
-    const { redis } = await import("@/lib/redis");
-    const owner = await redis.hget(`queue:token:${token}`, "userId");
-    if (owner && owner !== userId) {
-      return NextResponse.json({ error: "ไม่มีสิทธิ์ยกเลิกคิวนี้" }, { status: 403 });
-    }
+  if (!userId) {
+    return NextResponse.json({ error: "กรุณาเข้าสู่ระบบก่อน" }, { status: 401 });
+  }
+  const { redis } = await import("@/lib/redis");
+  const owner = await redis.hget(`queue:token:${token}`, "userId");
+  // เจ้าของ token ต้องตรงกับผู้ใช้ปัจจุบัน (owner ว่าง = token ตายแล้ว → leaveQueue เป็น no-op ปลอดภัย)
+  if (owner && owner !== userId) {
+    return NextResponse.json({ error: "ไม่มีสิทธิ์ยกเลิกคิวนี้" }, { status: 403 });
   }
 
   await leaveQueue(token);

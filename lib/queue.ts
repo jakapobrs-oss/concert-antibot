@@ -39,6 +39,16 @@ const keys = {
   fpSlot: (concertId: string, fp: string) => `queue:${concertId}:fp:${fp}`,
 };
 
+// ลบ key เฉพาะเมื่อค่ายังตรงกับที่คาด (atomic compare-and-delete ผ่าน Lua)
+//   ใช้เคลียร์ slot key ที่ค้างชี้ token ผี โดยไม่เผลอลบ slot ที่แท็บอื่นเพิ่งสร้างใหม่ (กัน race)
+const DEL_IF_EQ = `
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("del", KEYS[1])
+else
+  return 0
+end
+`;
+
 export interface QueuePosition {
   token: string;
   status: "WAITING" | "ADMITTED" | "EXPIRED" | "NOT_FOUND";
@@ -113,7 +123,10 @@ export async function joinQueue(params: {
           deduped: true, // เป็น slot เดิม ไม่ได้สร้างใหม่
         };
       }
-      // token หายไปแล้ว (expire) → ปล่อยให้สร้างใหม่ด้านล่าง
+      // token เดิมตายแล้ว (เช่นถูก admit แล้วปล่อยหมดเวลา 5 นาที → token hash หมดอายุ) แต่ slot key ยังค้างถึง 1 ชม.
+      //   เคลียร์ slot ผีทิ้งก่อน (compare-and-delete กันเผลอลบ slot ที่แท็บอื่นชิงสร้างใหม่) แล้วค่อยสร้าง token ใหม่ด้านล่าง
+      //   ถ้าไม่ลบ: SET NX ด้านล่างจะ fail แล้ว recovery คืน token ที่ตายแล้ว = ผู้ใช้เข้าคิวใหม่ไม่ได้จน slot หมดอายุ (~55 นาที)
+      await redis.eval(DEL_IF_EQ, 1, slotKey, existingToken);
     }
   }
 
@@ -141,24 +154,29 @@ export async function joinQueue(params: {
   }
   const results = await pipeline.exec();
 
-  // ถ้า set NX ล้มเหลว (มีแท็บอื่นชิงสร้าง slot ไปแล้วเสี้ยววินาทีก่อน) → ถอย token นี้ คืนของเดิม
+  // SET NX ล้มเหลว = slot key มีอยู่แล้ว — มีได้ 2 กรณี:
+  //   (ก) แท็บอื่นของ user เดียวกันชิงสร้าง slot ไปเสี้ยววินาทีก่อน (winner ยัง active) → คืน token ของ winner
+  //   (ข) slot ผีที่ยังชี้ token ตาย (ปกติเคลียร์ไปแล้วตอน dedup แต่กันเคสแข่งกันเป๊ะ ๆ):
+  //       ยึด slot ให้ token ใหม่ของเราแทน — ห้ามคืน token ตาย ไม่งั้นผู้ใช้เข้าคิวใหม่ไม่ได้
   if (slotKey) {
     const setResult = results?.[results.length - 1]?.[1];
     if (setResult === null) {
-      // มีคนชิง slot ไปแล้ว — ลบ token ที่เพิ่งสร้าง แล้วคืน token เดิม
-      await redis.del(keys.token(token));
-      await redis.zrem(keys.queue(params.concertId), token);
       const winnerToken = await redis.get(slotKey);
-      if (winnerToken) {
-        const meta = await redis.hgetall(keys.token(winnerToken));
+      const winnerMeta = winnerToken ? await redis.hgetall(keys.token(winnerToken)) : null;
+      if (winnerToken && winnerMeta && winnerMeta.concertId) {
+        // (ก) winner ยัง active จริง → ถอย token ที่เราเพิ่งสร้าง แล้วใช้ของ winner
+        await redis.del(keys.token(token));
+        await redis.zrem(keys.queue(params.concertId), token);
         return {
           token: winnerToken,
-          score: Number(meta.bucket) * RANDOM_RANGE + Number(meta.random),
-          bucket: Number(meta.bucket),
-          random: Number(meta.random),
+          score: Number(winnerMeta.bucket) * RANDOM_RANGE + Number(winnerMeta.random),
+          bucket: Number(winnerMeta.bucket),
+          random: Number(winnerMeta.random),
           deduped: true,
         };
       }
+      // (ข) slot ชี้ token ผี → ยึด slot ให้ token ใหม่ของเรา (token เรายังอยู่ใน queue+hash จาก pipeline แล้ว)
+      await redis.set(slotKey, token, "EX", TOKEN_TTL_SECONDS);
     }
   }
 
@@ -221,9 +239,9 @@ export async function admitNext(
 ): Promise<number> {
   const now = Date.now();
 
-  // 0) ล้าง "ghost" — token ที่ admit แล้วหมดเวลา (score=expireAt < now) ยังค้างใน admitted set
+  // 0) ล้าง "ghost ใน admitted set" — token ที่ admit แล้วหมดเวลา 5 นาที (score=expireAt < now) ยังค้าง
   //    ต้องลบก่อนนับ inside ไม่งั้นนับความจุที่คืนแล้วเป็น "คนข้างใน" → ปล่อยคิวใหม่ไม่ออก
-  //    (แก้ SECURITY_TODO #7 ghost token ไปในตัว)
+  //    (ghost ในคิว "รอ" เป็นคนละตัว — จัดการที่ step 2.1)
   await redis.zremrangebyscore(keys.admitted(concertId), 0, now);
 
   // 1) นับคนข้างใน (หลัง prune) — เฉพาะเมื่อมี cap เท่านั้น (ไม่มี cap ไม่ต้องแตะ Redis เกินจำเป็น)
@@ -237,12 +255,25 @@ export async function admitNext(
   if (limit <= 0) return 0; // เต็มความจุ / ที่นั่งหมด → ยังไม่ปล่อยเพิ่มรอบนี้
 
   // 2) ดึง N token แรก (score ต่ำสุด = หน้าคิวสุด = ยุติธรรม)
-  const tokens = await redis.zrange(keys.queue(concertId), 0, limit - 1);
-  if (tokens.length === 0) return 0;
+  const candidates = await redis.zrange(keys.queue(concertId), 0, limit - 1);
+  if (candidates.length === 0) return 0;
+
+  // 2.1) กรอง "ghost ในคิวรอ" ออก — token ที่ hash หมดอายุ (1 ชม.) แต่ member ยังค้างใน queue ZSET
+  //      queue ZSET ใช้ score = fairScore (ไม่ใช่เวลา) → prune by score ไม่ได้ ต้องเช็ค hash เอง
+  //      ถ้าเผลอ admit ผี: hset จะสร้าง hash โครงใหม่ (ไม่มี concertId) กินโควตาความจุ 5 นาที/ก้อนโดยไม่มีคนจริง
+  const live: string[] = [];
+  const ghosts: string[] = [];
+  for (const token of candidates) {
+    const owner = await redis.hget(keys.token(token), "concertId");
+    if (owner === concertId) live.push(token);
+    else ghosts.push(token);
+  }
+  if (ghosts.length > 0) await redis.zrem(keys.queue(concertId), ...ghosts); // เก็บกวาด ghost ทิ้ง
+  if (live.length === 0) return 0; // หน้าคิวเป็นผีล้วน → เก็บกวาดแล้ว รอบถัดไปดึงคนถัดไปเอง
 
   const expireAt = now + ADMIT_TTL_SECONDS * 1000;
   const pipeline = redis.pipeline();
-  for (const token of tokens) {
+  for (const token of live) {
     // ย้ายออกจากคิวหลัก → ใส่ admitted set (score = เวลาหมดอายุ admit)
     pipeline.zrem(keys.queue(concertId), token);
     pipeline.zadd(keys.admitted(concertId), expireAt, token);
@@ -250,7 +281,7 @@ export async function admitNext(
     pipeline.expire(keys.token(token), ADMIT_TTL_SECONDS);
   }
   await pipeline.exec();
-  return tokens.length;
+  return live.length;
 }
 
 // คืนความจุ 1 slot ทันทีเมื่อผู้ใช้ "จ่ายเงินสำเร็จ" — ไม่ต้องรอ TTL 5 นาที

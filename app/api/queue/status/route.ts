@@ -16,11 +16,22 @@ const RATE_LIMIT = { limit: 30, windowMs: 60_000 };
 
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get("token");
-  if (!token) {
-    return NextResponse.json({ error: "ต้องมี token" }, { status: 400 });
+  // validate รูปแบบก่อนแตะ Redis — token จริง = hex 64 ตัว (crypto.randomBytes(32).toString("hex"))
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+    return NextResponse.json({ error: "token ไม่ถูกต้อง" }, { status: 400 });
   }
 
-  // rate limit per token กัน flood ที่ทำให้ admit ทำงานหนักเกิน
+  // อ่าน meta ก่อน (hgetall = read เฉย ๆ ไม่สร้าง key) แล้วใช้เป็น "ประตูตรวจว่ามี token จริง"
+  //   ถ้า token ไม่มีจริง/หมดอายุ → คืน NOT_FOUND โดย "ไม่" ไปแตะ checkRateLimit
+  //   → กันหมุน token สุ่มรัว ๆ สร้าง rate-limit key ไม่จำกัด + เลี่ยง per-token limit (unauth Redis DoS)
+  //   จำนวน rate-limit key จะผูกกับ "จำนวน token จริง" เท่านั้น
+  const meta = await redis.hgetall(`queue:token:${token}`);
+  const concertId = meta?.concertId;
+  if (!concertId) {
+    return NextResponse.json({ token, status: "NOT_FOUND", position: 0, ahead: 0, total: 0 });
+  }
+
+  // rate limit per token (หลังยืนยันว่า token มีจริงแล้ว) กัน flood ที่ทำให้ admit ทำงานหนักเกิน
   const rl = await checkRateLimit({ key: `queue_status:token:${token}`, ...RATE_LIMIT });
   if (!rl.allowed) {
     return NextResponse.json(
@@ -28,10 +39,6 @@ export async function GET(req: NextRequest) {
       { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
     );
   }
-
-  // หา concertId จาก token ก่อน (เพื่อ trigger admit ของคอนเสิร์ตนั้น)
-  const meta = await redis.hgetall(`queue:token:${token}`);
-  const concertId = meta?.concertId;
 
   // on-demand admission: ใช้ lock กันหลาย request ปล่อย batch พร้อมกัน
   // SET NX EX — ใครได้ lock คนนั้นปล่อย batch (atomic, กันแย่งกัน)
