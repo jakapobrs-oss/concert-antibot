@@ -44,3 +44,14 @@ if (isProduction && !isTurnstileConfigured) {
       "Turnstile จะตรวจไม่ผ่าน (fail-closed) ทุก request จนกว่าจะตั้งค่า"
   );
 }
+
+// เตือนถ้า production ตั้ง SECRET แต่ "ลืม" SITE_KEY (Codex §3 #5)
+//   client จะ render test site key (always-pass: 1x0000…AA) แต่ server verify ด้วย secret จริง
+//   → token ที่ client ได้ไม่มีทางผ่าน = ผู้ใช้ทุกคนติด challenge วน 428 ไม่จบ (queue join ล่มทั้งระบบ)
+//   ตั้งใจ warn (ไม่ throw) ให้เข้ากับ convention ไฟล์นี้ — operator ต้องใส่ SITE_KEY ให้ครบคู่
+if (isProduction && isTurnstileConfigured && !env.TURNSTILE_SITE_KEY) {
+  console.error(
+    "🚨 [ANTI-BOT] ตั้ง TURNSTILE_SECRET_KEY แล้วแต่ลืม TURNSTILE_SITE_KEY — " +
+      "หน้าเว็บจะใช้ test site key (always-pass) ที่ verify กับ secret จริงไม่ผ่าน = ผู้ใช้ติด challenge วนไม่จบ"
+  );
+}

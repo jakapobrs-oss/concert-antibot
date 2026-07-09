@@ -32,7 +32,9 @@ export interface BotAssessment {
   signals: BotSignals;
 }
 
-// threshold (ปรับผ่าน env ได้ — ค่า default จาก .env.example BOT_SCORE_THRESHOLD)
+// threshold: ค่าคงที่ในโค้ด (ไม่ได้อ่านจาก env)
+//   หมายเหตุ (Codex §3 #6): comment เดิมเคยเคลมว่าปรับผ่าน env BOT_SCORE_THRESHOLD ได้ — ไม่จริง
+//   ถ้าจะปรับ ต้องแก้ที่นี่ + อัปเดต unit test ที่ pin ค่านี้ (tests/unit/antibot.test.ts)
 const CHALLENGE_THRESHOLD = 40;
 const BLOCK_THRESHOLD = 70;
 

@@ -62,6 +62,18 @@ export function analyzeBehavior(f: BehaviorFeatures): BehaviorAssessment {
     reasons.push("เส้นทางเมาส์เป็นเส้นตรงผิดธรรมชาติ");
   }
 
+  // 5. ไม่มีการโต้ตอบเลย (ไม่ขยับเมาส์ + ไม่พิมพ์) และผ่านหน้าเร็ว = บอทที่ชัดสุด (Codex §3 #4)
+  //    เดิม {move:0,dwell:0} ได้แค่ 30+25=55 < 60 → หลุด (variance/entropy ข้ามเพราะ move<5) → +15 ดันข้าม 60
+  //    เงื่อนไข dwell<MIN กันพลาดมือถือ: touch ไม่ยิง mousemove (move=0) แต่คนจริงมัก dwell นาน → ไม่โดน
+  if (
+    f.mouseMoveCount === 0 &&
+    f.keyPressCount === 0 &&
+    f.dwellTimeMs < THRESHOLDS.MIN_DWELL_MS
+  ) {
+    score += 15;
+    reasons.push("ไม่มีการโต้ตอบใด ๆ บนหน้า");
+  }
+
   score = Math.min(100, score);
 
   return {

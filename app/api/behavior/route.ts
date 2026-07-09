@@ -20,9 +20,20 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  // 🚦 rate limit ต่อ IP ก่อนทำอย่างอื่น (กัน spam endpoint ที่ไม่ต้อง auth)
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  const rl = await checkRateLimit({ key: `behavior:ip:${ip}`, ...RATE_LIMIT });
+  // 🔒 บังคับ login ก่อน (Codex §3 #1/#2)
+  //   เดิม endpoint นี้ "ไม่ auth" ทำให้:
+  //   (#1) rate-limit ผูก x-forwarded-for ตัวซ้ายสุดที่ปลอมได้ → ยิงรัวไม่จำกัด
+  //        สร้าง behavior_sessions row ถาวร (ไม่มี TTL/cleanup) = DB write DoS
+  //   (#2) sessionKey (=fingerprint) client เลือกเอง + ไม่เช็ค owner → เขียนทับ verdict ของคนอื่นได้ (poison)
+  //   waiting room เรียก endpoint นี้ตอนอยู่ในคิว (ต้อง login แล้วเสมอ) → บังคับ auth ไม่กระทบ flow จริง
+  const session = await auth();
+  const userId = (session?.user as { id?: string } | undefined)?.id;
+  if (!userId) {
+    return NextResponse.json({ error: "กรุณาเข้าสู่ระบบ" }, { status: 401 });
+  }
+
+  // 🚦 rate limit ผูก userId (ไม่ใช่ IP ที่ปลอมได้) — กัน spam เขียน DB
+  const rl = await checkRateLimit({ key: `behavior:user:${userId}`, ...RATE_LIMIT });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "ส่งข้อมูลถี่เกินไป" },
@@ -37,14 +48,14 @@ export async function POST(req: NextRequest) {
 
   const f = parsed.data;
   const assessment = analyzeBehavior(f);
+  const uid = BigInt(userId);
 
-  const session = await auth();
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-
-  // upsert — sessionKey เดียวกันอัปเดต (client อาจ flush หลายครั้ง)
+  // upsert — ผูก userId ทุกครั้ง (รวม update) เพื่อให้ row สะท้อน "เจ้าของจริง"
+  //   ฝั่งบังคับใช้ (queue/join) lookup แบบ scope userId → row ที่คนอื่น squat ด้วย fingerprint เรา จะไม่ match (poison ไร้ผล)
   await prisma.behaviorSession.upsert({
     where: { sessionKey: f.sessionKey },
     update: {
+      userId: uid,
       mouseMoveCount: f.mouseMoveCount,
       keyPressCount: f.keyPressCount,
       mouseTimingVariance: f.mouseTimingVariance,
@@ -55,7 +66,7 @@ export async function POST(req: NextRequest) {
     },
     create: {
       sessionKey: f.sessionKey,
-      userId: userId ? BigInt(userId) : null,
+      userId: uid,
       mouseMoveCount: f.mouseMoveCount,
       keyPressCount: f.keyPressCount,
       mouseTimingVariance: f.mouseTimingVariance,

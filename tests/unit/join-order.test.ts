@@ -22,7 +22,7 @@ vi.mock("@/lib/prisma", () => ({
     concert: { findUnique: concertFindUnique },
     botEvent: { create: vi.fn() },
     queueToken: { create: vi.fn() },
-    behaviorSession: { findUnique: vi.fn() },
+    behaviorSession: { findFirst: vi.fn() },
   },
 }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit }));

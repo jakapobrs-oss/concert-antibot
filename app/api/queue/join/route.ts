@@ -122,13 +122,19 @@ async function handleJoin(req: NextRequest): Promise<NextResponse> {
   // 🛡️ Anti-Bot Layer 2 — behavior analysis (escalate-only, spoof-resistant)
   // ============================================================
   // ใช้ behavior score ที่ client ส่งมาเก็บไว้ (sessionKey = fingerprint) เป็น "สัญญาณเสริม"
-  //   ออกแบบให้ "ดันความสงสัยขึ้นได้อย่างเดียว ไม่มีทางลด" — เพราะ /api/behavior ไม่ auth = signal spoofable
-  //   bot ที่ปลอม "เป็นคน" จึงไม่ได้กำไร (อย่างมากเลี่ยง Layer 2 แต่ยังเจอ Layer 1 เต็ม)
   //   ยกแค่ ALLOW→CHALLENGE (ไม่ block) กัน false positive กับคนจริง (assistive tech ฯลฯ)
   //   อ่าน DB เฉพาะตอน Layer 1 = ALLOW (จุดเดียวที่ผลเปลี่ยน) — ไม่เพิ่มภาระ hot path เกินจำเป็น
-  if (assessment.action === "ALLOW" && fingerprintHash) {
-    const behavior = await prisma.behaviorSession.findUnique({
-      where: { sessionKey: fingerprintHash },
+  //
+  //   #2 poison fix (Codex §3): lookup แบบ scope userId (เจ้าของจริง) — ไม่ใช่ sessionKey ลอย ๆ
+  //     คนอื่นเขียน row ด้วย fingerprint ของเรา จะมี userId ของเขา → ไม่ match → poison ไร้ผลตอนบังคับใช้
+  //   #2 loop fix (Codex §3): ถ้า request นี้ "ผ่าน Turnstile จริงมาแล้ว" (= เพิ่งแก้ challenge สำเร็จ)
+  //     ห้าม re-escalate — เดิม row isLikelyBot=true ค้าง (ไม่มีใครล้าง) ทำให้แก้ Turnstile ผ่านก็ถูกเด้ง
+  //     CHALLENGE ซ้ำวน 428 ไม่จบ = แฟนจริงที่โดน false-positive/poison ติดกับถาวร
+  const turnstilePassed =
+    assessment.signals.turnstile === "pass" || assessment.signals.turnstile === "dev-pass";
+  if (assessment.action === "ALLOW" && fingerprintHash && !turnstilePassed) {
+    const behavior = await prisma.behaviorSession.findFirst({
+      where: { sessionKey: fingerprintHash, userId: BigInt(userId) },
       select: { isLikelyBot: true },
     });
     if (behavior?.isLikelyBot) {
