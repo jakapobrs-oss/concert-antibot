@@ -10,6 +10,7 @@ import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { clientIpFromXff } from "@/lib/get-ip";
 import { env, isEmailEnabled } from "@/lib/env";
 import { sendVerificationEmail } from "@/lib/email";
 
@@ -41,7 +42,8 @@ export async function registerUser(formData: FormData): Promise<RegisterResult> 
   }
 
   // 🚦 rate limit ต่อ IP — กันยิง register รัวเผา CPU (argon2 hash แพงโดยตั้งใจ) + สร้าง user รัว
-  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  //   F4 (Codex §4 #4): ใช้ clientIpFromXff (hop ขวาสุด) ไม่ใช่ split[0] (ซ้ายสุด = client ปลอมได้)
+  const ip = clientIpFromXff((await headers()).get("x-forwarded-for"));
   const rl = await checkRateLimit({ key: `register:ip:${ip}`, limit: 5, windowMs: 60 * 60 * 1000 });
   if (!rl.allowed) {
     return { ok: false, error: "สมัครสมาชิกบ่อยเกินไป กรุณาลองใหม่ภายหลัง" };

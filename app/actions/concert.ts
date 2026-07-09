@@ -7,16 +7,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { assertVerifiedAdmin } from "@/lib/admin-guard";
 
 // ตรวจสอบว่าเป็น admin จริง — throw ถ้าไม่ใช่
+// F2 (Codex §4 #2): เช็ค role กับ DB จริง (ไม่เชื่อ JWT ที่ค้างได้ถึง 30 วัน)
 async function requireAdmin() {
-  const session = await auth();
-  const role = (session?.user as { role?: string } | undefined)?.role;
-  if (role !== "ADMIN") {
-    throw new Error("ต้องเป็น admin เท่านั้น");
-  }
-  return session;
+  return assertVerifiedAdmin();
 }
 
 // แปลง title → slug (ภาษาอังกฤษ/ตัวเลข + dash)

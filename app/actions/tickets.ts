@@ -13,6 +13,7 @@ import QRCode from "qrcode";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { isVerifiedAdmin } from "@/lib/admin-guard";
 import { env } from "@/lib/env";
 import {
   currentEntryCode,
@@ -26,11 +27,9 @@ async function sessionUserId(): Promise<string | null> {
   return (session?.user as { id?: string } | undefined)?.id ?? null;
 }
 
-// เช็คสิทธิ์ admin (defense in depth — middleware/layout กันชั้นนึงแล้ว) — pattern เดียวกับ actions/concert.ts
+// เช็คสิทธิ์ admin — F2 (Codex §4 #2): re-check role กับ DB จริง (ไม่เชื่อ JWT ค้าง)
 async function isAdmin(): Promise<boolean> {
-  const session = await auth();
-  const role = (session?.user as { role?: string } | undefined)?.role;
-  return role === "ADMIN";
+  return isVerifiedAdmin();
 }
 
 const idSchema = z.string().regex(/^\d+$/, "id ไม่ถูกต้อง");

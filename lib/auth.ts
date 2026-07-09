@@ -8,8 +8,8 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
-import { verifyPassword } from "@/lib/password";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { authenticateCredentials } from "@/lib/credentials-auth";
+import { clientIpFromXff } from "@/lib/get-ip";
 import { env, isGoogleEnabled } from "@/lib/env";
 
 // schema validate login input
@@ -28,58 +28,19 @@ const providers: Provider[] = [
       email: { label: "Email", type: "email" },
       password: { label: "Password", type: "password" },
     },
-    async authorize(credentials) {
-      // 1. validate input shape
+    async authorize(credentials, request) {
+      // validate input shape แล้วส่งต่อให้ core (แยกไป lib/credentials-auth.ts เพื่อ unit-test)
       const parsed = loginSchema.safeParse(credentials);
       if (!parsed.success) return null;
 
-      // 2. rate limit ต่อ email — กัน password spray (หลาย account ใช้ <= 5 ครั้ง/account เลี่ยง lockout)
-      //    ใช้ key ตาม email ไม่ใช่ IP (IP spoofable, email ไม่) — silent fail = response เหมือนผิดรหัส
-      const emailRl = await checkRateLimit({
-        key: `login:email:${parsed.data.email}`,
-        limit: 10,
-        windowMs: 15 * 60_000, // 10 ครั้ง/15 นาที ต่อ email
+      // ดึง IP แบบ trusted (hop ขวาสุด) จาก request เพื่อ rate-limit ต่อ IP กัน password spray (F4)
+      const ip = clientIpFromXff(request?.headers?.get("x-forwarded-for"));
+
+      return authenticateCredentials({
+        email: parsed.data.email,
+        password: parsed.data.password,
+        ip,
       });
-      if (!emailRl.allowed) return null;
-
-      // 3. หา user
-      const user = await prisma.user.findUnique({
-        where: { email: parsed.data.email },
-      });
-      if (!user || !user.passwordHash) return null;
-
-      // 4. เช็ค lock — ถ้า locked อยู่ ห้าม login
-      if (user.lockedUntil && user.lockedUntil > new Date()) return null;
-
-      // 5. verify password
-      const ok = await verifyPassword(user.passwordHash, parsed.data.password);
-      if (!ok) {
-        // เพิ่ม failed count — ถ้าผิดเกิน 5 ครั้ง lock 15 นาที
-        const newCount = user.failedLoginCount + 1;
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            failedLoginCount: newCount,
-            lockedUntil: newCount >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null,
-          },
-        });
-        return null;
-      }
-
-      // 5. reset failed count + update last login
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() },
-      });
-
-      // ส่ง shape ที่ NextAuth ต้องการ — id เป็น string (BigInt → string)
-      return {
-        id: user.id.toString(),
-        email: user.email,
-        name: user.name ?? user.email,
-        image: user.image ?? undefined,
-        role: user.role,
-      };
     },
   }),
 ];
@@ -90,7 +51,11 @@ if (isGoogleEnabled) {
     Google({
       clientId: env.GOOGLE_CLIENT_ID!,
       clientSecret: env.GOOGLE_CLIENT_SECRET!,
-      allowDangerousEmailAccountLinking: true, // ผูก Google กับ user เดิมที่ email เดียวกัน
+      // F1 (Codex §4 #1): ปิด auto-link — เดิม true ทำให้ pre-registration takeover ได้
+      //   (แอตแทกเกอร์สมัคร email เหยื่อไว้ก่อน → เหยื่อ login Google → auto-link เข้าบัญชีแอตแทกเกอร์ +
+      //    การ link ตั้ง emailVerified ให้ → รหัสแอตแทกเกอร์ใช้ได้ทันที = เข้าบัญชีเหยื่อ)
+      //   false → Google sign-in ที่ email ชนกับบัญชีเดิมจะ error (OAuthAccountNotLinked) แทน auto-link
+      allowDangerousEmailAccountLinking: false,
     })
   );
 }

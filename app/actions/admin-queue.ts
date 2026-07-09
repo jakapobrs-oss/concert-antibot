@@ -6,13 +6,12 @@
 // แผงแอดมินคุมคิว: หยุด/ปล่อยคิว + ปรับความจุห้องเลือกที่นั่ง (cap) สด ๆ ไม่ต้อง restart
 //   RBAC: middleware + (admin)/layout เช็ค ADMIN แล้ว — ที่นี่เช็คซ้ำ (defense in depth เหมือน tickets.ts)
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { isVerifiedAdmin } from "@/lib/admin-guard";
 import { setQueuePaused, setCapOverride } from "@/lib/queue-control";
 
+// F2 (Codex §4 #2): เช็ค role กับ DB จริง (ไม่เชื่อ JWT ที่ค้างได้ถึง 30 วัน)
 async function isAdmin(): Promise<boolean> {
-  const session = await auth();
-  const role = (session?.user as { role?: string } | undefined)?.role;
-  return role === "ADMIN";
+  return isVerifiedAdmin();
 }
 
 const idSchema = z.string().regex(/^\d+$/, "concertId ไม่ถูกต้อง");
