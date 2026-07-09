@@ -71,3 +71,47 @@ if (isProduction && !isGeminiConfigured) {
     "🚨 [AI] production แต่ยังไม่ได้ตั้ง GEMINI_API_KEY — ผู้ช่วย AI (chat) จะปิดใช้งาน (503) จนกว่าจะตั้งค่า"
   );
 }
+
+// ============================================================
+// Codex §7 — เตือน config ที่ "ปิดการป้องกัน" ได้เงียบ ๆ บน production
+//   (ทั้งหมดเป็น warn ไม่ throw ตาม convention ไฟล์นี้ + scripts/check-env.ts เป็น hard gate ตอน go-live)
+// ============================================================
+
+// #1-3: สวิตช์ป้องกันเงิน (§1) ถูกปิด/ไม่ตั้งบน production ทั้งที่เปิดตรวจสลิปจริง (EasySlip) แล้ว
+//   เตือนเฉพาะเมื่อ payment ทำงานจริง (isEasySlipConfigured) — ไม่งั้น payment fail-closed อยู่แล้ว
+if (isProduction && isEasySlipConfigured) {
+  if (!env.PAYMENTS_RECEIVER_CHECK) {
+    console.error(
+      "🚨 [PAYMENT] PAYMENTS_RECEIVER_CHECK=false บน production — ข้ามการตรวจบัญชีผู้รับ = " +
+        "ผู้โจมตีโอนเข้าบัญชีตัวเองแล้วได้ตั๋วฟรีได้ (เปิดเฉพาะกรณีธนาคาร mask จน match ไม่ได้จริง ๆ)"
+    );
+  }
+  if (!env.PAYMENTS_FRESHNESS_CHECK) {
+    console.error(
+      "🚨 [PAYMENT] PAYMENTS_FRESHNESS_CHECK=false บน production — ข้ามการตรวจเวลาสลิป = " +
+        "ใช้สลิปเก่าที่ยอดตรงซ้ำกับ order ใหม่ได้"
+    );
+  }
+  if (!env.PAYMENTS_RECEIVER_NAME) {
+    console.error(
+      "🚨 [PAYMENT] ยังไม่ตั้ง PAYMENTS_RECEIVER_NAME บน production — การตรวจ 'ชื่อบัญชีผู้รับ' ปิดอยู่ = " +
+        "ช่อง masked-digit (บัญชี attacker ที่เลขท้ายพ้องร้าน) ยังเปิด (ตัวปิดช่องนี้จาก §1)"
+    );
+  }
+}
+
+// #4: QUEUE_SCORE_SECRET ยังเป็นค่า placeholder บน production → randomScore ของคิวเดาได้
+//   (scalper ฟาร์มบัญชี คำนวณ score ต่ำ ๆ offline แล้วเลือกใช้บัญชีนั้นแซงคิว = fairness พัง)
+if (isProduction && env.QUEUE_SCORE_SECRET === "insecure-default-change-in-production") {
+  console.error(
+    "🚨 [QUEUE] QUEUE_SCORE_SECRET ยังเป็นค่า default บน production — fairness ของคิวเดาได้ " +
+      "(สร้างใหม่: openssl rand -base64 32)"
+  );
+}
+
+// #6: REDIS_URL ไม่ได้ตั้งบน production → เงียบ ๆ ชี้ไป localhost:6379 (ไม่มี Redis) = queue/rate-limit ล่ม
+if (isProduction && !process.env.REDIS_URL) {
+  console.error(
+    "🚨 [REDIS] production แต่ยังไม่ได้ตั้ง REDIS_URL — จะชี้ไป localhost:6379 = คิว/rate-limit/load-shed จะล่ม"
+  );
+}
