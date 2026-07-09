@@ -15,7 +15,9 @@ const bodySchema = z.object({
     .array(
       z.object({
         role: z.enum(["user", "model"]),
-        parts: z.array(z.object({ text: z.string() })),
+        // G2 (Codex §5 #2): bound parts[] + text — เดิม .max(30) แค่ array นอก แต่ parts/text ไม่จำกัด
+        //   → 1 request ยัด text มหึมาเลี่ยง cap 2000 ของ message = เผา Gemini quota/cost + parse ก้อนโต
+        parts: z.array(z.object({ text: z.string().max(2000) })).max(4),
       })
     )
     .max(30)

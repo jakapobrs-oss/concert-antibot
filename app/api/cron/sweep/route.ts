@@ -16,10 +16,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  // ตรวจ secret: ถ้าตั้ง CRON_SECRET ไว้ → ต้องมี Authorization ตรงกันเท่านั้น
-  //   (กันคนนอกยิง endpoint กวาด order มั่ว ๆ) — ไม่ตั้ง = เปิดให้เรียกได้ (dev)
+  // ตรวจ secret (G1 / Codex §5 #1 — fail-CLOSED บน production):
+  //   เดิม if(secret){check} → prod ที่ "ลืมตั้ง" CRON_SECRET = endpoint เปลือย
+  //   ใครก็ยิง GET กวาด order ทั้งระบบได้ (unauth DoS + crawler/prefetch trigger เพราะเป็น GET)
+  //   ให้เข้ากับปรัชญา fail-closed ของ payment/turnstile: prod ต้องมี secret เสมอ
   const secret = process.env.CRON_SECRET;
-  if (secret) {
+  const isProd = process.env.NODE_ENV === "production";
+  if (!secret) {
+    // prod ไม่มี secret → ปฏิเสธ (ไม่ปล่อยเปลือย); dev ไม่มี secret → ยอมให้เรียกเพื่อความสะดวก
+    if (isProd) {
+      return NextResponse.json({ ok: false, error: "cron not configured" }, { status: 503 });
+    }
+  } else {
     const auth = req.headers.get("authorization");
     if (auth !== `Bearer ${secret}`) {
       return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });

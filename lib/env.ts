@@ -55,3 +55,11 @@ if (isProduction && isTurnstileConfigured && !env.TURNSTILE_SITE_KEY) {
       "หน้าเว็บจะใช้ test site key (always-pass) ที่ verify กับ secret จริงไม่ผ่าน = ผู้ใช้ติด challenge วนไม่จบ"
   );
 }
+
+// เตือนถ้า production แต่ยังไม่ตั้ง CRON_SECRET (Codex §5 #1 / G1)
+//   /api/cron/sweep จะ fail-closed (503) จนกว่าจะตั้ง — กัน endpoint กวาด order เปลือยหลุด deploy
+if (isProduction && !env.CRON_SECRET) {
+  console.error(
+    "🚨 [CRON] production แต่ยังไม่ได้ตั้ง CRON_SECRET — /api/cron/sweep จะปฏิเสธ (503) จนกว่าจะตั้งค่า"
+  );
+}
