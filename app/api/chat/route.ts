@@ -4,6 +4,7 @@ import { z } from "zod";
 import { genai, buildUserSystemPrompt } from "@/lib/gemini";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { auth } from "@/lib/auth";
+import { isGeminiConfigured } from "@/lib/env";
 
 // keyed on userId (ไม่ใช่ IP) — ไม่สามารถ bypass ด้วย XFF spoofing
 const RATE_LIMIT = { limit: 20, windowMs: 60_000 };
@@ -17,7 +18,9 @@ const bodySchema = z.object({
     .array(
       z.object({
         role: z.enum(["user", "model"]),
-        parts: z.array(z.object({ text: z.string() })),
+        // §6 (Codex #1): bound parts[]/text — แฝดของ admin chat (§5 G2) ที่ user chat ยังไม่ได้แก้
+        //   user turn = 1 part, message cap 500 → parts.max(1) + text.max(500) (เข้มกว่า admin)
+        parts: z.array(z.object({ text: z.string().max(500) })).max(1),
       })
     )
     .max(20)
@@ -34,6 +37,11 @@ export async function POST(req: NextRequest) {
       { error: "กรุณาเข้าสู่ระบบก่อนใช้งานผู้ช่วย AI" },
       { status: 401 }
     );
+  }
+
+  // §6 (Codex #2): ยังไม่ตั้ง GEMINI_API_KEY → ตอบชัดว่า AI ปิด ก่อนเผา rate-limit / เรียก Gemini ด้วย key ว่าง
+  if (!isGeminiConfigured) {
+    return NextResponse.json({ error: "ผู้ช่วย AI ยังไม่พร้อมใช้งาน" }, { status: 503 });
   }
 
   // rate limit ต่อ userId (ไม่ใช่ IP → XFF spoofing ไม่ได้ผล)

@@ -63,3 +63,11 @@ if (isProduction && !env.CRON_SECRET) {
     "🚨 [CRON] production แต่ยังไม่ได้ตั้ง CRON_SECRET — /api/cron/sweep จะปฏิเสธ (503) จนกว่าจะตั้งค่า"
   );
 }
+
+// เตือนถ้า production แต่ยังไม่ตั้ง GEMINI_API_KEY (Codex §6 #2)
+//   /api/chat + /api/admin/chat จะตอบ "AI ยังไม่พร้อม" (503) — กัน key ว่างเงียบ ๆ แล้ว user เจอ error วน
+if (isProduction && !isGeminiConfigured) {
+  console.error(
+    "🚨 [AI] production แต่ยังไม่ได้ตั้ง GEMINI_API_KEY — ผู้ช่วย AI (chat) จะปิดใช้งาน (503) จนกว่าจะตั้งค่า"
+  );
+}
