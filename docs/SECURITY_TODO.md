@@ -82,6 +82,31 @@
 - **แนวทาง**: เพิ่ม `; preload` แล้ว submit domain ที่ hstspreload.org
 - **ข้อระวัง**: เมื่อ submit แล้วถอดออกยาก — ทำเฉพาะเมื่อมั่นใจว่า HTTPS permanent
 
+### 10. CSP ยังผ่อน `'unsafe-inline'` — อัปเกรดเป็น nonce-based
+- **ไฟล์**: `next.config.ts` → `headers()` (มี CSP header แล้วตั้งแต่รอบ hardening)
+- **ปัญหา**: Next.js 15 inject inline script ตอน hydration → ต้องผ่อน `'unsafe-inline'`
+  ใน `script-src`/`style-src` ทำให้ CSP กัน XSS แบบ inline injection ไม่ได้
+  (ยังได้ประโยชน์จาก `object-src 'none'`, `base-uri 'self'`, จำกัด `frame-src` เฉพาะ Turnstile)
+- **แนวทาง**: generate nonce ต่อ request ใน `middleware.ts` แล้วส่งผ่าน header ให้ Next
+  แปะใน inline script → ตัด `'unsafe-inline'` ออกจาก `script-src`
+- **ข้อระวัง**: ต้อง test กับ Turnstile widget + inline style ของ Tailwind/shadcn
+- **ที่มา**: บันทึกจากรีวิว Codex §7 Infra (2026-07-10) · รายละเอียดใน `18_SECURITY_AUDIT.md` §CSP
+
+---
+
+## บันทึกการตัดสินใจ (accepted decisions — ไม่ใช่บั๊กค้าง แต่บันทึกกันลืมเหตุผล)
+
+### D1. Payment ถูกลบแบบลูกโซ่เมื่อ Order ถูกลบ (`ON DELETE CASCADE`)
+- **ไฟล์**: `prisma/schema.prisma` → model `Payment` (`orderId` relation, `onDelete: Cascade`)
+- **พฤติกรรม**: ลบแถว `Order` → แถว `Payment` (หลักฐานการจ่าย + สลิป base64) หายตามทันที
+  ต่างจาก `Ticket` ที่เป็น `Restrict` (มีตั๋วอยู่จะลบ order ไม่ได้)
+- **ทำไมยอมรับได้ตอนนี้**: ไม่มี code path ใน production ที่ลบ `Order` เลย
+  (ตรวจแล้ว 2026-07-16: `order.delete/deleteMany` มีเฉพาะใน test scripts `scripts/test-*.ts`) —
+  order ที่หมดอายุ/ยกเลิกใช้ `status: CANCELLED` ไม่ใช่การลบแถว ประวัติการเงินจึงไม่หายใน flow จริง
+- **ก่อนขายจริง**: ควรเปลี่ยนเป็น `onDelete: Restrict` หรือ soft-delete
+  เพื่อการันตี audit trail การเงินระดับ schema (ผูกกับข้อกำหนดเก็บหลักฐานธุรกรรม/PDPA)
+- **ที่มา**: รีวิว Codex §7 Infra (2026-07-10) · อ้างถึงใน `HANDOFF-security-chapter-for-thesis.md` §ข้อจำกัด
+
 ---
 
 ## หมายเหตุ

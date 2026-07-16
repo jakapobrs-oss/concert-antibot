@@ -2,6 +2,7 @@
 
 > ใช้ไฟล์นี้เป็น checklist ก่อนเริ่มแต่ละ phase
 > 🤖 = Claude ทำได้ • 👤 = User ต้องทำ • 🤝 = ทำร่วมกัน
+> ⚠️ **เอกสารช่วงวางแผน (พ.ค. 2026)** — บางรายการเปลี่ยนไปแล้วตอนทำจริง (เช่น payment สุดท้ายใช้ PromptPay+EasySlip ไม่ใช่ Stripe/Omise, anti-bot ทำจริง 2 ชั้น) — ข้อเท็จจริงปัจจุบันยึด `THESIS_GUIDE.md` §1
 
 ---
 
@@ -12,12 +13,12 @@
 - เขียน Prisma schema + migration
 - เขียน Redis logic (queue, lock, rate limit)
 - เขียน NextAuth config (credentials + Google provider)
-- เขียน anti-bot engine (4-8 layers)
+- เขียน anti-bot engine (ทำจริง 2 ชั้น: Layer-1 scoring + Layer-2 behavior)
 - เขียน behavior collector JS
 - เขียน CAPTCHA integration (Turnstile)
 - เขียน fingerprint integration
-- เขียน mock payment + Stripe/Omise integration
-- เขียน email template (React Email)
+- เขียน payment integration (ทำจริง: PromptPay QR + EasySlip slip verification)
+- เขียน email (ทำจริง: Resend ผ่าน REST fetch ไม่ใช้ React Email)
 - เขียน QR code generator
 - เขียน admin dashboard UI
 - เขียน seat map component

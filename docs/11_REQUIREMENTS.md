@@ -27,7 +27,7 @@
 - ✅ ออกบัตรเป็น QR code
 
 ### 2.3 Anti-Bot (หัวใจของโปรเจ็ค)
-- ✅ Multi-layer defense (8 ชั้น)
+- ✅ Multi-layer defense (**2 ชั้น**: Layer-1 scoring + Layer-2 behavior escalate-only — ดู `THESIS_GUIDE.md` §1)
 - ✅ Behavior analysis (mouse, keystroke, scroll)
 - ✅ CAPTCHA escalation
 - ✅ Fingerprint + headless detection
