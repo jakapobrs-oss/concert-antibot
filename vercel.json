@@ -3,7 +3,8 @@
   "crons": [
     {
       "path": "/api/cron/sweep",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
-  ]
+  ],
+  "buildCommand": "DIRECT_URL=\"$DATABASE_URL_UNPOOLED\" prisma migrate deploy && DIRECT_URL=\"$DATABASE_URL_UNPOOLED\" tsx prisma/seed.ts && next build"
 }
