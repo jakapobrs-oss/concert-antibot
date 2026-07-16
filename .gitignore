@@ -68,3 +68,11 @@ files.zip
 # งานทำเล่มรายงาน/เอกสาร PDF — ไม่เกี่ยวกับ app
 thesis-book-prep/
 /*.pdf
+
+# Vercel QA deploy (2026-07-14)
+.vercel
+.env*
+!.env.example
+
+# เอกสารส่งต่องานภายในเครื่อง — เก็บ local ไม่เข้า repo (ตกลง 2026-07-16)
+/HANDOFF.md
