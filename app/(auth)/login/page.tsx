@@ -1,5 +1,7 @@
 // Login page — Credentials + Google (ถ้าเปิด)
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { AuthError } from "next-auth";
 import { CheckCircle2, AlertCircle } from "lucide-react";
 import { signIn } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -27,7 +29,8 @@ export default async function LoginPage({
       {registered && (
         <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-success/25 bg-success/10 p-3 text-sm text-success">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
-          <span>สมัครสมาชิกสำเร็จ — เข้าสู่ระบบได้เลย</span>
+          {/* บังคับยืนยันอีเมลก่อนล็อกอิน (credentials-auth.ts F1) — ห้ามบอก "เข้าสู่ระบบได้เลย" เพราะยังเข้าไม่ได้ */}
+          <span>สมัครสมาชิกสำเร็จ — เราส่งลิงก์ยืนยันไปที่อีเมลของคุณแล้ว กรุณายืนยันก่อนเข้าสู่ระบบ</span>
         </div>
       )}
       {error && (
@@ -86,5 +89,16 @@ async function loginAction(formData: FormData) {
   const password = formData.get("password") as string;
   const callbackUrl = (formData.get("callbackUrl") as string) || "/";
 
-  await signIn("credentials", { email, password, redirectTo: callbackUrl });
+  try {
+    await signIn("credentials", { email, password, redirectTo: callbackUrl });
+  } catch (error) {
+    // Auth.js โยน AuthError (เช่น CredentialsSignin) เมื่อ authorize() คืน null —
+    //   รหัสผิด / ยังไม่ยืนยันอีเมล / ติด rate-limit / บัญชีถูกล็อก
+    //   ต้องดักเอง ไม่งั้น error หลุดออกไปเป็น "server-side exception" (จอขาว digest ...) แทนข้อความปกติ
+    if (error instanceof AuthError) {
+      redirect(`/login?error=1&callbackUrl=${encodeURIComponent(callbackUrl)}`);
+    }
+    // ไม่ใช่ AuthError = redirect ตอน login สำเร็จ (NEXT_REDIRECT) หรือ error อื่นจริง ๆ → ปล่อยผ่าน
+    throw error;
+  }
 }
