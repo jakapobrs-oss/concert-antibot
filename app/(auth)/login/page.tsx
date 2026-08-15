@@ -1,7 +1,6 @@
 // Login page — Credentials + Google (ถ้าเปิด)
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { AuthError } from "next-auth";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { CheckCircle2, AlertCircle } from "lucide-react";
 import { signIn } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -92,13 +91,14 @@ async function loginAction(formData: FormData) {
   try {
     await signIn("credentials", { email, password, redirectTo: callbackUrl });
   } catch (error) {
-    // Auth.js โยน AuthError (เช่น CredentialsSignin) เมื่อ authorize() คืน null —
-    //   รหัสผิด / ยังไม่ยืนยันอีเมล / ติด rate-limit / บัญชีถูกล็อก
-    //   ต้องดักเอง ไม่งั้น error หลุดออกไปเป็น "server-side exception" (จอขาว digest ...) แทนข้อความปกติ
-    if (error instanceof AuthError) {
-      redirect(`/login?error=1&callbackUrl=${encodeURIComponent(callbackUrl)}`);
-    }
-    // ไม่ใช่ AuthError = redirect ตอน login สำเร็จ (NEXT_REDIRECT) หรือ error อื่นจริง ๆ → ปล่อยผ่าน
-    throw error;
+    // login สำเร็จ → signIn เรียก redirect() ข้างใน (โยน NEXT_REDIRECT) — ต้องปล่อยผ่านเท่านั้น
+    //   unstable_rethrow: โยนต่อเฉพาะ control-flow error ของ Next (redirect/notFound ฯลฯ) แล้ว return สำหรับที่เหลือ
+    //   ⚠️ ห้ามกลับไปใช้ `error instanceof AuthError`: บน production bundle ของ Vercel มันเป็น false
+    //      (class AuthError ที่ page import เป็นคนละตัวกับ base ของ CredentialsSignin ที่ @auth/core โยน
+    //       = class identity ข้าม chunk ไม่ตรง) → CredentialsSignin หลุดเป็น 500 จอดำ (digest 1535448675)
+    unstable_rethrow(error);
+    // มาถึงบรรทัดนี้ = error อื่นทั้งหมด = login ไม่สำเร็จ (รหัสผิด/ยังไม่ยืนยันอีเมล/บัญชีถูกล็อก/rate-limit/Redis timeout)
+    //   → กลับหน้า login พร้อม ?error=1 (โชว์ข้อความปกติ ไม่ใช่ 500)
+    redirect(`/login?error=1&callbackUrl=${encodeURIComponent(callbackUrl)}`);
   }
 }

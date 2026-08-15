@@ -1,6 +1,7 @@
 // ปุ่ม "เข้าสู่ระบบ/สมัครด้วย Google" — ใช้ร่วมกันทั้งหน้า login + register (DRY)
 // โผล่เฉพาะเมื่อ isGoogleEnabled (= ตั้ง GOOGLE_CLIENT_ID/SECRET แล้ว) — กันปุ่มที่กดแล้ว error
 // เป็น Server Component เพราะ signIn("google") ต้องรันใน server action
+import { redirect, unstable_rethrow } from "next/navigation";
 import { signIn } from "@/lib/auth";
 import { isGoogleEnabled } from "@/lib/env";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,14 @@ export function GoogleSignInButton({ label = "เข้าสู่ระบบ�
       <form
         action={async () => {
           "use server";
-          await signIn("google", { redirectTo: "/" });
+          try {
+            await signIn("google", { redirectTo: "/" });
+          } catch (error) {
+            // สำเร็จ → signIn โยน NEXT_REDIRECT (ต้องปล่อยผ่าน); ที่เหลือ (OAuth ล้ม/ถูกปฏิเสธ) → กลับหน้า login พร้อมข้อความ
+            //   เหตุผลเดียวกับ login action: ห้ามพึ่ง instanceof AuthError (prod bundle = false → 500 จอดำ)
+            unstable_rethrow(error);
+            redirect("/login?error=1");
+          }
         }}
       >
         <Button type="submit" variant="outline" size="lg" className="w-full">
