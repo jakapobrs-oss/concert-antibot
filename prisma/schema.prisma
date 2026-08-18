@@ -56,6 +56,10 @@ model User {
   heldItems     OrderItem[]    @relation("ItemHolder")
   // คำขอคืนบัตรที่เงินต้องคืนให้ user นี้ (ผู้ซื้อ)
   ticketReturns TicketReturn[] @relation("ReturnPayer")
+  // ---- Phase 2 (สมาชิก) ----
+  membership         Membership?
+  // สมาชิกที่ user นี้ (แอดมิน) เป็นคนกดให้สิทธิ์ — audit ว่าใครให้ใคร
+  grantedMemberships Membership[] @relation("MembershipGrantedBy")
 
   @@index([email])
   @@map("users")
@@ -122,6 +126,14 @@ model Concert {
   saleStartAt         DateTime
   saleEndAt           DateTime
   maxTicketsPerUser   Int           @default(4)
+  // ---- Phase 2 (ผังจากรูป) ----
+  // รูปผังสถานที่เก็บเป็น base64 (แพทเทิร์นเดียวกับ Payment.slipImageUrl — ไม่ได้ใช้ MinIO/S3)
+  // ย่อฝั่ง client ก่อนส่งเสมอ (กว้าง ~1600px, webp) ไม่งั้นชน serverActions.bodySizeLimit = 3mb
+  layoutImageBase64   String?       @db.Text
+  // ขนาดรูปหลังย่อ (px) — จำเป็นเพราะพิกัดที่นั่งเก็บเป็น "สัดส่วน 0-1" ไม่ใช่พิกเซล
+  // ต้องรู้ w/h ไว้ตั้ง viewBox ของ SVG ให้อัตราส่วนตรงรูป ไม่งั้นผังยืด/บี้ตอน render
+  layoutImageWidth    Int?
+  layoutImageHeight   Int?
   status              ConcertStatus @default(DRAFT)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
@@ -129,6 +141,7 @@ model Concert {
   zones       Zone[]
   orders      Order[]
   queueTokens QueueToken[]
+  saleRounds  SaleRound[]
 
   @@index([slug])
   @@index([status, saleStartAt])
@@ -151,6 +164,10 @@ model Zone {
   price       Decimal @db.Decimal(10, 2) // THB
   totalSeats  Int
   color       String  @default("#ef4444") @db.VarChar(7) // สีบน seat map
+  // ---- Phase 2 (ผังจากรูป) ----
+  // กรอบโซนที่แอดมินคลิกวาดทับรูป: [[x,y],[x,y],...] พิกัดเป็นสัดส่วน 0-1 ของขนาดรูป
+  // null = โซนแบบเดิม (ไม่มีผังเชิงพื้นที่) -> ฝั่งคนซื้อ fallback ไป seat-map ปุ่มแบบเก่า
+  polygon     Json?
 
   concert Concert @relation(fields: [concertId], references: [id], onDelete: Cascade)
   seats   Seat[]
@@ -165,6 +182,11 @@ model Seat {
   rowLabel   String     @db.VarChar(10) // A, B, C...
   seatNumber Int
   status     SeatStatus @default(AVAILABLE)
+  // ---- Phase 2 (ผังจากรูป) ----
+  // พิกัดบนผัง เป็น "สัดส่วน 0-1" ของขนาดรูป (ไม่ใช่พิกเซล) — เปิดคนละจอ/รูปคนละขนาดก็ไม่เพี้ยน
+  // null = ที่นั่งที่เจนมาก่อนมีระบบผัง (คอนเสิร์ตเก่า) — ยังใช้งานได้ปกติ
+  x          Float?
+  y          Float?
   createdAt  DateTime   @default(now())
 
   zone       Zone        @relation(fields: [zoneId], references: [id], onDelete: Cascade)
@@ -199,15 +221,21 @@ model Order {
   createdAt   DateTime    @default(now())
   paidAt      DateTime?
   expiresAt   DateTime    // ถ้า pending เกินเวลานี้ → cancel auto
+  // ---- Phase 2 (รอบขาย) ----
+  // รอบที่ order นี้เกิด — เก็บไว้ audit/สถิติในเล่ม (แยกยอดรอบสมาชิก vs รอบทั่วไป)
+  // ⚠️ ไม่มี logic ไหนอ่าน field นี้ตัดสินใจ — เพดานตั๋วยังนับ "รวมทุกรอบ" ต่อคอนเสิร์ตเหมือนเดิม
+  saleRoundId BigInt?
 
-  user    User        @relation(fields: [userId], references: [id])
-  concert Concert     @relation(fields: [concertId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  concert   Concert    @relation(fields: [concertId], references: [id])
+  saleRound SaleRound? @relation(fields: [saleRoundId], references: [id], onDelete: SetNull)
   items   OrderItem[]
   payment Payment?
   tickets Ticket[]
 
   @@index([userId, status])
   @@index([status, expiresAt])
+  @@index([saleRoundId])
   @@map("orders")
 }
 
@@ -443,4 +471,79 @@ model BehaviorSession {
   @@index([sessionKey])
   @@index([createdAt])
   @@map("behavior_sessions")
+}
+
+// ============================================================
+// 8. MEMBERSHIP (Phase 2) — สมาชิก ชั้นเดียว (เป็น/ไม่เป็น)
+// ============================================================
+// สิทธิ์เดียวที่สมาชิกได้ = "เข้ารอบขายก่อน" (ดู SaleRound.audience = MEMBER_ONLY)
+//   - ห้ามให้ซื้อได้เยอะกว่าคนทั่วไป — จะขัดกับระบบกันคนกวาดตั๋ว (named ticket / ticket-limit)
+//   - ไม่มีส่วนลดราคา — ไม่แตะ logic คิดเงินเลย
+// 1 user มีได้ 1 แถว (ต่ออายุ = อัปเดตแถวเดิม ไม่สร้างแถวใหม่) -> query ง่าย ไม่ต้อง dedup
+model Membership {
+  id              BigInt           @id @default(autoincrement())
+  userId          BigInt           @unique
+  status          MembershipStatus @default(ACTIVE)
+  source          MembershipSource @default(SELF_SIGNUP)
+  startedAt       DateTime         @default(now())
+  // 🔑 หมดอายุคำนวณสดจากเวลาปัจจุบัน ไม่ต้องมี cron มาพลิก status
+  //    getActiveMembership() = status ACTIVE && (expiresAt = null || expiresAt > now)
+  //    (ถ้าเก็บเป็น status EXPIRED จะเกิดบั๊กคลาสสิก: หมดอายุแล้วแต่ status ยัง ACTIVE เพราะ cron ไม่วิ่ง)
+  expiresAt       DateTime?
+  // แอดมินที่กดให้สิทธิ์ — null ถ้าสมัครเอง
+  grantedByUserId BigInt?
+  revokedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user      User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User? @relation("MembershipGrantedBy", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, expiresAt])
+  @@map("memberships")
+}
+
+enum MembershipStatus {
+  ACTIVE
+  REVOKED // แอดมินเพิกถอนสิทธิ์ (ต่างจาก "หมดอายุ" ที่ดูจาก expiresAt)
+}
+
+enum MembershipSource {
+  SELF_SIGNUP // ผู้ใช้กดสมัครเอง (ฟรี)
+  ADMIN_GRANT // แอดมินให้สิทธิ์
+}
+
+// ============================================================
+// 9. SALE ROUND (Phase 2) — รอบกดบัตร ("สมาชิกกดก่อน")
+// ============================================================
+// 🔑 ดีไซน์ที่ปกป้องผลวิจัยในเล่ม:
+//    "สมาชิกกดก่อน" ทำเป็น *รอบเวลาแยก* ไม่ใช่ให้แซงคิวในรอบเดียวกัน
+//    -> คิวในแต่ละรอบยังเป็น FIFO เป็นธรรมเหมือนเดิม -> สถิติ fairness/inversion ในเล่มยังใช้ได้
+//    (ถ้าทำเป็น priority แซงคิว ต้องรื้อบททดสอบทั้งบท — ห้ามทำ)
+//
+// กติกาการบังคับใช้ (ฝั่ง logic — lib/sale-round.ts):
+//    - Concert.status = ON_SALE ยังเป็นสวิตช์หลักเหมือนเดิม รอบเป็นด่าน "ซ้อนทับ" ไม่ใช่มาแทน
+//    - คอนเสิร์ตที่ไม่มีรอบเลย (0 แถว) = พฤติกรรมเดิมทุกอย่าง -> คอนเสิร์ตเก่าไม่พัง
+//    - ผ่านได้เมื่อ: มีรอบที่ now อยู่ใน [startAt, endAt) และ (audience = PUBLIC หรือ user เป็นสมาชิก active)
+//    - รอบสมาชิกปกติจะจบตรงเวลาที่รอบ PUBLIC เริ่ม (เช่น 19:00-19:30 แล้ว 19:30 เปิดทุกคน)
+model SaleRound {
+  id        BigInt            @id @default(autoincrement())
+  concertId BigInt
+  name      String            @db.VarChar(100) // "รอบสมาชิก", "รอบทั่วไป"
+  audience  SaleRoundAudience @default(PUBLIC)
+  startAt   DateTime
+  endAt     DateTime
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  concert Concert @relation(fields: [concertId], references: [id], onDelete: Cascade)
+  orders  Order[]
+
+  @@index([concertId, startAt])
+  @@map("sale_rounds")
+}
+
+enum SaleRoundAudience {
+  MEMBER_ONLY // เฉพาะสมาชิกที่ยัง active
+  PUBLIC      // ทุกคน (สมาชิกก็เข้าได้)
 }
