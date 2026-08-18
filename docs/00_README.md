@@ -30,6 +30,9 @@
 | 15 | [15_PAYMENT_SECURITY.md](15_PAYMENT_SECURITY.md) | dev / **thesis** | **ความปลอดภัยการตรวจจ่ายเงิน** — threat model, defense levels, ข้อจำกัด + Level 3 future work |
 | 16 | [16_PEAK_LOAD.md](16_PEAK_LOAD.md) | dev / thesis | flash-crowd: non-blocking audit, backoff polling, load-shedding |
 | 17 | [17_GO_LIVE_CHECKLIST.md](17_GO_LIVE_CHECKLIST.md) | user / dev | go-live runbook: credentials, config, N1-N11 fixes, Level 3 |
+| 18 | [18_SECURITY_AUDIT.md](18_SECURITY_AUDIT.md) | dev | audit 10 ช่องโหว่ + วิธีแก้ (บางข้อถูกแก้ไปแล้วในรอบ review ทีหลัง — ต้อง verify ซ้ำ) |
+| 19 | [19_NAMED_TICKET_PLAN.md](19_NAMED_TICKET_PLAN.md) | dev / thesis | บัตรผูกชื่อกันคนกวาดตั๋ว — QR หมุน, เช็คอินกันใช้ซ้ำ, ช่องคืนบัตร |
+| 20 | [20_SEATMAP.md](20_SEATMAP.md) | dev / thesis | **ผังที่นั่งจากรูปสถานที่จริง** — อัลกอริทึมโปรยที่นั่ง, ด่านกันเจนทับ, ผลทดสอบ |
 | ⭐ | [THESIS_GUIDE.md](THESIS_GUIDE.md) | **ทุกคน** | **material รวมศูนย์ทำรูปเล่ม — canonical facts + ER ที่ถูกต้อง + checklist** |
 
 ---

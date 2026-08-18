@@ -189,6 +189,25 @@ export function rowLabelFor(index: number): string {
   return label;
 }
 
+/**
+ * ลำดับ "อ่านผัง" — แถวบนลงล่าง ในแถวเรียงซ้ายไปขวา (A1, A2, …, B1, …, Z10, AA1)
+ *
+ * ใช้ตอนจับคู่ที่นั่งเดิมในฐานข้อมูลกับตำแหน่งใหม่บนกรอบที่แอดมินวาด
+ * ต้องเทียบ "ความยาวชื่อแถว" ก่อนตัวอักษร เพราะชื่อแถวไล่ A..Z แล้วขึ้น AA
+ * ถ้าเรียงแบบ string ล้วน AA จะไปแทรกระหว่าง A กับ B → ที่นั่งเลื่อนผิดตำแหน่งยกโซน
+ * ผลคือตั๋วที่ลูกค้าถืออยู่ชี้จุดผิดบนผัง (ชื่อแถว/เลขที่นั่งบนตั๋วไม่เปลี่ยน เปลี่ยนแค่จุดบนรูป)
+ */
+export function compareSeatOrder<T extends { rowLabel: string; seatNumber: number }>(
+  a: T,
+  b: T
+): number {
+  return (
+    a.rowLabel.length - b.rowLabel.length ||
+    a.rowLabel.localeCompare(b.rowLabel) ||
+    a.seatNumber - b.seatNumber
+  );
+}
+
 function round(value: number): number {
   const factor = 10 ** COORD_PRECISION;
   return Math.round(value * factor) / factor;

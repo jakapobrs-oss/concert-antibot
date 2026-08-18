@@ -12,7 +12,7 @@
 |---|---|
 | Framework | Next.js **15.5.20** (App Router; bump จาก 15.1.0 ปิด CVE 2026-07-14), React 19.0.0, TypeScript 5.6.3, Node ≥22.11 |
 | Package manager | **pnpm 9.15.0** (ไม่มี npm/yarn lockfile) |
-| DB/ORM | **PostgreSQL 16** ผ่าน **Prisma 6.1.0** — schema เดียวที่ `prisma/schema.prisma` (446 บรรทัด, **15 models**) |
+| DB/ORM | **PostgreSQL 16** ผ่าน **Prisma 6.1.0** — schema เดียวที่ `prisma/schema.prisma` (549 บรรทัด, **17 models** — เช็ค 2026-08-19) |
 | Cache/Queue/Lock | **Redis** ผ่าน `ioredis` — hand-rolled ทั้งหมด (ไม่ใช่ BullMQ), ใช้ทำ queue/seat-lock/rate-limit/load-shed |
 | Payment | `promptpay-qr`+`qrcode` (สร้าง QR) + EasySlip REST client มือเขียน (`lib/easyslip.ts`) — **ไม่มี Stripe/Omise** แม้เอกสารเก่าบางไฟล์จะพูดถึง |
 | Anti-bot | Cloudflare Turnstile (REST, ไม่มี SDK) + `@fingerprintjs/fingerprintjs` (client, ไม่ต้อง API key) + scoring มือเขียน |
@@ -37,6 +37,7 @@
 | **6. AI-Chat** | `lib/gemini.ts` · `app/api/chat/`, `app/api/admin/chat/` · `components/{chat-widget,chat-context,admin-chat-panel}.tsx` — client ส่ง `history[]` กลับมาเองทุกครั้ง (zod-bounded), server ไม่ persist อะไรเลย |
 | **7. Infra** | `lib/{env,env-schema,prisma,redis,json,format,get-ip,email}.ts` · `next.config.ts` · `docker-compose.yml` · `.github/workflows/ci.yml` |
 | **(cross-cutting) Named-ticket / anti-scalper** | `lib/{holder-policy,entry-code}.ts` · `components/{holder-assign,ticket-entry-qr,ticket-return-button,checkin-client,refund-actions}.tsx` · `app/actions/tickets.ts` · Prisma `TicketReturn`+`Ticket.holderName/qrSecret/returnedAt` — งานล่าสุด (2026-07-04), **ไม่อยู่ในกรอบ 7-subsystem เดิม** |
+| **(cross-cutting) ผังที่นั่งจากรูปจริง** | `lib/seatmap/{generate,guard,polygon}.ts` · `app/actions/seatmap.ts` · `app/(admin)/admin/concerts/[id]/seatmap/` · `components/{seatmap-editor,seat-map-svg}.tsx` · Prisma `Concert.layoutImage*`+`Zone.polygon`+`Seat.x/y` · tests `tests/unit/seatmap-{generate,render}.test.ts` (39) + `scripts/test-seatmap-{ui,buyer}.ts` (27+18) · doc `docs/20_SEATMAP.md` — งานล่าสุด (2026-08-19, branch `feat/seatmap`). **`components/seat-map.tsx` ตัวเดิมไม่ถูกแก้เลย** เป็นทางถอยเมื่อคอนเสิร์ตยังไม่มีผังรูป |
 | **(cosmetic) UI kit + design tooling** | `components/ui/*` (shadcn-style primitives) · `app/prototype/` (demo/simulation, **ไม่ต่อ Redis จริง อย่าเข้าใจผิดว่าเป็น admission code จริง** — ของจริงคือ `lib/admit-policy.ts`+`lib/queue.ts`) · `.impeccable/`, `.shots/`, `scripts/shoot-design.ts` |
 
 ## Docs — เช็ค staleness ก่อนเชื่อ
@@ -66,7 +67,8 @@
 | `16_PEAK_LOAD.md` | load-shedding/backoff — rated current |
 | `17_GO_LIVE_CHECKLIST.md` | runbook ก่อนขึ้น production |
 | `18_SECURITY_AUDIT.md` | 10 vuln + fix — **น่าจะถูกแก้แล้วผ่าน Codex review series ทีหลัง แต่ยังไม่ verify ซ้ำ** |
-| `19_NAMED_TICKET_PLAN.md` | anti-scalper design — **เอกสารใหม่สุด (2026-07-04), implement ครบ 3 phase แล้ว** |
+| `19_NAMED_TICKET_PLAN.md` | anti-scalper design — implement ครบ 3 phase แล้ว (2026-07-04) |
+| `20_SEATMAP.md` | ผังที่นั่งจากรูปสถานที่จริง — **เอกสารใหม่สุด (2026-08-19) ตัวเลขทดสอบมาจากการรันจริง** |
 | `SECURITY_TODO.md` | backlog ที่ยังไม่ทำ (bot-score ไม่เช็กตอนซื้อ, Turnstile hostname/action ไม่เช็ก ฯลฯ) |
 | `HANDOFF-security-chapter-for-thesis.md` | **ตัวเลขล่าสุดที่เชื่อได้สุด** (untracked, ยังไม่ commit) |
 
@@ -74,8 +76,9 @@ Root `README.md` (ไม่ใช่ `docs/00_README.md`) **ยังเขี�
 
 ## Test layout
 
-- **Unit**: `tests/unit/*.test.ts` — 22 ไฟล์, ~176 cases, Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
-- **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (8 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลืออีก 7 ดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ
+- **Unit**: `tests/unit/*.test.ts` — 24 ไฟล์, 220 cases (รันจริง 2026-08-19), Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
+- **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (10 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลือดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ
+  - 2 ไฟล์ล่าสุดเป็น **เทสผังที่นั่ง** ต้องมี dev server รันอยู่ + ส่ง `E2E_BASE` ถ้าไม่ใช่พอร์ต 3000: `pnpm test:seatmap` (แอดมิน 27 เช็ค) · `pnpm test:seatmap-buyer` (คนซื้อ 18 เช็ค)
 - **Load**: `tests/load/queue.js` (k6) + `tests/load/concurrent-fairness.mjs` (Node/ioredis)
 - **E2E**: `scripts/e2e-booking.ts` (playwright-core) — `package.json`'s `test:e2e` (`playwright test`) **น่าจะใช้ไม่ได้แล้ว** เพราะไม่มี `@playwright/test` ติดตั้ง
 - CI (`.github/workflows/ci.yml`): job 1 = typecheck+vitest (ไม่ต้องมี service), job 2 = spin postgres:16 จริงแล้ว `pnpm test:race`

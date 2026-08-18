@@ -38,6 +38,10 @@ const SEAT_COUNT_SECOND = 30;
 // เพื่อให้ "ตรวจว่าที่นั่งอยู่ในกรอบ" ทำได้ด้วยการเทียบขอบ ไม่ต้องเรียก point-in-polygon ของระบบเอง
 const FRAME = { left: 0.15, right: 0.85, top: 0.2, bottom: 0.8 };
 
+// กรอบที่ 2 — เล็กลงและเยื้องไปมุมล่างขวา ใช้ตอนทดสอบ "ตั้งกรอบใหม่โดยคงที่นั่งเดิม"
+// ต้องไม่ทับกับ FRAME เลยสักส่วน เพื่อพิสูจน์ได้ชัดว่าที่นั่ง "ย้ายจริง" ไม่ใช่บังเอิญค่าเดิม
+const FRAME_SHIFTED = { left: 0.55, right: 0.95, top: 0.55, bottom: 0.95 };
+
 let pass = 0;
 let fail = 0;
 function check(name: string, cond: boolean, extra = "") {
@@ -135,16 +139,16 @@ async function uploadLayout(page: Page, filePath: string) {
 }
 
 /** คลิกวาดกรอบสี่เหลี่ยมทับรูป — แปลงสัดส่วน 0-1 เป็นพิกเซลบน element จริง */
-async function drawFrame(page: Page) {
+async function drawFrame(page: Page, frame = FRAME) {
   const svg = page.locator('svg[role="presentation"]');
   await svg.waitFor({ timeout: 15_000 });
   const box = await svg.boundingBox();
   if (!box) throw new Error("หา svg ที่วาดกรอบไม่เจอ");
   const corners: Array<[number, number]> = [
-    [FRAME.left, FRAME.top],
-    [FRAME.right, FRAME.top],
-    [FRAME.right, FRAME.bottom],
-    [FRAME.left, FRAME.bottom],
+    [frame.left, frame.top],
+    [frame.right, frame.top],
+    [frame.right, frame.bottom],
+    [frame.left, frame.bottom],
   ];
   for (const [fx, fy] of corners) {
     await svg.click({ position: { x: box.width * fx, y: box.height * fy } });
@@ -347,6 +351,80 @@ async function main() {
     const finalSeats = await prisma.seat.count({ where: { zoneId: zone.id } });
     check("DB อัปเดตเป็นจำนวนใหม่", finalSeats === SEAT_COUNT_SECOND, `got ${finalSeats}`);
     await page.screenshot({ path: ".shots/seatmap-4-regenerated.png" });
+
+    // ---------- 9) 🔴 "ตั้งกรอบ (คงที่นั่งเดิม)" บนโซนที่ขายบัตรไปแล้ว ----------
+    // ทำไมต้องมีทางนี้: ด่านข้อ 6-7 ปฏิเสธการเจนทับตลอดไปเมื่อมีที่นั่งขายแล้ว (ถูกต้อง เพราะเจน = ลบ+สร้างใหม่)
+    // แต่แปลว่าคอนเสิร์ตที่กำลังขายอยู่จะไม่มีวันได้ผังบนรูปจริง -> เพิ่ม assignZoneFrame ที่ย้าย "แค่พิกัด"
+    // จุดเสี่ยง: ทางนี้ยิง UPDATE ดิบใส่ตาราง seats ทั้งโซนทีเดียว ถ้าพลาดคือตั๋วลูกค้าชี้ผิดที่
+    const beforeFrame = await prisma.seat.findMany({
+      where: { zoneId: zone.id },
+      select: { id: true, x: true, y: true, rowLabel: true, seatNumber: true, status: true },
+      orderBy: { id: "asc" },
+    });
+    const soldSeat = beforeFrame[0];
+    await prisma.seat.update({ where: { id: soldSeat.id }, data: { status: "SOLD" } });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await drawFrame(page, FRAME_SHIFTED);
+    await page.click(`button:has-text("ตั้งกรอบ")`);
+    const frameMsg = await readFeedback(page);
+    check(
+      "ตั้งกรอบใหม่ได้แม้โซนนี้ขายบัตรไปแล้ว (ทางที่ไม่ลบที่นั่ง)",
+      frameMsg.includes("ตั้งกรอบโซน"),
+      frameMsg
+    );
+
+    const afterFrame = await prisma.seat.findMany({
+      where: { zoneId: zone.id },
+      select: { id: true, x: true, y: true, rowLabel: true, seatNumber: true, status: true },
+      orderBy: { id: "asc" },
+    });
+
+    // ที่นั่ง "ตัวเดิม" ต้องอยู่ครบ — เทียบด้วย id ไม่ใช่แค่จำนวน
+    // (ถ้าเผลอไปลบแล้วสร้างใหม่ จำนวนจะเท่าเดิมแต่ id เปลี่ยนหมด และตั๋วเก่าจะชน FK)
+    const idsBefore = beforeFrame.map((s) => s.id.toString()).join(",");
+    const idsAfter = afterFrame.map((s) => s.id.toString()).join(",");
+    check("id ที่นั่งทุกตัวเป็นตัวเดิม ไม่มีการลบ/สร้างใหม่", idsBefore === idsAfter);
+    check(
+      "ชื่อแถว/เลขที่นั่งไม่เปลี่ยน (ตั๋วที่พิมพ์ไปแล้วยังตรง)",
+      afterFrame.every(
+        (s, i) => s.rowLabel === beforeFrame[i].rowLabel && s.seatNumber === beforeFrame[i].seatNumber
+      )
+    );
+    check(
+      "ที่นั่งที่ขายแล้วยังเป็น SOLD",
+      afterFrame.find((s) => s.id === soldSeat.id)?.status === "SOLD"
+    );
+
+    // พิกัดต้อง "ย้ายจริง" และย้ายเข้ากรอบใหม่ทั้งหมด
+    const moved = afterFrame.filter((s, i) => s.x !== beforeFrame[i].x || s.y !== beforeFrame[i].y);
+    check("พิกัดถูกย้ายจริงทุกที่นั่ง", moved.length === afterFrame.length, `ย้าย ${moved.length}/${afterFrame.length}`);
+    const tolFrame = 0.015;
+    const outsideNew = afterFrame.filter(
+      (s) =>
+        s.x! < FRAME_SHIFTED.left - tolFrame ||
+        s.x! > FRAME_SHIFTED.right + tolFrame ||
+        s.y! < FRAME_SHIFTED.top - tolFrame ||
+        s.y! > FRAME_SHIFTED.bottom + tolFrame
+    );
+    check("ทุกที่นั่งย้ายเข้ามาอยู่ในกรอบใหม่", outsideNew.length === 0, `หลุด ${outsideNew.length} ที่`);
+
+    const zoneAfterFrame = await prisma.zone.findUniqueOrThrow({
+      where: { id: zone.id },
+      select: { polygon: true, totalSeats: true },
+    });
+    check(
+      "polygon ของโซนถูกอัปเดตเป็นกรอบใหม่",
+      Array.isArray(zoneAfterFrame.polygon) &&
+        (zoneAfterFrame.polygon as number[][])[0][0] > FRAME.left + 0.1,
+      JSON.stringify(zoneAfterFrame.polygon)
+    );
+    check(
+      "totalSeats ไม่ถูกแตะ",
+      zoneAfterFrame.totalSeats === SEAT_COUNT_SECOND,
+      `got ${zoneAfterFrame.totalSeats}`
+    );
+    await page.screenshot({ path: ".shots/seatmap-5-frame-assigned.png" });
   } finally {
     await page.screenshot({ path: ".shots/seatmap-9-last.png" }).catch(() => {});
     await browser.close();

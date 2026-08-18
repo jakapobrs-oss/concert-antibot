@@ -12,7 +12,7 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { assertVerifiedAdmin } from "@/lib/admin-guard";
-import { fillPolygonWithSeats, type Polygon } from "@/lib/seatmap/generate";
+import { compareSeatOrder, fillPolygonWithSeats, type Polygon } from "@/lib/seatmap/generate";
 import { canRegenerateZoneSeats, type ExistingSeatState } from "@/lib/seatmap/guard";
 import { getHeldSeats } from "@/lib/seat-hold";
 import { isLikelyBase64Image } from "@/lib/slip-image";
@@ -318,16 +318,9 @@ export async function assignZoneFrame(input: {
     };
   }
 
-  // จับคู่ "ที่นั่งเดิม" กับ "ตำแหน่งใหม่" ตามลำดับแถว-เลขที่นั่ง
-  // เรียงตามความยาว label ก่อนแล้วค่อยเทียบตัวอักษร เพราะ A..Z แล้วต่อ AA
-  // ถ้าเรียงแบบ string ล้วน AA จะไปแทรกหน้า B (ผังเพี้ยนทั้งโซน)
-  const byRowThenNumber = <T extends { rowLabel: string; seatNumber: number }>(a: T, b: T) =>
-    a.rowLabel.length - b.rowLabel.length ||
-    a.rowLabel.localeCompare(b.rowLabel) ||
-    a.seatNumber - b.seatNumber;
-
-  const seatsInOrder = [...existing].sort(byRowThenNumber);
-  const spotsInOrder = [...generated].sort(byRowThenNumber);
+  // จับคู่ "ที่นั่งเดิม" กับ "ตำแหน่งใหม่" ตามลำดับอ่านผัง (compareSeatOrder — มี unit test คุม)
+  const seatsInOrder = [...existing].sort(compareSeatOrder);
+  const spotsInOrder = [...generated].sort(compareSeatOrder);
 
   // อัปเดตพิกัดทีเดียวทั้งโซนด้วย VALUES เดียว — ถ้ายิงทีละ UPDATE โซนหลายร้อยที่จะชน transaction timeout
   const rows = seatsInOrder.map((seat, i) =>
