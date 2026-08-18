@@ -7,6 +7,8 @@ import { BadgeCheck } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { SiteHeader } from "@/components/site-header";
 import { SeatMap } from "@/components/seat-map";
+import { SeatMapSvg } from "@/components/seat-map-svg";
+import { parsePolygon } from "@/lib/seatmap/polygon";
 import { Badge } from "@/components/ui/badge";
 import { isAdmitted } from "@/lib/queue";
 import { getHeldSeats } from "@/lib/seat-hold";
@@ -86,9 +88,28 @@ export default async function SeatsPage({
         rowLabel: s.rowLabel,
         seatNumber: s.seatNumber,
         status,
+        x: s.x,
+        y: s.y,
       };
     }),
   }));
+
+  // ---------- เลือกว่าจะแสดงผังแบบไหน ----------
+  // ผังบนรูปจริง (SVG) ใช้ได้ต่อเมื่อ "ครบทุกชิ้น" เท่านั้น: มีรูป + ทุกโซนมีกรอบ + ทุกที่นั่งมีพิกัด
+  // ขาดชิ้นใดชิ้นหนึ่ง (เช่นแอดมินวาดกรอบไปแค่ 2 จาก 3 โซน) ให้ถอยไปใช้ผังตารางแบบเดิมทั้งหน้า
+  // -> คอนเสิร์ตเก่าที่ยังไม่ได้ทำผัง ทำงานเหมือนเดิมเป๊ะ ไม่มีทางพังจากฟีเจอร์นี้
+  const polygons = new Map(concert.zones.map((z) => [z.id.toString(), parsePolygon(z.polygon)]));
+  const canUseSvgMap =
+    !!concert.layoutImageBase64 &&
+    !!concert.layoutImageWidth &&
+    !!concert.layoutImageHeight &&
+    zonesData.length > 0 &&
+    zonesData.every(
+      (z) =>
+        polygons.get(z.id) !== null &&
+        z.seats.length > 0 &&
+        z.seats.every((s) => s.x !== null && s.y !== null)
+    );
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -113,12 +134,30 @@ export default async function SeatsPage({
           เลือกที่นั่ง — จำกัด {concert.maxTicketsPerUser} ใบต่อบัญชี
         </p>
 
-        <SeatMap
-          zones={zonesData}
-          maxSeats={concert.maxTicketsPerUser}
-          concertId={concert.id.toString()}
-          queueToken={qt!}
-        />
+        {canUseSvgMap ? (
+          <SeatMapSvg
+            zones={zonesData.map((z) => ({
+              ...z,
+              polygon: polygons.get(z.id)!,
+              seats: z.seats.map((s) => ({ ...s, x: s.x!, y: s.y! })),
+            }))}
+            layout={{
+              base64: concert.layoutImageBase64!,
+              width: concert.layoutImageWidth!,
+              height: concert.layoutImageHeight!,
+            }}
+            maxSeats={concert.maxTicketsPerUser}
+            concertId={concert.id.toString()}
+            queueToken={qt!}
+          />
+        ) : (
+          <SeatMap
+            zones={zonesData}
+            maxSeats={concert.maxTicketsPerUser}
+            concertId={concert.id.toString()}
+            queueToken={qt!}
+          />
+        )}
       </main>
     </div>
   );

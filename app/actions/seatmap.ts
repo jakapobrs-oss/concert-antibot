@@ -9,6 +9,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { assertVerifiedAdmin } from "@/lib/admin-guard";
 import { fillPolygonWithSeats, type Polygon } from "@/lib/seatmap/generate";
@@ -247,4 +248,105 @@ export async function deleteZone(input: {
   revalidatePath(`/admin/concerts/${parsed.data.concertId}`);
   revalidatePath(`/admin/concerts/${parsed.data.concertId}/seatmap`);
   return { ok: true, message: `ลบโซน "${zone.name}" แล้ว` };
+}
+
+/**
+ * ตั้งกรอบโซน + จัดตำแหน่งที่นั่ง "เดิม" ลงบนผัง โดยไม่ลบที่นั่งสักที่
+ *
+ * ทำไมต้องมีทั้งที่มี saveZoneWithSeats อยู่แล้ว:
+ *   โซนที่ขายบัตรไปแล้วจะถูกด่านกันเจนทับปฏิเสธตลอดไป (ถูกต้องแล้ว เพราะ "เจน" = ลบทิ้งสร้างใหม่)
+ *   แปลว่าคอนเสิร์ตที่กำลังขายอยู่/ขายไปแล้ว จะไม่มีวันได้ผังรูปจริงเลย
+ *   -> ต้องมีทางที่แตะ "แค่พิกัด" ซึ่งไม่กระทบเงิน = ตัวนี้
+ *
+ * ปลอดภัยเพราะ: ไม่ลบ ไม่สร้าง ไม่แตะ id / rowLabel / seatNumber / status
+ *   ตั๋วที่ลูกค้าถืออยู่ยังชี้ที่นั่ง id เดิม เลขที่นั่งบนตั๋วก็ยังเป็นเลขเดิม
+ *   เปลี่ยนแค่ "จุดบนรูป" ซึ่งเป็นข้อมูลไว้แสดงผลล้วน ๆ
+ */
+export async function assignZoneFrame(input: {
+  concertId: string;
+  zoneId: string;
+  polygon: Polygon;
+}): Promise<SeatmapActionResult> {
+  await assertVerifiedAdmin();
+
+  const parsed = z
+    .object({
+      concertId: idSchema,
+      zoneId: idSchema,
+      polygon: z.array(pointSchema).min(3, "กรอบต้องมีอย่างน้อย 3 จุด").max(60, "กรอบมีจุดมากเกินไป"),
+    })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
+  }
+  const { concertId, zoneId, polygon } = parsed.data;
+
+  const concert = await prisma.concert.findUnique({
+    where: { id: BigInt(concertId) },
+    select: { id: true, layoutImageWidth: true, layoutImageHeight: true },
+  });
+  if (!concert) return { ok: false, error: "ไม่พบคอนเสิร์ตนี้" };
+
+  const zone = await prisma.zone.findUnique({
+    where: { id: BigInt(zoneId) },
+    select: { id: true, name: true, concertId: true },
+  });
+  if (!zone) return { ok: false, error: "ไม่พบโซนนี้" };
+  if (zone.concertId !== concert.id) return { ok: false, error: "โซนนี้ไม่ได้อยู่ในคอนเสิร์ตนี้" };
+
+  const existing = await prisma.seat.findMany({
+    where: { zoneId: zone.id },
+    select: { id: true, rowLabel: true, seatNumber: true },
+  });
+  if (existing.length === 0) {
+    return { ok: false, error: "โซนนี้ยังไม่มีที่นั่ง — ใช้ปุ่มเจนที่นั่งแทน" };
+  }
+
+  const aspectRatio =
+    concert.layoutImageWidth && concert.layoutImageHeight
+      ? concert.layoutImageWidth / concert.layoutImageHeight
+      : 1;
+
+  const generated = fillPolygonWithSeats(polygon as Polygon, {
+    targetCount: existing.length,
+    aspectRatio,
+  });
+  if (generated.length < existing.length) {
+    return {
+      ok: false,
+      error: `กรอบนี้วางได้มากสุด ${generated.length} ที่ แต่โซนนี้มี ${existing.length} ที่ — ขยายกรอบให้ใหญ่ขึ้น`,
+    };
+  }
+
+  // จับคู่ "ที่นั่งเดิม" กับ "ตำแหน่งใหม่" ตามลำดับแถว-เลขที่นั่ง
+  // เรียงตามความยาว label ก่อนแล้วค่อยเทียบตัวอักษร เพราะ A..Z แล้วต่อ AA
+  // ถ้าเรียงแบบ string ล้วน AA จะไปแทรกหน้า B (ผังเพี้ยนทั้งโซน)
+  const byRowThenNumber = <T extends { rowLabel: string; seatNumber: number }>(a: T, b: T) =>
+    a.rowLabel.length - b.rowLabel.length ||
+    a.rowLabel.localeCompare(b.rowLabel) ||
+    a.seatNumber - b.seatNumber;
+
+  const seatsInOrder = [...existing].sort(byRowThenNumber);
+  const spotsInOrder = [...generated].sort(byRowThenNumber);
+
+  // อัปเดตพิกัดทีเดียวทั้งโซนด้วย VALUES เดียว — ถ้ายิงทีละ UPDATE โซนหลายร้อยที่จะชน transaction timeout
+  const rows = seatsInOrder.map((seat, i) =>
+    Prisma.sql`(${seat.id}::bigint, ${spotsInOrder[i].x}::double precision, ${spotsInOrder[i].y}::double precision)`
+  );
+
+  await prisma.$transaction([
+    prisma.$executeRaw`
+      UPDATE seats SET x = v.x, y = v.y
+      FROM (VALUES ${Prisma.join(rows)}) AS v(id, x, y)
+      WHERE seats.id = v.id
+    `,
+    prisma.zone.update({ where: { id: zone.id }, data: { polygon } }),
+  ]);
+
+  revalidatePath(`/admin/concerts/${concertId}`);
+  revalidatePath(`/admin/concerts/${concertId}/seatmap`);
+  return {
+    ok: true,
+    message: `ตั้งกรอบโซน "${zone.name}" แล้ว — จัดตำแหน่งที่นั่งเดิม ${existing.length} ที่ลงบนผัง (ไม่ลบที่นั่ง)`,
+  };
 }

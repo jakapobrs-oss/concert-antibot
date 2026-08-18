@@ -10,13 +10,18 @@
 //    คลิกจากจอไหน ขนาดเท่าไร ก็ได้ค่าเดียวกัน
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ImageUp, Undo2, Trash2, MousePointerClick } from "lucide-react";
+import { ImageUp, Undo2, Trash2, MousePointerClick, Frame } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { saveLayoutImage, saveZoneWithSeats, deleteZone } from "@/app/actions/seatmap";
+import {
+  saveLayoutImage,
+  saveZoneWithSeats,
+  deleteZone,
+  assignZoneFrame,
+} from "@/app/actions/seatmap";
 
 type Point = [number, number];
 
@@ -164,6 +169,26 @@ export function SeatmapEditor({ concertId, layout, zones }: Props) {
     setBusy(false);
     if (result.ok) {
       if (editingZoneId === zone.id) resetForm();
+      startTransition(() => router.refresh());
+    }
+  }
+
+  /**
+   * ตั้งกรอบให้โซนเดิม โดยไม่ลบที่นั่ง — ทางออกเดียวของโซนที่ขายบัตรไปแล้ว
+   * (ปุ่ม "บันทึก + เจนที่นั่งใหม่" จะถูกด่านกันเจนทับปฏิเสธตลอด เพราะเจน = ลบทิ้งสร้างใหม่)
+   */
+  async function handleAssignFrame(zone: ZoneView) {
+    if (points.length < 3) {
+      setFeedback({ ok: false, text: "คลิกบนรูปอย่างน้อย 3 จุดเพื่อวาดกรอบก่อน" });
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    const result = await assignZoneFrame({ concertId, zoneId: zone.id, polygon: points });
+    setFeedback({ ok: result.ok, text: result.ok ? result.message : result.error });
+    setBusy(false);
+    if (result.ok) {
+      resetForm();
       startTransition(() => router.refresh());
     }
   }
@@ -422,6 +447,21 @@ export function SeatmapEditor({ concertId, layout, zones }: Props) {
                         onClick={() => loadZoneForEdit(zone)}
                       >
                         แก้ไข
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        disabled={working || points.length < 3}
+                        title={
+                          points.length < 3
+                            ? "วาดกรอบบนรูปอย่างน้อย 3 จุดก่อน"
+                            : "ย้ายที่นั่งเดิมมาลงกรอบนี้ โดยไม่ลบที่นั่ง (ใช้กับโซนที่ขายบัตรไปแล้ว)"
+                        }
+                        onClick={() => handleAssignFrame(zone)}
+                      >
+                        <Frame className="size-3.5" aria-hidden />
+                        ตั้งกรอบ (คงที่นั่งเดิม)
                       </Button>
                       <Button
                         type="button"
