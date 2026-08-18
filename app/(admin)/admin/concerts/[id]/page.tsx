@@ -1,6 +1,7 @@
 // Admin — รายละเอียดคอนเสิร์ต + จัดการโซน/ที่นั่ง (เบื้องต้น, โทนเวทีมืด)
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Map } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { formatTHB, formatThaiDate } from "@/lib/format";
 import { SiteHeader } from "@/components/site-header";
@@ -82,13 +83,23 @@ export default async function AdminConcertDetailPage({
           )}
         </div>
 
-        <h2 className="mb-3 font-display text-lg font-semibold text-fg">โซนที่นั่ง</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold text-fg">โซนที่นั่ง</h2>
+          <Link href={`/admin/concerts/${id}/seatmap`}>
+            <Button variant="outline" size="sm">
+              <Map className="size-4" aria-hidden />
+              จัดผังที่นั่งจากรูป
+            </Button>
+          </Link>
+        </div>
         {concert.zones.length === 0 ? (
           <div className="rounded-xl border border-dashed border-fg/15 bg-ink-900/60 p-6">
             <p className="text-sm leading-relaxed text-fg-faint">
-              ยังไม่มีโซน — ระบบเพิ่มโซน/ที่นั่งผ่าน UI จะมาใน Phase 3.5
+              ยังไม่มีโซน — กด{" "}
+              <span className="font-medium text-fg-dim">“จัดผังที่นั่งจากรูป”</span>{" "}
+              เพื่ออัปโหลดผังสถานที่แล้ววาดกรอบโซน ระบบจะเจนที่นั่งให้เอง
               <br />
-              ตอนนี้ใช้{" "}
+              หรือใช้{" "}
               <code className="rounded bg-fg/10 px-1.5 py-0.5 font-mono text-xs text-fg-dim">
                 pnpm db:seed
               </code>{" "}
