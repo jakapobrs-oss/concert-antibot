@@ -11,6 +11,7 @@ import { assessRequest } from "@/lib/antibot";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { acquireInflight, releaseInflight } from "@/lib/load-shed";
 import { getClientIp } from "@/lib/get-ip";
+import { checkSaleAccess } from "@/lib/sale-round-guard";
 
 const bodySchema = z.object({
   concertId: z.string().min(1),
@@ -105,6 +106,22 @@ async function handleJoin(req: NextRequest): Promise<NextResponse> {
   }
   if (concert.status !== "ON_SALE") {
     return NextResponse.json({ error: "คอนเสิร์ตนี้ยังไม่เปิดขาย" }, { status: 403 });
+  }
+
+  // 🔒 ด่านรอบกดบัตร (Phase 2) — ซ้อนทับ ON_SALE ไม่ได้มาแทน
+  //   จุดนี้สำคัญที่สุดใน 3 จุด เพราะเป็นประตูบานแรกจริง ๆ ของการซื้อ
+  //   คอนเสิร์ตที่ไม่ได้ตั้งรอบจะผ่านเสมอ -> คอนเสิร์ตเก่าไม่กระทบ
+  const roundAccess = await checkSaleAccess(BigInt(concertId), BigInt(userId));
+  if (!roundAccess.allowed) {
+    return NextResponse.json(
+      {
+        error: roundAccess.message,
+        action: "ROUND_CLOSED",
+        reason: roundAccess.reason,
+        nextOpenAt: roundAccess.nextOpenAt?.toISOString() ?? null,
+      },
+      { status: 403 }
+    );
   }
 
   // ============================================================

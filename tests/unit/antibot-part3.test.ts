@@ -42,6 +42,11 @@ vi.mock("@/lib/load-shed", () => ({ acquireInflight, releaseInflight: vi.fn() })
 vi.mock("@/lib/antibot", () => ({ assessRequest }));
 vi.mock("@/lib/queue", () => ({ joinQueue }));
 vi.mock("@/lib/get-ip", () => ({ getClientIp: () => "1.2.3.4" }));
+// ด่าน "รอบกดบัตร" (Phase 2) แทรกอยู่ใน route เดียวกันแต่ไม่ใช่เรื่องของเทสชุดนี้ → ให้ผ่านเสมอ
+// กติกาของรอบมีเทสของตัวเองที่ tests/unit/sale-round.test.ts + scripts/test-sale-round.ts
+vi.mock("@/lib/sale-round-guard", () => ({
+  checkSaleAccess: vi.fn(async () => ({ allowed: true, round: null })),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     concert: { findUnique: concertFindUnique },

@@ -26,6 +26,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { exceedsTicketLimit, remainingTicketAllowance } from "@/lib/ticket-limit";
 import { isHolderAccountOldEnough, exceedsHolderCap } from "@/lib/holder-policy";
 import { expireStaleOrders } from "@/lib/order-sweeper";
+import { checkSaleAccess } from "@/lib/sale-round-guard";
 import { env } from "@/lib/env";
 
 // F1: rate limit ของ submitSlip — กันยิงสลิปรัวเผาโควต้า EasySlip (500/เดือน) + brute-force สลิป
@@ -73,6 +74,14 @@ export async function holdAndCreateOrder(input: {
   });
   if (!concert || concert.status !== "ON_SALE") {
     return { ok: false, error: "คอนเสิร์ตไม่เปิดขาย" };
+  }
+
+  // 🔒 ด่านรอบกดบัตร (Phase 2) — ด่านสุดท้ายก่อนจับที่นั่งจริง
+  // จุดนี้ห้ามข้าม แม้หน้าเว็บจะเช็คไปแล้ว เพราะคนที่ยิง server action ตรงจะไม่ผ่านหน้าเว็บเลย
+  // และรอบอาจปิดไประหว่างที่ผู้ใช้ค้างอยู่หน้าเลือกที่นั่ง
+  const roundAccess = await checkSaleAccess(BigInt(concertId), BigInt(userId));
+  if (!roundAccess.allowed) {
+    return { ok: false, error: roundAccess.message };
   }
 
   // 🧹 F3: กวาด order ที่หมดเวลาแต่ไม่จ่ายของคอนเสิร์ตนี้ก่อน (คืนที่นั่งที่ค้าง HELD)
@@ -136,6 +145,8 @@ export async function holdAndCreateOrder(input: {
     items: seats.map((s) => ({ seatId: s.id, price: s.zone.price })),
     maxTicketsPerUser: concert.maxTicketsPerUser,
     expiresAt,
+    // บันทึกว่าคำสั่งซื้อนี้เกิดในรอบไหน — ใช้ดูยอดขายแยกรอบทีหลัง ไม่ได้ใช้ตัดสินสิทธิ์
+    saleRoundId: roundAccess.round ? BigInt(roundAccess.round.id) : null,
   });
 
   if (!reserved.ok) {

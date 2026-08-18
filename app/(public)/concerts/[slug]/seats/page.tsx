@@ -11,6 +11,7 @@ import { SeatMapSvg } from "@/components/seat-map-svg";
 import { parsePolygon } from "@/lib/seatmap/polygon";
 import { Badge } from "@/components/ui/badge";
 import { isAdmitted } from "@/lib/queue";
+import { checkSaleAccess } from "@/lib/sale-round-guard";
 import { getHeldSeats } from "@/lib/seat-hold";
 import { auth } from "@/lib/auth";
 
@@ -54,6 +55,25 @@ export default async function SeatsPage({
         <SiteHeader />
         <main className="mx-auto max-w-2xl px-4 py-16 text-center">
           <h1 className="mb-2 font-display text-xl font-semibold text-fg">ยังไม่เปิดขาย</h1>
+          <Link href={`/concerts/${slug}`} className="text-brand-300 underline hover:text-brand-200">
+            ← กลับไปหน้ารายละเอียด
+          </Link>
+        </main>
+      </div>
+    );
+  }
+
+  // 🔒 ด่านรอบกดบัตร (Phase 2) — ซ้อนทับ ON_SALE
+  // ต้องเช็คซ้ำที่นี่แม้ด่านตอนเข้าคิวจะเช็คไปแล้ว เพราะรอบอาจ "ปิดระหว่างที่ยังถือ token อยู่"
+  // (เช่นรอบสมาชิกจบตอนคนยังค้างอยู่หน้านี้) — ถ้าเช็คแค่ตอนเข้าคิวจะซื้อข้ามรอบได้
+  const roundAccess = await checkSaleAccess(concert.id, BigInt(userId));
+  if (!roundAccess.allowed) {
+    return (
+      <div className="flex min-h-screen flex-col">
+        <SiteHeader />
+        <main className="mx-auto max-w-2xl px-4 py-16 text-center">
+          <h1 className="mb-2 font-display text-xl font-semibold text-fg">ยังไม่ถึงรอบของคุณ</h1>
+          <p className="mb-4 text-sm text-fg-faint">{roundAccess.message}</p>
           <Link href={`/concerts/${slug}`} className="text-brand-300 underline hover:text-brand-200">
             ← กลับไปหน้ารายละเอียด
           </Link>

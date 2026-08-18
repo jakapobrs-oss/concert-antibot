@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EqBars } from "@/components/eq-bars";
 import { SetChatContext } from "@/components/chat-context";
+import { SaleRoundTimeline } from "@/components/sale-round-timeline";
 
 export const revalidate = 60;
 
@@ -24,6 +25,7 @@ export default async function ConcertDetailPage({
   const concert = await prisma.concert.findUnique({
     where: { slug },
     include: {
+      saleRounds: { orderBy: { startAt: "asc" } },
       zones: {
         include: {
           _count: { select: { seats: { where: { status: "AVAILABLE" } } } },
@@ -203,6 +205,17 @@ export default async function ConcertDetailPage({
                   </div>
                 )}
               </div>
+
+              {/* ตารางรอบกดบัตร — โชว์เฉพาะคอนเสิร์ตที่แอดมินตั้งรอบไว้ (ตัวคอมโพเนนต์คืน null เองถ้าไม่มีรอบ) */}
+              <SaleRoundTimeline
+                rounds={concert.saleRounds.map((r) => ({
+                  id: r.id.toString(),
+                  name: r.name,
+                  audience: r.audience as "MEMBER_ONLY" | "PUBLIC",
+                  startAt: r.startAt.toISOString(),
+                  endAt: r.endAt.toISOString(),
+                }))}
+              />
 
               <p className="mt-4 flex items-start gap-2 border-t border-fg/10 pt-4 text-xs leading-relaxed text-fg-faint">
                 <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-brand-400" />

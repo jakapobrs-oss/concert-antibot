@@ -1,7 +1,7 @@
 // Admin — รายละเอียดคอนเสิร์ต + จัดการโซน/ที่นั่ง (เบื้องต้น, โทนเวทีมืด)
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Map } from "lucide-react";
+import { CalendarClock, Map } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { formatTHB, formatThaiDate } from "@/lib/format";
 import { SiteHeader } from "@/components/site-header";
@@ -30,6 +30,7 @@ export default async function AdminConcertDetailPage({
   const concert = await prisma.concert.findUnique({
     where: { id: BigInt(id) },
     include: {
+      saleRounds: { select: { id: true } },
       zones: {
         include: { _count: { select: { seats: true } } },
         orderBy: { price: "desc" },
@@ -83,14 +84,25 @@ export default async function AdminConcertDetailPage({
           )}
         </div>
 
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-display text-lg font-semibold text-fg">โซนที่นั่ง</h2>
+        {/* ทางลัดไปงานตั้งค่าของคอนเสิร์ตนี้ — ผังที่นั่ง + รอบกดบัตร (Phase 2) */}
+        <div className="mb-6 flex flex-wrap gap-2">
           <Link href={`/admin/concerts/${id}/seatmap`}>
-            <Button variant="outline" size="sm">
-              <Map className="size-4" aria-hidden />
+            <Button variant="outline" size="sm" leftIcon={<Map className="size-4" />}>
               จัดผังที่นั่งจากรูป
             </Button>
           </Link>
+          <Link href={`/admin/concerts/${id}/rounds`}>
+            <Button variant="outline" size="sm" leftIcon={<CalendarClock className="size-4" />}>
+              ตั้งรอบกดบัตร
+              {concert.saleRounds.length > 0 && (
+                <span className="ml-1 text-fg-faint">({concert.saleRounds.length})</span>
+              )}
+            </Button>
+          </Link>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold text-fg">โซนที่นั่ง</h2>
         </div>
         {concert.zones.length === 0 ? (
           <div className="rounded-xl border border-dashed border-fg/15 bg-ink-900/60 p-6">

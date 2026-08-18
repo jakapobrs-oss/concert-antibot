@@ -294,6 +294,9 @@ export async function reserveSeatsForOrder(params: {
   items: { seatId: bigint; price: Prisma.Decimal }[];
   maxTicketsPerUser: number;
   expiresAt: Date;
+  /** รอบกดบัตรที่คำสั่งซื้อนี้เกิดขึ้น (Phase 2) — null ถ้าคอนเสิร์ตไม่ได้ตั้งรอบ
+   *  เก็บไว้เพื่อดูภายหลังว่ายอดขายมาจากรอบสมาชิกหรือรอบทั่วไป ไม่ได้ใช้ตัดสินสิทธิ์ */
+  saleRoundId?: bigint | null;
   now?: Date; // เปิดให้ test ฉีดเวลาได้
 }): Promise<ReserveResult> {
   const now = params.now ?? new Date();
@@ -332,6 +335,7 @@ export async function reserveSeatsForOrder(params: {
         data: {
           userId: params.userId,
           concertId: params.concertId,
+          saleRoundId: params.saleRoundId ?? null,
           totalAmount,
           status: "PENDING",
           expiresAt: params.expiresAt,
