@@ -38,11 +38,12 @@
 | **7. Infra** | `lib/{env,env-schema,prisma,redis,json,format,get-ip,email}.ts` · `next.config.ts` · `docker-compose.yml` · `.github/workflows/ci.yml` |
 | **(cross-cutting) Named-ticket / anti-scalper** | `lib/{holder-policy,entry-code}.ts` · `components/{holder-assign,ticket-entry-qr,ticket-return-button,checkin-client,refund-actions}.tsx` · `app/actions/tickets.ts` · Prisma `TicketReturn`+`Ticket.holderName/qrSecret/returnedAt` — งานล่าสุด (2026-07-04), **ไม่อยู่ในกรอบ 7-subsystem เดิม** |
 | **(cross-cutting) ผังที่นั่งจากรูปจริง** | `lib/seatmap/{generate,guard,polygon}.ts` · `app/actions/seatmap.ts` · `app/(admin)/admin/concerts/[id]/seatmap/` · `components/{seatmap-editor,seat-map-svg}.tsx` · Prisma `Concert.layoutImage*`+`Zone.polygon`+`Seat.x/y` · tests `tests/unit/seatmap-{generate,render}.test.ts` (39) + `scripts/test-seatmap-{ui,buyer}.ts` (27+18) · doc `docs/20_SEATMAP.md` — งานล่าสุด (2026-08-19, branch `feat/seatmap`). **`components/seat-map.tsx` ตัวเดิมไม่ถูกแก้เลย** เป็นทางถอยเมื่อคอนเสิร์ตยังไม่มีผังรูป |
+| **(cross-cutting) สมาชิก + รอบกดบัตร** | `lib/{membership,sale-round,sale-round-guard}.ts` · `app/actions/{membership,sale-round}.ts` · `app/(admin)/admin/{members,concerts/[id]/rounds}/` · `app/(public)/account/membership/` · `components/{sale-round-editor,sale-round-timeline,membership-admin-actions,membership-signup-button}.tsx` · Prisma `Membership`+`SaleRound`+`Order.saleRoundId` · tests `tests/unit/{membership,sale-round}.test.ts` (16+18) + `scripts/test-sale-round.ts` (22) · doc `docs/21_MEMBERSHIP_ROUNDS.md` — งานล่าสุด (2026-08-19). **"สมาชิกกดก่อน" = รอบเวลาแยก ไม่ใช่แซงคิว** (คิวในรอบยัง FIFO → สถิติ fairness ในเล่มไม่ต้องวัดใหม่) · **หมดอายุคำนวณสด ไม่มี cron → `status=ACTIVE` ไม่ได้แปลว่ายังเป็นสมาชิก ห้ามอ่าน field ตรง ๆ** · บังคับใช้ 3 จุด (queue join / หน้าที่นั่ง / booking action) ผ่าน `checkSaleAccess()` ตัวเดียว |
 | **(cosmetic) UI kit + design tooling** | `components/ui/*` (shadcn-style primitives) · `app/prototype/` (demo/simulation, **ไม่ต่อ Redis จริง อย่าเข้าใจผิดว่าเป็น admission code จริง** — ของจริงคือ `lib/admit-policy.ts`+`lib/queue.ts`) · `.impeccable/`, `.shots/`, `scripts/shoot-design.ts` |
 
 ## Docs — เช็ค staleness ก่อนเชื่อ
 
-`docs/` มี 24 ไฟล์ (20 เลข + 3 ชื่อ + `diagrams/`). **`THESIS_GUIDE.md` ถูกอ้างว่าเป็น canonical แต่ตัวมันเองก็ stale ไปแล้ว** (อ้าง 14 models จริง 15, อ้าง 101/11 test จริง ~176 unit + 8 race scripts). ไฟล์ใหม่สุดที่ตัวเลขน่าเชื่อที่สุดคือ `HANDOFF-security-chapter-for-thesis.md` (181/181 unit, 22/0 race — ยังไม่ได้ commit เข้า git).
+`docs/` มี 26 รายการ (22 เลข + 3 ชื่อ + `diagrams/`). **`THESIS_GUIDE.md` ถูกอ้างว่าเป็น canonical แต่ตัวมันเองก็ stale ไปแล้ว** (อ้าง 14 models จริง 15, อ้าง 101/11 test จริง ~176 unit + 8 race scripts). ไฟล์ใหม่สุดที่ตัวเลขน่าเชื่อที่สุดคือ `HANDOFF-security-chapter-for-thesis.md` (181/181 unit, 22/0 race — ยังไม่ได้ commit เข้า git).
 
 **กฎปฏิบัติ: อย่าเชื่อตัวเลข model/test count จากเอกสารไหนเลย — เช็คจาก `prisma/schema.prisma` ตรงๆ หรือ grep `tests/unit/*.test.ts`/`scripts/test-*.ts` เอง**
 
@@ -69,6 +70,7 @@
 | `18_SECURITY_AUDIT.md` | 10 vuln + fix — **น่าจะถูกแก้แล้วผ่าน Codex review series ทีหลัง แต่ยังไม่ verify ซ้ำ** |
 | `19_NAMED_TICKET_PLAN.md` | anti-scalper design — implement ครบ 3 phase แล้ว (2026-07-04) |
 | `20_SEATMAP.md` | ผังที่นั่งจากรูปสถานที่จริง — **เอกสารใหม่สุด (2026-08-19) ตัวเลขทดสอบมาจากการรันจริง** |
+| `21_MEMBERSHIP_ROUNDS.md` | สิทธิ์สมาชิก + รอบกดบัตร — **เอกสารใหม่สุด (2026-08-19) ตัวเลขทดสอบมาจากการรันจริง** |
 | `SECURITY_TODO.md` | backlog ที่ยังไม่ทำ (bot-score ไม่เช็กตอนซื้อ, Turnstile hostname/action ไม่เช็ก ฯลฯ) |
 | `HANDOFF-security-chapter-for-thesis.md` | **ตัวเลขล่าสุดที่เชื่อได้สุด** (untracked, ยังไม่ commit) |
 
@@ -76,9 +78,9 @@ Root `README.md` (ไม่ใช่ `docs/00_README.md`) **ยังเขี�
 
 ## Test layout
 
-- **Unit**: `tests/unit/*.test.ts` — 24 ไฟล์, 220 cases (รันจริง 2026-08-19), Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
-- **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (10 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลือดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ
-  - 2 ไฟล์ล่าสุดเป็น **เทสผังที่นั่ง** ต้องมี dev server รันอยู่ + ส่ง `E2E_BASE` ถ้าไม่ใช่พอร์ต 3000: `pnpm test:seatmap` (แอดมิน 27 เช็ค) · `pnpm test:seatmap-buyer` (คนซื้อ 18 เช็ค)
+- **Unit**: `tests/unit/*.test.ts` — 26 ไฟล์, 254 cases (รันจริง 2026-08-19), Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
+- **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (11 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลือดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ
+  - 3 ไฟล์ล่าสุดเป็น **เทส Phase 2** ต้องมี dev server รันอยู่ + ส่ง `E2E_BASE` ถ้าไม่ใช่พอร์ต 3000: `pnpm test:seatmap` (แอดมิน 27 เช็ค) · `pnpm test:seatmap-buyer` (คนซื้อ 18 เช็ค) · `pnpm test:sale-round` (สมาชิก+รอบ 22 เช็ค)
 - **Load**: `tests/load/queue.js` (k6) + `tests/load/concurrent-fairness.mjs` (Node/ioredis)
 - **E2E**: `scripts/e2e-booking.ts` (playwright-core) — `package.json`'s `test:e2e` (`playwright test`) **น่าจะใช้ไม่ได้แล้ว** เพราะไม่มี `@playwright/test` ติดตั้ง
 - CI (`.github/workflows/ci.yml`): job 1 = typecheck+vitest (ไม่ต้องมี service), job 2 = spin postgres:16 จริงแล้ว `pnpm test:race`
