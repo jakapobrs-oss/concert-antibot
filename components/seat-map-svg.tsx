@@ -10,13 +10,14 @@
 //
 // 🔑 พิกัดที่นั่งเก็บเป็นสัดส่วน 0-1 ของรูป ไม่ใช่พิกเซล
 //    เปิดจอไหน ขนาดเท่าไร ตำแหน่งบนรูปก็ตรงเดิมเสมอ
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, ZoomIn, ZoomOut } from "lucide-react";
 
 import { formatTHB } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { holdAndCreateOrder } from "@/app/actions/booking";
+import { isSeatLabelLegible, seatOutline } from "@/lib/seatmap/render-hints";
 
 export interface SvgSeat {
   id: string;
@@ -49,9 +50,14 @@ const ZOOM_STEPS = [1, 1.75, 2.5] as const;
 const SEAT_RADIUS_RATIO = 0.2;
 // พื้นที่กดต้องใหญ่กว่าจุดที่มองเห็นมาก ไม่งั้นนิ้วจิ้มไม่โดน (จุดเล็กลงแล้วยิ่งต้องเผื่อ)
 const HIT_RADIUS_RATIO = 0.48;
-// โชว์เลขที่นั่งบนจุดเมื่อซูมพอ + โซนไม่ใหญ่เกิน — บนมือถือไม่มี hover เลยพึ่ง tooltip ไม่ได้
+// ความหนาเส้นขอบจุด = สัดส่วนของรัศมีจุด — ขอบคือสิ่งที่ทำให้จุดไม่กลืนกับรูปผังข้างล่าง
+const SEAT_OUTLINE_RATIO = 0.5;
+// ขนาดตัวอักษรเลขที่นั่ง = สัดส่วนของรัศมีจุด (ค่านี้ใช้ทั้งตอนตัดสินใจว่าจะวาดไหม และตอนวาดจริง)
+const SEAT_LABEL_FONT_RATIO = 1.25;
+// ต้องซูมก่อนถึงจะขึ้นเลขที่นั่ง — ที่ระดับ 1× ตั้งใจให้เห็นภาพรวมผังโล่ง ๆ ไม่รกด้วยตัวเลข
 const LABEL_MIN_ZOOM = 1.75;
-const LABEL_MAX_SEATS = 400;
+// เพดานจำนวนตัวอักษรที่ยอมวาด — กันหน่วงบนผังหลายพันที่ (เหตุผลเดิมของเพดานที่เคยผูกกับที่นั่งรวม)
+const LABEL_MAX_NODES = 1_200;
 
 /**
  * หาระยะห่างระหว่างที่นั่งที่ใกล้ที่สุดในโซน (หน่วยเดียวกับ viewBox)
@@ -114,14 +120,26 @@ export function SeatMapSvg({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [zoomIndex, setZoomIndex] = useState(0);
+  // ที่นั่งที่เมาส์ชี้อยู่ — ใช้บอกว่ากำลังจะกดที่ไหน ตอนที่ผังแน่นจนใส่เลขบนจุดไม่ลง
+  const [hoveredSeat, setHoveredSeat] = useState<string | null>(null);
 
   const viewW = layout.width;
   const viewH = layout.height;
   const zoom = ZOOM_STEPS[zoomIndex];
 
-  // เลขที่นั่งจะอ่านออกก็ต่อเมื่อซูมพอ และถ้าที่นั่งเยอะมากการวาด text ทุกจุดจะหน่วงเปล่า ๆ
-  const totalSeats = zones.reduce((sum, z) => sum + z.seats.length, 0);
-  const showLabels = zoom >= LABEL_MIN_ZOOM && totalSeats <= LABEL_MAX_SEATS;
+  // วัดความกว้างจริงของผังบนจอ (รวมผลของระดับซูมแล้ว)
+  // จำเป็นเพราะจะตัดสินว่า "เลขที่นั่งอ่านออกไหม" ได้ ต้องรู้ขนาดตัวอักษรเป็นพิกเซลจริง
+  const mapRef = useRef<HTMLDivElement>(null);
+  const [renderedWidth, setRenderedWidth] = useState(0);
+  useEffect(() => {
+    const element = mapRef.current;
+    if (!element) return;
+    const measure = () => setRenderedWidth(element.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   // ขนาดจุดคำนวณครั้งเดียวต่อโซน — ไม่ต้องคิดใหม่ทุกครั้งที่เลือกที่นั่ง
   const zoneRadius = useMemo(() => {
@@ -135,6 +153,31 @@ export function SeatMapSvg({
     }
     return map;
   }, [zones, viewW, viewH]);
+
+  /**
+   * ตัดสินรายโซนว่าจะวาดเลขที่นั่งไหม (หลังจากผู้ใช้ซูมแล้วเท่านั้น)
+   *
+   * เดิมตัดสินทั้งผังพร้อมกันจาก "ที่นั่งรวมทั้งผัง ≤ 400" ซึ่งผังสนามจริงไม่มีวันผ่าน
+   * -> ซูมสุดแล้วก็ยังไม่เห็นเลขสักตัว ทั้งที่จุดใหญ่พอจะใส่เลขได้
+   * ตอนนี้ดูขนาดตัวอักษรจริงบนจอเป็นรายโซนแทน -> โซนที่จุดใหญ่พอก็ได้เลข
+   * ส่วนโซนยืนที่อัดกันแน่นก็ไม่ต้องวาด (อ่านไม่ออกอยู่ดี) แล้วยังมีเพดานกันหน่วงกำกับอีกชั้น
+   */
+  const labelledZones = useMemo(() => {
+    const allowed = new Set<string>();
+    if (renderedWidth <= 0 || zoom < LABEL_MIN_ZOOM) return allowed;
+
+    const pxPerUnit = renderedWidth / viewW;
+    let budget = LABEL_MAX_NODES;
+    for (const zone of zones) {
+      const radius = zoneRadius.get(zone.id);
+      if (!radius) continue;
+      if (!isSeatLabelLegible(radius.dot * SEAT_LABEL_FONT_RATIO * pxPerUnit)) continue;
+      if (zone.seats.length > budget) continue;
+      budget -= zone.seats.length;
+      allowed.add(zone.id);
+    }
+    return allowed;
+  }, [zones, zoneRadius, renderedWidth, viewW, zoom]);
 
   // ตำแหน่งวางตัวอักษรแถว (A, B, C) ไว้ซ้ายสุดของแต่ละแถว
   // จำเป็นเพราะบนจุดโชว์ได้แค่ "เลขที่นั่ง" ซึ่งซ้ำกันทุกแถว (ทุกแถวมี 1) ถ้าไม่มีตัวอักษรแถว
@@ -159,7 +202,7 @@ export function SeatMapSvg({
     return map;
   }, [zones, viewW, viewH]);
 
-  function toggleSeat(seat: SvgSeat, zonePrice: number) {
+  function toggleSeat(seat: SvgSeat, zonePrice: number, zoneName: string) {
     if (seat.status !== "AVAILABLE") return; // กดได้เฉพาะที่ว่าง
 
     setSelected((prev) => {
@@ -173,7 +216,12 @@ export function SeatMapSvg({
           return prev;
         }
         setError(null);
-        next.set(seat.id, { price: zonePrice, label: `${seat.rowLabel}${seat.seatNumber}` });
+        // ต้องมีชื่อโซนนำหน้าเสมอ — ผังสนามจริงมีหลายสิบโซน และทุกโซนมีแถว A เลข 1 เหมือนกันหมด
+        // ถ้าโชว์แค่ "I7" ผู้ซื้อจะแยกไม่ออกว่าที่นั่งในตะกร้าอยู่โซนไหน ราคาเท่าไร
+        next.set(seat.id, {
+          price: zonePrice,
+          label: `${zoneName} ${seat.rowLabel}${seat.seatNumber}`,
+        });
       }
       return next;
     });
@@ -183,6 +231,25 @@ export function SeatMapSvg({
     () => Array.from(selected.values()).reduce((a, b) => a + b.price, 0),
     [selected]
   );
+
+  /**
+   * รวมโซนที่ "สีเดียวกัน + ราคาเดียวกัน" เข้าเป็นเรทเดียว
+   *
+   * ที่มา: ผังสนามจริง (อิมแพ็ค อารีน่า) มี 69 โซน แต่มีแค่ 7 เรทราคา
+   * ถ้าไล่โชว์ทีละโซน จะได้ป้ายสีซ้ำ ๆ 69 อันยาว 13 บรรทัด อ่านไม่ออกว่ามีกี่เรท
+   * แยกด้วยสีด้วย ไม่ใช่ราคาอย่างเดียว — เผื่อแอดมินตั้งคนละสีทั้งที่ราคาเท่ากัน
+   * จะได้ไม่โชว์สีเดียวแทนหลายสี (ผู้ซื้อจะเทียบสีบนผังไม่ตรง)
+   */
+  const priceTiers = useMemo(() => {
+    const map = new Map<string, { key: string; price: number; color: string; names: string[] }>();
+    for (const zone of zones) {
+      const key = `${zone.color}|${zone.price}`;
+      const tier = map.get(key);
+      if (tier) tier.names.push(zone.name);
+      else map.set(key, { key, price: zone.price, color: zone.color, names: [zone.name] });
+    }
+    return [...map.values()].sort((a, b) => b.price - a.price || a.color.localeCompare(b.color));
+  }, [zones]);
 
   // hold ที่นั่ง + สร้าง order → ไป checkout (ทางเดินเดียวกับผังแบบเดิมทุกประการ)
   async function handleSubmit() {
@@ -211,7 +278,11 @@ export function SeatMapSvg({
       {/* ---------- ฝั่งซ้าย: ผังบนรูปจริง ---------- */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-fg-faint">แตะที่นั่งว่างบนผังเพื่อเลือก</p>
+          {/* ผังแน่น ๆ ใส่เลขบนจุดไม่ลง — บรรทัดนี้เลยทำหน้าที่บอกว่ากำลังชี้ที่นั่งไหนอยู่ */}
+          <p className="min-w-0 text-sm text-fg-faint">
+            แตะที่นั่งว่างบนผังเพื่อเลือก
+            {hoveredSeat && <span className="ml-2 text-fg">· {hoveredSeat}</span>}
+          </p>
           <div className="flex items-center gap-1.5">
             <Button
               type="button"
@@ -239,7 +310,7 @@ export function SeatMapSvg({
 
         {/* ซูมแล้วเลื่อนดูได้ — ไม่ให้ผังล้นออกนอกหน้าจอ */}
         <div className="overflow-auto rounded-xl border border-fg/10 bg-ink-950">
-          <div className="relative" style={{ width: `${zoom * 100}%` }}>
+          <div ref={mapRef} className="relative" style={{ width: `${zoom * 100}%` }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={layout.base64} alt="ผังที่นั่งของสถานที่จัดงาน" className="block w-full" />
             <svg
@@ -250,6 +321,7 @@ export function SeatMapSvg({
             >
               {zones.map((zone) => {
                 const radius = zoneRadius.get(zone.id) ?? { dot: 6, hit: 10 };
+                const showLabels = labelledZones.has(zone.id);
                 return (
                   <g key={zone.id}>
                     {zone.polygon && zone.polygon.length >= 3 && (
@@ -281,20 +353,25 @@ export function SeatMapSvg({
                       const clickable = seat.status === "AVAILABLE";
                       const cx = seat.x * viewW;
                       const cy = seat.y * viewH;
+                      const fill = seatFill(seat.status, isSelected, zone.color);
+                      const caption = `${zone.name} ${seat.rowLabel}${seat.seatNumber} · ${formatTHB(zone.price)}${clickable ? "" : " (ไม่ว่าง)"}`;
                       return (
                         <g
                           key={seat.id}
-                          onClick={() => toggleSeat(seat, zone.price)}
+                          onClick={() => toggleSeat(seat, zone.price, zone.name)}
+                          onMouseEnter={() => setHoveredSeat(caption)}
+                          onMouseLeave={() => setHoveredSeat((prev) => (prev === caption ? null : prev))}
                           className={clickable ? "cursor-pointer" : "cursor-not-allowed"}
                         >
-                          <title>{`${zone.name} ${seat.rowLabel}${seat.seatNumber} · ${formatTHB(zone.price)}${clickable ? "" : " (ไม่ว่าง)"}`}</title>
+                          <title>{caption}</title>
                           <circle
                             cx={cx}
                             cy={cy}
                             r={radius.dot}
-                            fill={seatFill(seat.status, isSelected, zone.color)}
-                            stroke={isSelected ? zone.color : "transparent"}
-                            strokeWidth={radius.dot * 0.5}
+                            fill={fill}
+                            // เส้นขอบตัดกับสีจุดเสมอ — กันจุดกลืนหายเมื่อสีโซนตรงกับสีในรูปผัง
+                            stroke={seatOutline(fill)}
+                            strokeWidth={radius.dot * SEAT_OUTLINE_RATIO}
                             opacity={clickable || isSelected ? 1 : 0.55}
                           />
                           {showLabels && (
@@ -304,7 +381,7 @@ export function SeatMapSvg({
                               y={cy}
                               textAnchor="middle"
                               dominantBaseline="central"
-                              fontSize={radius.dot * 1.25}
+                              fontSize={radius.dot * SEAT_LABEL_FONT_RATIO}
                               fill={isSelected ? "#18181b" : "#ffffff"}
                               opacity={clickable || isSelected ? 0.9 : 0.4}
                               className="pointer-events-none select-none font-display"
@@ -324,18 +401,18 @@ export function SeatMapSvg({
           </div>
         </div>
 
-        {/* ---------- คำอธิบายสี + ราคาแต่ละโซน ---------- */}
-        <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-fg-faint">
-          {zones.map((zone) => (
-            <span key={zone.id} className="flex items-center gap-1.5">
+        {/* ---------- คำอธิบายสี + ราคา (จัดกลุ่มตามเรทราคาเหมือนผังขายบัตรจริง) ---------- */}
+        <div className="flex flex-col gap-2 text-xs text-fg-faint">
+          {priceTiers.map((tier) => (
+            <div key={tier.key} className="flex items-start gap-2">
               <span
-                className="inline-block size-3 rounded-full"
-                style={{ backgroundColor: zone.color, boxShadow: `0 0 8px ${zone.color}90` }}
+                className="mt-0.5 inline-block size-3 shrink-0 rounded-full"
+                style={{ backgroundColor: tier.color, boxShadow: `0 0 8px ${tier.color}90` }}
                 aria-hidden
               />
-              {zone.name}
-              <span className="text-led text-spot-400">{formatTHB(zone.price)}</span>
-            </span>
+              <span className="text-led w-20 shrink-0 text-spot-400">{formatTHB(tier.price)}</span>
+              <span className="min-w-0 break-words">{tier.names.join(" · ")}</span>
+            </div>
           ))}
         </div>
         <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-fg/10 pt-3 text-xs text-fg-faint">

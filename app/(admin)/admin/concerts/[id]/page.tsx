@@ -11,6 +11,15 @@ import { updateConcertStatus } from "@/app/actions/concert";
 
 export const dynamic = "force-dynamic";
 
+// ป้ายสถานะภาษาไทย (ชุดเดียวกับหน้า list) — หน้านี้เคยโชว์ค่าดิบ ON_SALE ให้แอดมินอ่านเอง
+const statusLabel: Record<string, string> = {
+  DRAFT: "ฉบับร่าง",
+  SCHEDULED: "ตั้งเวลา",
+  ON_SALE: "กำลังขาย",
+  SOLD_OUT: "เต็มแล้ว",
+  ENDED: "จบงาน",
+};
+
 // tone ของ Badge ตามสถานะ (ชุดเดียวกับหน้า list)
 const statusTone = {
   DRAFT: "neutral",
@@ -56,7 +65,7 @@ export default async function AdminConcertDetailPage({
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="font-display text-2xl font-bold text-fg">{concert.title}</h1>
               <Badge tone={statusTone[concert.status as keyof typeof statusTone] ?? "neutral"}>
-                {concert.status}
+                {statusLabel[concert.status] ?? concert.status}
               </Badge>
             </div>
             <p className="mt-1 text-fg-faint">

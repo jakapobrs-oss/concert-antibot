@@ -156,6 +156,99 @@ describe("fillPolygonWithSeats — สัดส่วนภาพ (aspectRatio)"
   });
 });
 
+describe("fillPolygonWithSeats — บล็อกเอียง (ผังสนามจริงวางบล็อกตามความโค้งอัฒจันทร์)", () => {
+  // แถบที่นั่งยาว ๆ บาง ๆ เอียง 30 องศา — ทรงเดียวกับบล็อกวงนอกของอิมแพ็ค อารีน่า
+  const TILT = (30 * Math.PI) / 180;
+  const HALF_LONG = 0.35; // ครึ่งความยาวตามแนวแถว
+  const HALF_SHORT = 0.08; // ครึ่งความหนา (ทิศที่ไล่เป็นแถว)
+  const CENTER: [number, number] = [0.5, 0.5];
+
+  const corner = (u: number, v: number): [number, number] => [
+    CENTER[0] + u * Math.cos(TILT) - v * Math.sin(TILT),
+    CENTER[1] + u * Math.sin(TILT) + v * Math.cos(TILT),
+  ];
+  const TILTED_BAND: Polygon = [
+    corner(-HALF_LONG, -HALF_SHORT),
+    corner(HALF_LONG, -HALF_SHORT),
+    corner(HALF_LONG, HALF_SHORT),
+    corner(-HALF_LONG, HALF_SHORT),
+  ];
+
+  // แปลงพิกัดที่นั่งกลับเป็นแกนของแถบเอง (u = ตามแนวแถว, v = ข้ามแถว)
+  // ⚠️ คำนวณด้วยตรีโกณตรง ๆ ไม่เรียกฟังก์ชันหมุนของตัวระบบ — ไม่งั้นเป็นเทสอ้างอิงตัวเอง
+  const toBandAxis = (seat: { x: number; y: number }) => {
+    const dx = seat.x - CENTER[0];
+    const dy = seat.y - CENTER[1];
+    return {
+      u: dx * Math.cos(TILT) + dy * Math.sin(TILT),
+      v: -dx * Math.sin(TILT) + dy * Math.cos(TILT),
+    };
+  };
+
+  const rowsOf = (seats: { x: number; y: number; rowLabel: string }[]) => {
+    const map = new Map<string, { u: number; v: number }[]>();
+    for (const seat of seats) {
+      const axis = toBandAxis(seat);
+      const bucket = map.get(seat.rowLabel);
+      if (bucket) bucket.push(axis);
+      else map.set(seat.rowLabel, [axis]);
+    }
+    return map;
+  };
+
+  it("จำนวนยังเป๊ะตามที่สั่ง และไม่มีที่นั่งหลุดออกนอกแถบ", () => {
+    const seats = fillPolygonWithSeats(TILTED_BAND, { targetCount: 120 });
+    expect(seats).toHaveLength(120);
+    for (const seat of seats) {
+      const { u, v } = toBandAxis(seat);
+      expect(Math.abs(u)).toBeLessThanOrEqual(HALF_LONG + 1e-6);
+      expect(Math.abs(v)).toBeLessThanOrEqual(HALF_SHORT + 1e-6);
+    }
+  });
+
+  it("แถวต้องขนานไปกับแถบ ไม่พาดเฉียงขวาง (ที่นั่งในแถวเดียวกันอยู่ระดับเดียวกันของแกนสั้น)", () => {
+    // นี่คือหัวใจของบั๊ก: กริดแนวนอนตายตัวทำให้แถวพาดขวางบล็อกเอียง
+    // ขอบโซนกลายเป็นบันไดหยัก และเลขที่นั่งในแถวไม่ได้ไล่ไปตามแนวที่คนเดินจริง
+    const seats = fillPolygonWithSeats(TILTED_BAND, { targetCount: 120 });
+    for (const [, points] of rowsOf(seats)) {
+      const vs = points.map((p) => p.v);
+      expect(Math.max(...vs) - Math.min(...vs)).toBeLessThan(1e-4);
+    }
+  });
+
+  it("ชื่อแถวไล่ข้ามแถบไปทางเดียว (A อยู่ริมด้านหนึ่ง ไล่ไปอีกด้าน)", () => {
+    const seats = fillPolygonWithSeats(TILTED_BAND, { targetCount: 120 });
+    const levels = [...rowsOf(seats).entries()]
+      .sort((a, b) => a[0].length - b[0].length || a[0].localeCompare(b[0]))
+      .map(([, points]) => points[0].v);
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i]).toBeGreaterThan(levels[i - 1]);
+    }
+  });
+
+  it("แถบบางต้องได้ 'แถวน้อย-ที่นั่งต่อแถวเยอะ' เหมือนผังจริง ไม่ใช่แถวเยอะจากการหั่นเฉียง", () => {
+    const seats = fillPolygonWithSeats(TILTED_BAND, { targetCount: 120 });
+    const rows = rowsOf(seats);
+    // อัตราส่วนแถบ = ยาว 0.70 : หนา 0.16 -> ที่นั่งต่อแถวต้องมากกว่าจำนวนแถวหลายเท่า
+    const longest = Math.max(...[...rows.values()].map((r) => r.length));
+    expect(longest).toBeGreaterThan(rows.size * 2);
+  });
+
+  it("กรอบที่วางตรงแนวอยู่แล้ว ต้องไม่ถูกหมุน — ที่นั่งในแถวเดียวกัน y เท่ากันเป๊ะ", () => {
+    // กันเคสที่การหามุมเอียงไป 'เจอ' มุมเล็ก ๆ จากความคลาดเคลื่อน แล้วเอียงผังที่เคยตรงอยู่แล้ว
+    const seats = fillPolygonWithSeats(SQUARE, { targetCount: 200 });
+    const byRow = new Map<string, number[]>();
+    for (const seat of seats) {
+      const bucket = byRow.get(seat.rowLabel);
+      if (bucket) bucket.push(seat.y);
+      else byRow.set(seat.rowLabel, [seat.y]);
+    }
+    for (const [, ys] of byRow) {
+      expect(new Set(ys).size).toBe(1);
+    }
+  });
+});
+
 describe("canRegenerateZoneSeats — 🔴 กันเจนทับที่นั่งที่มีภาระผูกพัน (แตะเงินจริง)", () => {
   it("โซนยังไม่มีที่นั่งเลย เจนได้", () => {
     expect(canRegenerateZoneSeats([]).allowed).toBe(true);

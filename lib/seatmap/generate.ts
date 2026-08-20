@@ -40,6 +40,8 @@ export interface FillOptions {
 const BINARY_SEARCH_ROUNDS = 40;
 // เพดานกันกริดระเบิด (กรณีสั่งจำนวนมหาศาลหรือกรอบผอมมาก) — เกินนี้ถือว่า "แน่นเกินไป"
 const MAX_GRID_POINTS = 250_000;
+// เอียงน้อยกว่านี้ถือว่าตรงแนวอยู่แล้ว — ไม่หมุน เพื่อให้ผังที่วาดตรงแนวได้ผลเดิมเป๊ะ
+const MIN_ROTATE_RAD = (5 * Math.PI) / 180;
 // ปัดพิกัดกี่ตำแหน่งทศนิยม — ละเอียดพอสำหรับรูป 1600px และทำให้ค่าที่เก็บลง DB สะอาด
 const COORD_PRECISION = 6;
 
@@ -63,13 +65,84 @@ export function isPointInPolygon(point: Point, polygon: Polygon): boolean {
   return inside;
 }
 
-/** พื้นที่กรอบ ด้วยสูตร shoelace — ใช้เดาระยะห่างเริ่มต้นก่อน binary search */
-function polygonArea(polygon: Polygon): number {
+/**
+ * พื้นที่กรอบ ด้วยสูตร shoelace — ใช้เดาระยะห่างเริ่มต้นก่อน binary search
+ * และฝั่งแอดมินใช้ประมาณระยะห่างที่นั่งเพื่อเลือกขนาดจุดที่วาดบนผัง
+ */
+export function polygonArea(polygon: Polygon): number {
   let sum = 0;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     sum += (polygon[j][0] + polygon[i][0]) * (polygon[j][1] - polygon[i][1]);
   }
   return Math.abs(sum) / 2;
+}
+
+/**
+ * convex hull ด้วยวิธี monotone chain — ใช้เป็นวัตถุดิบของการหามุมเอียง
+ * (กรอบเว้าอย่างบล็อกที่มีช่องทางเดินเว้า ถ้าไม่ทำ hull ก่อน มุมจะเพี้ยนไปตามรอยเว้า)
+ */
+function convexHull(points: Polygon): Polygon {
+  const sorted = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (sorted.length < 3) return sorted;
+  const cross = (o: Point, a: Point, b: Point) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = (src: Polygon): Polygon => {
+    const out: Point[] = [];
+    for (const p of src) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+      out.push(p);
+    }
+    out.pop();
+    return out;
+  };
+  return [...half(sorted), ...half([...sorted].reverse())];
+}
+
+/**
+ * มุมเอียงของโซน = มุมด้านของ "สี่เหลี่ยมล้อมเล็กสุด" (rotating calipers)
+ *
+ * ที่มา: ผังสนามจริงมีบล็อกวางเอียงตามความโค้งของอัฒจันทร์ ถ้าโปรยที่นั่งด้วยกริดแนวนอนตายตัว
+ * ขอบโซนจะออกมาเป็นบันไดหยัก และแถวจะพาดเฉียงขวางบล็อก ไม่เหมือนผังจริงที่แถวขนานไปกับบล็อก
+ *
+ * คืนค่าเป็นเรเดียนในช่วง (-45°, 45°] เพราะหมุนครบ 90° ได้สี่เหลี่ยมอันเดิม
+ * -> เลือกตัวแทนที่ใกล้แนวนอนที่สุด กริดจะได้ไม่พลิกแกนโดยไม่จำเป็น
+ */
+function orientationOf(polygon: Polygon): number {
+  const hull = convexHull(polygon);
+  if (hull.length < 3) return 0;
+
+  let bestArea = Infinity;
+  let bestAngle = 0;
+  for (let i = 0; i < hull.length; i++) {
+    const [x1, y1] = hull[i];
+    const [x2, y2] = hull[(i + 1) % hull.length];
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const cos = Math.cos(-angle);
+    const sin = Math.sin(-angle);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const [x, y] of hull) {
+      const rx = x * cos - y * sin;
+      const ry = x * sin + y * cos;
+      if (rx < minX) minX = rx;
+      if (rx > maxX) maxX = rx;
+      if (ry < minY) minY = ry;
+      if (ry > maxY) maxY = ry;
+    }
+    const area = (maxX - minX) * (maxY - minY);
+    if (area < bestArea) {
+      bestArea = area;
+      bestAngle = angle;
+    }
+  }
+
+  const quarter = Math.PI / 2;
+  let normalized = bestAngle % quarter;
+  if (normalized > quarter / 2) normalized -= quarter;
+  if (normalized <= -quarter / 2) normalized += quarter;
+  return normalized;
 }
 
 interface BoundingBox {
@@ -216,19 +289,37 @@ function round(value: number): number {
 /**
  * โปรยที่นั่งให้เต็มกรอบ ได้จำนวนเป๊ะตามที่สั่ง
  *
- * ขั้นตอน: หา bounding box -> binary search หาระยะห่าง -> คัดเฉพาะจุดในกรอบ
- *          -> ตัดส่วนเกินจากท้าย (แถวล่างสุด ขวาสุด) -> ตั้งชื่อแถว/เลขที่นั่งใหม่
+ * ขั้นตอน: แปลงเป็นพิกัดตามสัดส่วนจอจริง -> หามุมเอียงของกรอบแล้วหมุนกริดให้ตรงแนวบล็อก
+ *          -> หา bounding box (ในแกนที่หมุนแล้ว) -> binary search หาระยะห่าง
+ *          -> คัดเฉพาะจุดในกรอบ -> เก็บทีละแถวจนครบ (แถวสุดท้ายที่ไม่เต็มจัดไว้กลางแถว)
+ *          -> หมุนพิกัดกลับ + ตั้งชื่อแถว/เลขที่นั่งใหม่
+ *
+ * กรอบที่วางตรงแนวอยู่แล้ว (เอียงน้อยกว่า MIN_ROTATE_RAD) ข้ามขั้นหมุนทั้งหมด
+ * -> ผังเดิมที่เคยเจนไว้ได้ผลลัพธ์เหมือนเดิมทุกจุด
  */
 export function fillPolygonWithSeats(polygon: Polygon, options: FillOptions): GeneratedSeat[] {
   const target = Math.floor(options.targetCount);
   const aspectRatio = options.aspectRatio && options.aspectRatio > 0 ? options.aspectRatio : 1;
   if (target <= 0 || polygon.length < 3) return [];
 
-  const box = boundingBoxOf(polygon);
+  // ทำงานบนพิกัด "ตามสัดส่วนจอจริง" (ยืดแกน X ตามอัตราส่วนรูป)
+  // -> ระยะห่างที่นั่งเท่ากันทั้งสองแกนจริง ๆ และหมุนกรอบได้โดยรูปทรงไม่บิด
+  const screenPolygon: Polygon = polygon.map(([x, y]) => [x * aspectRatio, y]);
+
+  // หมุนกริดให้ตรงแนวบล็อก เฉพาะบล็อกที่เอียงจริง (บล็อกตรงแนวได้ผลเหมือนเดิมทุกจุด)
+  const angle = orientationOf(screenPolygon);
+  const theta = Math.abs(angle) < MIN_ROTATE_RAD ? 0 : angle;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const intoGrid = ([x, y]: Point): Point => [x * cos + y * sin, -x * sin + y * cos];
+
+  const gridPolygon: Polygon = theta === 0 ? screenPolygon : screenPolygon.map(intoGrid);
+  const box = boundingBoxOf(gridPolygon);
   if (box.width <= 0 || box.height <= 0) return [];
 
-  const spacing = findSpacingFor(polygon, box, target, aspectRatio);
-  const points = collectGridPoints(polygon, box, spacing, aspectRatio) ?? [];
+  // ในระบบพิกัดที่หมุนแล้ว สองแกนมีมาตราเดียวกัน จึงไม่ต้องชดเชยอัตราส่วนซ้ำ
+  const spacing = findSpacingFor(gridPolygon, box, target, 1);
+  const points = collectGridPoints(gridPolygon, box, spacing, 1) ?? [];
 
   // จัดกลุ่มตามแถว (แถวบนสุดก่อน) เพื่อเลือกทีละแถวจนครบจำนวนที่สั่ง
   const rows = new Map<number, GridPoint[]>();
@@ -258,12 +349,15 @@ export function fillPolygonWithSeats(polygon: Polygon, options: FillOptions): Ge
   }
 
   // ตั้งชื่อแถวใหม่แบบเรียงต่อเนื่อง (ต้องทำหลังเลือกเสร็จ ไม่งั้นชื่อแถวขาดช่วง เช่น A, B, D)
+  // แล้วหมุนพิกัดกลับ + ยุบแกน X คืนเป็นสัดส่วน 0-1 ของรูป
   const seats: GeneratedSeat[] = [];
   selectedRows.forEach((pointsInRow, rowIndex) => {
     pointsInRow.forEach((point, seatIndex) => {
+      const gx = theta === 0 ? point.x : point.x * cos - point.y * sin;
+      const gy = theta === 0 ? point.y : point.x * sin + point.y * cos;
       seats.push({
-        x: round(point.x),
-        y: round(point.y),
+        x: round(gx / aspectRatio),
+        y: round(gy),
         rowLabel: rowLabelFor(rowIndex),
         seatNumber: seatIndex + 1,
       });
