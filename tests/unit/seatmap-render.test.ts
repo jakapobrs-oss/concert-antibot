@@ -8,7 +8,16 @@
 //                        ถ้าลำดับเพี้ยน ตั๋วที่ลูกค้าถืออยู่จะชี้จุดผิดบนผัง
 import { describe, it, expect } from "vitest";
 import { parsePolygon } from "@/lib/seatmap/polygon";
-import { compareSeatOrder, rowLabelFor } from "@/lib/seatmap/generate";
+import { compareSeatOrder, polygonArea, rowLabelFor } from "@/lib/seatmap/generate";
+import {
+  isSeatLabelLegible,
+  MIN_LABEL_FONT_PX,
+  OUTLINE_DARK,
+  OUTLINE_LIGHT,
+  parseHexColor,
+  relativeLuminance,
+  seatOutline,
+} from "@/lib/seatmap/render-hints";
 
 describe("parsePolygon — ยอมรับเฉพาะกรอบที่ใช้วาดได้จริง", () => {
   it("กรอบสามเหลี่ยม (จุดน้อยสุดที่เป็นรูปปิดได้) ผ่าน", () => {
@@ -138,5 +147,105 @@ describe("compareSeatOrder — ลำดับอ่านผัง (แถว�
     });
     // และแถว AA ต้องได้ y ของแถวล่างสุดจริง ๆ ไม่ใช่ y ของแถวบน
     expect(spotsInOrder[spotsInOrder.length - 1].y).toBe(0.9);
+  });
+});
+
+// ------------------------------------------------------------
+// เทสถอยหลัง (regression) จากการทดสอบด้วยผังขายบัตรจริง
+// ------------------------------------------------------------
+// อาการที่เจอบนจอ: ผังสนามจริง 2,200 ที่นั่ง มองไม่เห็นจุดที่นั่งเลยสักจุด
+//   ต้นเหตุที่ 1 — จุดใช้ "สีโซน" ล้วน ๆ ไม่มีเส้นขอบ พอแอดมินตั้งสีโซนให้ตรงกับสีโซนในรูป
+//                  (ซึ่งเป็นสิ่งที่คนทำโดยธรรมชาติ) จุดจึงกลืนหายไปกับพื้นหลัง
+//   ต้นเหตุที่ 2 — เกณฑ์โชว์เลขที่นั่งผูกกับ "จำนวนที่นั่งรวม ≤ 400" ซึ่งสนามจริงเกินเสมอ
+
+describe("seatOutline — จุดที่นั่งต้องแยกออกจากพื้นหลังได้เสมอ", () => {
+  it("สีแดงเริ่มต้นของฟอร์มโซน (#ef4444 — สีที่ทำให้เกิดบั๊ก) ได้ขอบเข้มที่ตัดกับตัวจุด", () => {
+    expect(seatOutline("#ef4444")).toBe(OUTLINE_DARK);
+  });
+
+  it("สีชมพูของโซนยืน (#ec4899) ก็ได้ขอบเข้มเหมือนกัน", () => {
+    expect(seatOutline("#ec4899")).toBe(OUTLINE_DARK);
+  });
+
+  it("ที่นั่งที่ถูกเลือก (จุดขาว) ได้ขอบเข้ม จึงเด่นที่สุดบนผัง", () => {
+    expect(seatOutline("#ffffff")).toBe(OUTLINE_DARK);
+  });
+
+  it("ที่นั่งที่ขายแล้ว (เทาเข้ม #3f3f46) ได้ขอบสว่าง ไม่จมหายไปกับธีมมืด", () => {
+    expect(seatOutline("#3f3f46")).toBe(OUTLINE_LIGHT);
+  });
+
+  it("ไม่ว่าสีโซนเป็นอะไร ขอบต้องไม่ใช่สีเดียวกับตัวจุด — นี่คือหัวใจของการแก้บั๊ก", () => {
+    const zoneColors = [
+      "#ef4444", "#ec4899", "#f59e0b", "#22c55e",
+      "#3b82f6", "#a855f7", "#ffffff", "#09090b", "#64748b",
+    ];
+    for (const color of zoneColors) {
+      expect(seatOutline(color).toLowerCase()).not.toBe(color.toLowerCase());
+    }
+  });
+
+  it("สีที่อ่านไม่ออกไม่ทำให้พัง — ถือเป็นสีเข้ม แล้วได้ขอบสว่าง", () => {
+    expect(seatOutline("ไม่ใช่สี")).toBe(OUTLINE_LIGHT);
+  });
+});
+
+describe("relativeLuminance / parseHexColor — ฐานของการเลือกสีขอบ", () => {
+  it("ดำสนิท = 0, ขาวสนิท = 1", () => {
+    expect(relativeLuminance("#000000")).toBe(0);
+    expect(relativeLuminance("#ffffff")).toBeCloseTo(1, 6);
+  });
+
+  it("hex 3 หลักย่อ กับ 6 หลัก ให้ค่าเดียวกัน", () => {
+    expect(parseHexColor("#f00")).toEqual([255, 0, 0]);
+    expect(parseHexColor("ff0000")).toEqual([255, 0, 0]);
+  });
+
+  it("ค่าที่ไม่ใช่สี hex คืน null (ไม่โยน error ให้หน้าเว็บพัง)", () => {
+    expect(parseHexColor("rgb(1,2,3)")).toBeNull();
+    expect(parseHexColor("#ff00")).toBeNull();
+    expect(parseHexColor("")).toBeNull();
+  });
+});
+
+describe("isSeatLabelLegible — ตัดสินจากขนาดตัวอักษรจริงบนจอ ไม่ใช่จำนวนที่นั่ง", () => {
+  it("ตัวอักษรเล็กกว่าเกณฑ์ = ไม่วาด (วาดไปก็อ่านไม่ออกและหน่วงเปล่า)", () => {
+    expect(isSeatLabelLegible(MIN_LABEL_FONT_PX - 0.1)).toBe(false);
+  });
+
+  it("ตัวอักษรถึงเกณฑ์ = วาด", () => {
+    expect(isSeatLabelLegible(MIN_LABEL_FONT_PX)).toBe(true);
+  });
+
+  it("ผังใหญ่ 2,200 ที่ ถ้าจุดใหญ่พอก็ยังได้เลข — เกณฑ์เดิมที่ผูกกับจำนวนที่นั่งจะตัดทิ้งทันที", () => {
+    expect(isSeatLabelLegible(12)).toBe(true);
+  });
+
+  it("ค่าที่คำนวณไม่ได้ (ยังวัดขนาดผังไม่เสร็จ) ถือว่าไม่วาด", () => {
+    expect(isSeatLabelLegible(Number.NaN)).toBe(false);
+  });
+});
+
+describe("polygonArea — ฐานของการประมาณความหนาแน่นที่นั่งฝั่งแอดมิน", () => {
+  it("กรอบสี่เหลี่ยมเต็มรูป = พื้นที่ 1", () => {
+    expect(polygonArea([[0, 0], [1, 0], [1, 1], [0, 1]])).toBeCloseTo(1, 9);
+  });
+
+  it("สามเหลี่ยมครึ่งรูป = 0.5", () => {
+    expect(polygonArea([[0, 0], [1, 0], [0, 1]])).toBeCloseTo(0.5, 9);
+  });
+
+  it("วาดทวนเข็มหรือตามเข็มก็ได้พื้นที่เท่ากัน (แอดมินคลิกทิศไหนก็ได้)", () => {
+    const clockwise = polygonArea([[0, 0], [0, 1], [1, 1], [1, 0]]);
+    const counter = polygonArea([[0, 0], [1, 0], [1, 1], [0, 1]]);
+    expect(clockwise).toBeCloseTo(counter, 9);
+  });
+
+  it("โซนยืนรูปครึ่งวงกลม 6 มุมแบบที่วาดจริง ได้พื้นที่มากกว่าศูนย์", () => {
+    const standing: [number, number][] = [
+      [0.08, 0.52], [0.53, 0.52], [0.51, 0.62],
+      [0.42, 0.68], [0.19, 0.68], [0.10, 0.62],
+    ];
+    expect(polygonArea(standing)).toBeGreaterThan(0);
   });
 });

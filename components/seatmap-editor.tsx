@@ -8,14 +8,16 @@
 //
 // 🔑 พิกัดทุกจุดเก็บเป็นสัดส่วน 0-1 ของขนาดรูป ไม่ใช่พิกเซลบนจอ
 //    คลิกจากจอไหน ขนาดเท่าไร ก็ได้ค่าเดียวกัน
-import { useRef, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ImageUp, Undo2, Trash2, MousePointerClick, Frame } from "lucide-react";
+import { ImageUp, Undo2, Trash2, MousePointerClick, Frame, ZoomIn, ZoomOut } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { polygonArea } from "@/lib/seatmap/generate";
+import { seatOutline } from "@/lib/seatmap/render-hints";
 import {
   saveLayoutImage,
   saveZoneWithSeats,
@@ -43,6 +45,16 @@ interface Props {
 
 // ย่อรูปฝั่ง client ก่อนส่ง — ผังสถานที่จริงมักโดด 3-4MB ซึ่งเกิน bodySizeLimit (3mb) ของ server action
 const MAX_UPLOAD_WIDTH = 1600;
+
+// ระดับซูมของผัง — ผังสนามจริงมีโซนย่อยหลายสิบโซน บางโซนกว้างไม่ถึง 20 พิกเซลบนจอ
+// ถ้าวาดมุมกรอบบนรูปย่ออย่างเดียวจะกะขอบโซนไม่ได้เลย (ใช้ระดับเดียวกับฝั่งคนซื้อเพื่อให้คุ้นมือ)
+const ZOOM_STEPS = [1, 1.75, 2.5] as const;
+// รัศมีจุดที่นั่ง = สัดส่วนของระยะห่างระหว่างที่นั่ง — ค่าเดียวกับฝั่งคนซื้อ ผังสองฝั่งจะได้หน้าตาตรงกัน
+// เดิมฝั่งนี้ใช้ค่าคงที่ viewW/260 ซึ่งบนผังจริงจุดโตกว่าระยะห่าง -> จุดเชื่อมกันเป็นแผ่นสีทึบ
+const SEAT_RADIUS_RATIO = 0.2;
+// เพดานล่าง/บนของรัศมีจุด — เล็กกว่านี้มองไม่เห็น ใหญ่กว่านี้บังรูปผังข้างล่าง
+const SEAT_RADIUS_MIN_DIVISOR = 900;
+const SEAT_RADIUS_MAX_DIVISOR = 260;
 
 async function shrinkImage(file: File): Promise<{ base64: string; width: number; height: number }> {
   const bitmap = await createImageBitmap(file);
@@ -87,10 +99,31 @@ export function SeatmapEditor({ concertId, layout, zones }: Props) {
   const [price, setPrice] = useState("1500");
   const [color, setColor] = useState("#ef4444");
   const [seatCount, setSeatCount] = useState("100");
+  const [zoomIndex, setZoomIndex] = useState(0);
 
   // ขนาด viewBox ของ SVG — ใช้ขนาดรูปจริงเพื่อให้อัตราส่วนตรงกับพื้นหลังเป๊ะ
   const viewW = layout.width ?? 1600;
   const viewH = layout.height ?? 900;
+  const zoom = ZOOM_STEPS[zoomIndex];
+
+  /**
+   * รัศมีจุดที่นั่งของแต่ละโซน คิดจากความหนาแน่นจริง
+   *
+   * ประมาณระยะห่างจาก √(พื้นที่กรอบ ÷ จำนวนที่นั่ง) — ไม่ต้องไล่เทียบทุกคู่ให้หน่วง
+   * และแม่นพอสำหรับเลือกขนาดจุด เพราะตัวเจนโปรยที่นั่งเป็นกริดเต็มกรอบอยู่แล้ว
+   */
+  const zoneDotRadius = useMemo(() => {
+    const map = new Map<string, number>();
+    const minRadius = viewW / SEAT_RADIUS_MIN_DIVISOR;
+    const maxRadius = viewW / SEAT_RADIUS_MAX_DIVISOR;
+    for (const zone of zones) {
+      const placed = zone.seats.filter((seat) => seat.x !== null && seat.y !== null).length;
+      const area = zone.polygon ? polygonArea(zone.polygon) * viewW * viewH : 0;
+      const spacing = placed > 0 && area > 0 ? Math.sqrt(area / placed) : maxRadius / SEAT_RADIUS_RATIO;
+      map.set(zone.id, Math.min(maxRadius, Math.max(minRadius, spacing * SEAT_RADIUS_RATIO)));
+    }
+    return map;
+  }, [zones, viewW, viewH]);
 
   function resetForm() {
     setPoints([]);
@@ -200,63 +233,102 @@ export function SeatmapEditor({ concertId, layout, zones }: Props) {
       {/* ---------- ผัง ---------- */}
       <div>
         {layout.base64 ? (
-          <div className="relative overflow-hidden rounded-xl border border-fg/10 bg-ink-950">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={layout.base64} alt="ผังสถานที่จัดงาน" className="block w-full" />
-            <svg
-              viewBox={`0 0 ${viewW} ${viewH}`}
-              className="absolute inset-0 h-full w-full cursor-crosshair"
-              onClick={handleCanvasClick}
-              role="presentation"
-            >
-              {/* โซนที่บันทึกแล้ว + ที่นั่งที่เจนไว้ */}
-              {zones.map((zone) => (
-                <g key={zone.id} opacity={editingZoneId === zone.id ? 0.25 : 1}>
-                  {zone.polygon && zone.polygon.length >= 3 && (
+          <>
+            <div className="mb-2 flex items-center justify-end gap-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="ย่อผัง"
+                disabled={zoomIndex === 0}
+                onClick={() => setZoomIndex((i) => Math.max(0, i - 1))}
+              >
+                <ZoomOut className="size-4" aria-hidden />
+              </Button>
+              <span className="w-10 text-center font-display text-xs text-fg-faint">{zoom}×</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="ขยายผัง"
+                disabled={zoomIndex === ZOOM_STEPS.length - 1}
+                onClick={() => setZoomIndex((i) => Math.min(ZOOM_STEPS.length - 1, i + 1))}
+              >
+                <ZoomIn className="size-4" aria-hidden />
+              </Button>
+            </div>
+            {/* ซูมแล้วต้องเลื่อนดูได้ ไม่งั้นขยายไปก็เห็นแค่มุมซ้ายบน */}
+            <div className="overflow-auto rounded-xl border border-fg/10 bg-ink-950">
+              <div className="relative" style={{ width: `${zoom * 100}%` }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={layout.base64} alt="ผังสถานที่จัดงาน" className="block w-full" />
+                <svg
+                  viewBox={`0 0 ${viewW} ${viewH}`}
+                  className="absolute inset-0 h-full w-full cursor-crosshair"
+                  onClick={handleCanvasClick}
+                  role="presentation"
+                >
+                  {/* โซนที่บันทึกแล้ว + ที่นั่งที่เจนไว้ */}
+                  {zones.map((zone) => {
+                    const dotRadius = zoneDotRadius.get(zone.id) ?? viewW / SEAT_RADIUS_MAX_DIVISOR;
+                    return (
+                      <g key={zone.id} opacity={editingZoneId === zone.id ? 0.25 : 1}>
+                        {zone.polygon && zone.polygon.length >= 3 && (
+                          <polygon
+                            points={zone.polygon
+                              .map(([x, y]) => `${x * viewW},${y * viewH}`)
+                              .join(" ")}
+                            fill={`${zone.color}22`}
+                            stroke={zone.color}
+                            strokeWidth={viewW / 400 / zoom}
+                          />
+                        )}
+                        {zone.seats.map((seat, i) => {
+                          if (seat.x === null || seat.y === null) return null;
+                          const fill = seatFill(seat.status, zone.color);
+                          return (
+                            <circle
+                              key={i}
+                              cx={seat.x * viewW}
+                              cy={seat.y * viewH}
+                              r={dotRadius}
+                              fill={fill}
+                              // ขอบตัดกับสีจุด — บนผังจริงที่โซนถูกระบายสีไว้แล้ว ถ้าไม่มีขอบจุดจะหายไปเลย
+                              stroke={seatOutline(fill)}
+                              strokeWidth={dotRadius * 0.5}
+                            />
+                          );
+                        })}
+                      </g>
+                    );
+                  })}
+
+                  {/* กรอบที่กำลังวาดอยู่ — เส้นและหมุดหารด้วยระดับซูม ให้คงขนาดเท่าเดิมบนจอ
+                      (จุดประสงค์ของการซูมคือวางมุมให้ละเอียดขึ้น หมุดโตตามซูมจะบังตำแหน่งที่จะกด) */}
+                  {points.length >= 2 && (
                     <polygon
-                      points={zone.polygon.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
-                      fill={`${zone.color}22`}
-                      stroke={zone.color}
-                      strokeWidth={viewW / 400}
+                      points={points.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
+                      fill={`${color}33`}
+                      stroke={color}
+                      strokeWidth={viewW / 300 / zoom}
+                      strokeDasharray={`${viewW / 100 / zoom} ${viewW / 160 / zoom}`}
                     />
                   )}
-                  {zone.seats.map((seat, i) =>
-                    seat.x === null || seat.y === null ? null : (
-                      <circle
-                        key={i}
-                        cx={seat.x * viewW}
-                        cy={seat.y * viewH}
-                        r={viewW / 260}
-                        fill={seatFill(seat.status, zone.color)}
-                      />
-                    ),
-                  )}
-                </g>
-              ))}
-
-              {/* กรอบที่กำลังวาดอยู่ */}
-              {points.length >= 2 && (
-                <polygon
-                  points={points.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
-                  fill={`${color}33`}
-                  stroke={color}
-                  strokeWidth={viewW / 300}
-                  strokeDasharray={`${viewW / 100} ${viewW / 160}`}
-                />
-              )}
-              {points.map(([x, y], i) => (
-                <circle
-                  key={i}
-                  cx={x * viewW}
-                  cy={y * viewH}
-                  r={viewW / 180}
-                  fill={color}
-                  stroke="#fff"
-                  strokeWidth={viewW / 700}
-                />
-              ))}
-            </svg>
-          </div>
+                  {points.map(([x, y], i) => (
+                    <circle
+                      key={i}
+                      cx={x * viewW}
+                      cy={y * viewH}
+                      r={viewW / 180 / zoom}
+                      fill={color}
+                      stroke="#fff"
+                      strokeWidth={viewW / 700 / zoom}
+                    />
+                  ))}
+                </svg>
+              </div>
+            </div>
+          </>
         ) : (
           <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-fg/15 bg-ink-900/60 p-10 text-center">
             <ImageUp className="size-8 text-fg-faint" aria-hidden />
