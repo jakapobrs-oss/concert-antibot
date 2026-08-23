@@ -3,7 +3,7 @@
 > **เริ่มอ่านที่ไฟล์นี้ไฟล์เดียว** — รวม "ข้อเท็จจริงที่ถูกต้อง + แผนที่เอกสาร→บทในเล่ม + ER ที่ตรงโค้ด + สิ่งที่ต้องแก้ก่อนเข้าเล่ม" ไว้ที่เดียว
 > โปรเจกต์: **ระบบจองบัตรคอนเสิร์ตที่มีระบบป้องกันบอท** (Next.js 15 + Prisma/PostgreSQL + Redis)
 > อัปเดต: **2026-06-06** · ตรวจเทียบโค้ดจริงด้วย multi-agent audit (พบ **90 จุด**ที่เอกสารไม่ตรงโค้ด)
-> refresh ตัวเลข: **2026-07-16** — หลัง named-ticket (docs/19) + security hardening ครบ 7 subsystem: **15 models · unit 181/181 · race 22/22 · Next 15.5.20** — ตัวเลข verify ล่าสุด+วิธีทวนซ้ำดู `HANDOFF-security-chapter-for-thesis.md`
+> refresh ตัวเลข: **2026-08-20** — หลังระบบสมาชิก (docs/20) Phase 2: **21 models · unit 361/361 · race 22/22 · Next 15.5.20** — ตัวเลข verify ล่าสุด+วิธีทวนซ้ำดู `HANDOFF-security-chapter-for-thesis.md`
 
 ---
 
@@ -31,7 +31,7 @@
 | **Anti-bot กี่ชั้น** | **2 ชั้น** — Layer 1 scoring + Layer 2 behavior | `lib/antibot.ts`, `lib/behavior.ts` | "8 ชั้น" / "4 ชั้น" (00,01,02,03,07,08 + `package.json`) |
 | **Layer 1** | รวม 4 สัญญาณเป็นคะแนนเดียว (Turnstile + UA keyword + header ครบ + มี fingerprint) → score 0-100 → **ALLOW <40 / CHALLENGE 40-69 / BLOCK ≥70** | `lib/antibot.ts:36-37, 69-124` | วาดเป็น 4 ชั้นแยก (TLS/headless/IP-reputation) ที่ไม่มีจริง |
 | **Layer 2** | behavior (เมาส์/timing/entropy) → escalate-only: ยกได้แค่ **ALLOW→CHALLENGE ไม่เคย block** | `lib/behavior.ts`, `app/api/queue/join/route.ts:115-123` | เคลมว่า "จับบอทได้" (จริง = signal เสริม, spoof ได้) |
-| **Unit tests** | **181/181 ผ่าน** (22 ไฟล์, ณ 2026-07-16) | `tests/unit/*.test.ts` · `pnpm test:run` | "9/9" (00,01,08,13,14) — ผิด ~20 เท่า · "101" คือตัวเลข ณ มิ.ย. |
+| **Unit tests** | **361/361 ผ่าน** (29 ไฟล์, ณ 2026-08-21 — สมาชิก 60 + รอบพรีเซล 48 + ซับสคริปชั่น 32 + บัตรหมด 14 + UX ร้านค้า 26 เคส) | `tests/unit/*.test.ts` · `pnpm test:run` | "9/9" (00,01,08,13,14) — ผิด ~20 เท่า · "101" คือตัวเลข ณ มิ.ย. |
 | **Integration tests** | **22/22 ผ่าน** (N1/N3 race + per-payer cap + เคสที่เพิ่มระหว่าง hardening, Postgres จริง) | `scripts/test-n1-race.ts` · `pnpm test:race` | (ไม่เคยกล่าวถึง) |
 | **tsc** | **0 errors** | `pnpm typecheck` | — |
 | **Payment** | **PromptPay QR + EasySlip verify** (fail-closed บน prod) | `lib/promptpay.ts`, `lib/easyslip.ts` | "Stripe / Omise / mock" (02,05,07,08,09) |
@@ -39,7 +39,7 @@
 | **Seat hold** | **Redis SET NX** (TTL 300s) — ไม่ใช่ตาราง DB | `lib/seat-hold.ts:50` | "ตาราง SeatHold" + "Postgres SELECT FOR UPDATE" (ไม่มีในโค้ด) |
 | **คิว (delivery)** | **HTTP polling แบบ backoff** ตามตำแหน่งคิว | `components/waiting-room.tsx`, `app/api/queue/status/route.ts` | "SSE / WebSocket real-time" (01,05,09) — ไม่มีในโค้ด |
 | **คิว (fairness)** | `timeBucket` + `randomScore` (สุ่มในช่วงเวลา ไม่เอาความเร็ว ms) | `prisma/schema.prisma:294-295`, `lib/queue.ts` | — |
-| **Database** | **15 Prisma models** — §3 เขียนตอนยังมี 14: `TicketReturn` (named-ticket, docs/19) เพิ่มทีหลังยังไม่อยู่ใน §3 — นับจริงจาก `prisma/schema.prisma` | `prisma/schema.prisma` | มี "ตารางผี" 6 ตัว: Admin/SeatHold/BehaviorEvent/BotDetectionLog/Report/AuditLog |
+| **Database** | **21 Prisma models** — §3 ข้างล่างเขียนตอนยังมี 14 → **ใช้ [04_ER_DIAGRAM.md](04_ER_DIAGRAM.md) ที่อัปเดต 2026-08-20 แทน** | `prisma/schema.prisma` | มี "ตารางผี" 6 ตัว: Admin/SeatHold/BehaviorEvent/BotDetectionLog/Report/AuditLog |
 | **Authorization** | `role` enum (USER/ADMIN) บน User + `requireAdmin()` + `app/(admin)/layout.tsx` | `prisma/schema.prisma:35,55-58` | "ตาราง Admin แยก" |
 | **Email** | Resend ผ่าน **REST fetch** (ไม่ลง SDK) | `lib/email.ts` | "Resend SDK + react-email" |
 | **Rate limit** | เขียนเอง Redis sliding-window (ZSET) | `lib/rate-limit.ts` | "@upstash/ratelimit" (ไม่มีใน deps) |
@@ -61,9 +61,9 @@ anti-bot 8 ชั้น · SSE/WebSocket · Postgres SELECT FOR UPDATE · Stripe
 |---|---|---|---|
 | **บทที่ 1 — บทนำ / ขอบเขต** | [01_PLAN](01_PLAN.md), [11_REQUIREMENTS](11_REQUIREMENTS.md) | ⚠️ แก้ตัวเลข+ชั้น | — |
 | **บทที่ 2 — ทฤษฎี / งานวิจัยที่เกี่ยวข้อง** | [06_RESEARCH_SUMMARY](06_RESEARCH_SUMMARY.md) | ⚠️ แก้ตารางเทียบ schema | — |
-| **บทที่ 3 — ออกแบบ / วิธีดำเนินงาน** | [04_ER_DIAGRAM](04_ER_DIAGRAM.md), [05_DIAGRAMS](05_DIAGRAMS.md), [03_TOOLS_AND_VERSIONS](03_TOOLS_AND_VERSIONS.md), [10_PAYMENT_PROVIDERS](10_PAYMENT_PROVIDERS.md), [15_PAYMENT_SECURITY](15_PAYMENT_SECURITY.md), [16_PEAK_LOAD](16_PEAK_LOAD.md) | ⚠️ 04/05 ต้องแก้หนัก · 15/16 ดี | `prisma/`, `lib/`, `app/` |
+| **บทที่ 3 — ออกแบบ / วิธีดำเนินงาน** | [04_ER_DIAGRAM](04_ER_DIAGRAM.md), [05_DIAGRAMS](05_DIAGRAMS.md), [03_TOOLS_AND_VERSIONS](03_TOOLS_AND_VERSIONS.md), [10_PAYMENT_PROVIDERS](10_PAYMENT_PROVIDERS.md), [15_PAYMENT_SECURITY](15_PAYMENT_SECURITY.md), [16_PEAK_LOAD](16_PEAK_LOAD.md), [19_NAMED_TICKET_PLAN](19_NAMED_TICKET_PLAN.md), [20_MEMBERSHIP](20_MEMBERSHIP.md), [21_PRESALE_ROUNDS](21_PRESALE_ROUNDS.md), [22_SUBSCRIPTION](22_SUBSCRIPTION.md), [23_SOLD_OUT](23_SOLD_OUT.md), [24_STOREFRONT_UX](24_STOREFRONT_UX.md) | ✅ 04 แก้แล้ว (2026-08-20) · ⚠️ 05 ยังต้องแก้หนัก · 15/16/19–24 ดี | `prisma/`, `lib/`, `app/` |
 | ↳ scope decisions (ของเสริมบทที่ 1/3) | [02_RECOMMENDATIONS](02_RECOMMENDATIONS.md) | ⚠️ mark DONE/ตัด/เลื่อน | — |
-| **บทที่ 4 — ผลการดำเนินงาน** | [13_THESIS_EVALUATION](13_THESIS_EVALUATION.md) | ⚠️ **แก้ตัวเลขก่อน (สำคัญสุด)** | `tests/`, `tests/load/` |
+| **บทที่ 4 — ผลการดำเนินงาน** | [13_THESIS_EVALUATION](13_THESIS_EVALUATION.md), [20_MEMBERSHIP §9.2](20_MEMBERSHIP.md) | ⚠️ **13 ต้องแก้ตัวเลขก่อน (สำคัญสุด)** · 20 §9.2 มีตารางผลพร้อมเข้าเล่ม | `tests/`, `tests/load/` |
 | **บทที่ 5 — สรุป + ข้อเสนอแนะ** | สังเคราะห์จาก §1 + [15 §ข้อจำกัด](15_PAYMENT_SECURITY.md) | ✍️ เขียนใหม่ | — |
 | **ภาคผนวก** | [12_CHANGELOG](12_CHANGELOG.md), [17_GO_LIVE_CHECKLIST](17_GO_LIVE_CHECKLIST.md), screenshots | ✅ | — |
 | **📋 ไม่เข้าเล่ม (process)** | [00_README](00_README.md), [07_RESPONSIBILITIES](07_RESPONSIBILITIES.md), [08_VERIFICATION](08_VERIFICATION.md), [09_LOCAL_PRESENTATION](09_LOCAL_PRESENTATION.md), [14_SCREENSHOTS_GUIDE](14_SCREENSHOTS_GUIDE.md) | 📋 | — |
@@ -72,9 +72,11 @@ anti-bot 8 ชั้น · SSE/WebSocket · Postgres SELECT FOR UPDATE · Stripe
 
 ---
 
-## 3. 🗂️ ER Diagram ที่ถูกต้อง (จาก `prisma/schema.prisma` จริง — 14 models)
+## 3. 🗂️ ER Diagram (ฉบับ 14 models — เก่าแล้ว)
 
-> ⚠️ ER ใน [04_ER_DIAGRAM.md](04_ER_DIAGRAM.md) ปัจจุบัน **ผิด** (มีตารางผี 6 ตัว, ตั้งชื่อ PK/column ผิด) — ใช้รูปด้านล่างนี้แทน
+> ⚠️ **อัปเดต 2026-08-20:** [04_ER_DIAGRAM.md](04_ER_DIAGRAM.md) ถูกแก้ให้ตรง schema จริงแล้ว (**17 models / 12 enums**
+> รวม `TicketReturn`, `Membership`, `SaleRound` + คอลัมน์ผังที่นั่งจากรูป) → **ใช้ไฟล์นั้นเข้าเล่ม**
+> รูปด้านล่างเก็บไว้เป็นฉบับ 14 models ของเดือน ก.ค. (ขาด 3 ตารางใหม่)
 
 ```mermaid
 erDiagram
@@ -252,7 +254,7 @@ erDiagram
 | **ออกตั๋ว / race-safe / per-payer cap** | `lib/order-finalize.ts` (`finalizePaidOrder`) · `lib/payer-key.ts` · `app/actions/booking.ts` · test `scripts/test-n1-race.ts` |
 | **ticket limit (per-user)** | `lib/ticket-limit.ts` (F2) |
 | **Auth / RBAC** | `lib/auth.ts` · `auth.config.ts` · `app/(admin)/layout.tsx` (`requireAdmin`) |
-| **Schema / migrations** | `prisma/schema.prisma` (14 models) · `prisma/migrations/` (6 migrations) |
+| **Schema / migrations** | `prisma/schema.prisma` (21 models) · `prisma/migrations/` (10 migrations) |
 | **CI** | `.github/workflows/ci.yml` (typecheck + unit + integration กับ Postgres) |
 
 > **ความปลอดภัยเรื่องเงิน + ข้อจำกัด (สำหรับบทสรุป/defense):** ดู [15_PAYMENT_SECURITY.md](15_PAYMENT_SECURITY.md) — threat model T1-T10, fix F1-F8/H1-H4/N1-N5, per-payer cap, และ **ข้อจำกัดที่ยอมรับตรง ๆ** (ขบวนการที่มีหลายบัญชีธนาคารจริงยังเลี่ยงได้ → identity binding เป็น future work)

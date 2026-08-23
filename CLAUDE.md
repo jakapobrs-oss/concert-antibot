@@ -12,7 +12,7 @@
 |---|---|
 | Framework | Next.js **15.5.20** (App Router; bump จาก 15.1.0 ปิด CVE 2026-07-14), React 19.0.0, TypeScript 5.6.3, Node ≥22.11 |
 | Package manager | **pnpm 9.15.0** (ไม่มี npm/yarn lockfile) |
-| DB/ORM | **PostgreSQL 16** ผ่าน **Prisma 6.1.0** — schema เดียวที่ `prisma/schema.prisma` (446 บรรทัด, **15 models**) |
+| DB/ORM | **PostgreSQL 16** ผ่าน **Prisma 6.1.0** — schema เดียวที่ `prisma/schema.prisma` (675 บรรทัด, **21 models**) |
 | Cache/Queue/Lock | **Redis** ผ่าน `ioredis` — hand-rolled ทั้งหมด (ไม่ใช่ BullMQ), ใช้ทำ queue/seat-lock/rate-limit/load-shed |
 | Payment | `promptpay-qr`+`qrcode` (สร้าง QR) + EasySlip REST client มือเขียน (`lib/easyslip.ts`) — **ไม่มี Stripe/Omise** แม้เอกสารเก่าบางไฟล์จะพูดถึง |
 | Anti-bot | Cloudflare Turnstile (REST, ไม่มี SDK) + `@fingerprintjs/fingerprintjs` (client, ไม่ต้อง API key) + scoring มือเขียน |
@@ -37,11 +37,16 @@
 | **6. AI-Chat** | `lib/gemini.ts` · `app/api/chat/`, `app/api/admin/chat/` · `components/{chat-widget,chat-context,admin-chat-panel}.tsx` — client ส่ง `history[]` กลับมาเองทุกครั้ง (zod-bounded), server ไม่ persist อะไรเลย |
 | **7. Infra** | `lib/{env,env-schema,prisma,redis,json,format,get-ip,email}.ts` · `next.config.ts` · `docker-compose.yml` · `.github/workflows/ci.yml` |
 | **(cross-cutting) Named-ticket / anti-scalper** | `lib/{holder-policy,entry-code}.ts` · `components/{holder-assign,ticket-entry-qr,ticket-return-button,checkin-client,refund-actions}.tsx` · `app/actions/tickets.ts` · Prisma `TicketReturn`+`Ticket.holderName/qrSecret/returnedAt` — งานล่าสุด (2026-07-04), **ไม่อยู่ในกรอบ 7-subsystem เดิม** |
+| **(cross-cutting) Membership / สมาชิก** | `lib/membership.ts` · `app/actions/{membership,admin-membership}.ts` · `app/(public)/account/membership/` · `app/(admin)/admin/memberships/` · `components/{membership-join-button,admin-membership-actions}.tsx` · Prisma `Membership` · tests `tests/unit/{membership,admin-membership-action}.test.ts` (57 เคส) · doc `docs/20_MEMBERSHIP.md` — **สิทธิ์เดียว = เข้ารอบขายก่อน ไม่แซงคิว/ไม่ลดราคา/ไม่เพิ่มเพดานตั๋ว** |
+| **(cross-cutting) Subscription / แพ็กเกจสมาชิก** | `lib/subscription.ts` · `app/actions/membership.ts` (subscribe/cancel) · `components/subscription-plans.tsx` · Prisma `Subscription` · tests `tests/unit/subscription.test.ts` (32 เคส) · doc `docs/22_SUBSCRIPTION.md` — **ledger แยกจาก `Membership` ที่เป็นสิทธิ์จริง · ยังไม่เก็บเงิน (ทุกแพ็กเกจ 0 บาท)** |
+| **(cross-cutting) Storefront UX / หน้าร้าน** | `lib/{order-view,countdown,concert-filter}.ts` · `app/(public)/account/orders/` · `components/{order-actions,countdown,concert-browser}.tsx` · tests `tests/unit/storefront.test.ts` (26 เคส) · doc `docs/24_STOREFRONT_UX.md` — **ไม่มี migration · order ค้างจ่ายกลับไปจ่ายต่อได้ · นับถอยหลังแล้ว refetch ให้ server ตัดสิน** |
+| **(cross-cutting) Sold out / บัตรหมด** | `lib/sold-out.ts` · hook ใน `lib/order-finalize.ts` (หลังออกตั๋ว) · ด่านใน `app/api/queue/join` + `lib/sale-round.ts` (`DenyReason = SOLD_OUT`) · UI `components/sale-round-panel.tsx` + หน้าคอนเสิร์ต · preset `createStandardRounds` ใน `app/actions/admin-sale-round.ts` · tests `tests/unit/sold-out.test.ts` (14 เคส) · doc `docs/23_SOLD_OUT.md` — **soldOut = ไม่เหลือทั้ง AVAILABLE และ HELD · พลิกสถานะทิศทางเดียว** |
+| **(cross-cutting) Presale rounds / รอบพรีเซล** | `lib/{sale-round,pre-registration,access-code}.ts` · `app/actions/{sale-round,admin-sale-round}.ts` · `app/api/concerts/[concertId]/rounds/` · `components/{sale-round-panel,admin-sale-rounds}.tsx` · Prisma `SaleRound`+`PreRegistration`+`AccessCode`+`AccessCodeRedemption` · tests `tests/unit/{sale-round,access-code}.test.ts` (48 เคส) · doc `docs/21_PRESALE_ROUNDS.md` — ด่านรอบต่อเข้า `app/api/queue/join` + `app/actions/booking.ts` + `lib/order-finalize.ts` แล้ว · **คอนเสิร์ตที่ไม่มีรอบ = พฤติกรรมเดิม** |
 | **(cosmetic) UI kit + design tooling** | `components/ui/*` (shadcn-style primitives) · `app/prototype/` (demo/simulation, **ไม่ต่อ Redis จริง อย่าเข้าใจผิดว่าเป็น admission code จริง** — ของจริงคือ `lib/admit-policy.ts`+`lib/queue.ts`) · `.impeccable/`, `.shots/`, `scripts/shoot-design.ts` |
 
 ## Docs — เช็ค staleness ก่อนเชื่อ
 
-`docs/` มี 24 ไฟล์ (20 เลข + 3 ชื่อ + `diagrams/`). **`THESIS_GUIDE.md` ถูกอ้างว่าเป็น canonical แต่ตัวมันเองก็ stale ไปแล้ว** (อ้าง 14 models จริง 15, อ้าง 101/11 test จริง ~176 unit + 8 race scripts). ไฟล์ใหม่สุดที่ตัวเลขน่าเชื่อที่สุดคือ `HANDOFF-security-chapter-for-thesis.md` (181/181 unit, 22/0 race — ยังไม่ได้ commit เข้า git).
+`docs/` มี 29 ไฟล์ (25 เลข + 3 ชื่อ + `diagrams/`). **`THESIS_GUIDE.md` ถูกอ้างว่าเป็น canonical แต่ตัวมันเองก็ stale ไปแล้ว** (อ้าง 14 models จริง 17, อ้าง 101/11 test จริง 361 unit + 8 race scripts). ไฟล์ใหม่สุดที่ตัวเลขน่าเชื่อที่สุดคือ `HANDOFF-security-chapter-for-thesis.md` (181/181 unit, 22/0 race — ยังไม่ได้ commit เข้า git).
 
 **กฎปฏิบัติ: อย่าเชื่อตัวเลข model/test count จากเอกสารไหนเลย — เช็คจาก `prisma/schema.prisma` ตรงๆ หรือ grep `tests/unit/*.test.ts`/`scripts/test-*.ts` เอง**
 
@@ -51,22 +56,27 @@
 | `01_PLAN.md` | master plan (11/11 phase) — เลขต้องอัปเดต |
 | `02_RECOMMENDATIONS.md` | roadmap 8-layer ที่เป็น **แค่แผน ไม่เคยสร้างจริง** |
 | `03_TOOLS_AND_VERSIONS.md` | มี phantom deps (BullMQ/isbot/Stripe ฯลฯ ที่ไม่เคยลง) |
-| `04_ER_DIAGRAM.md` | ⚠️⚠️ **ผิดชัดเจน** — มี 6 ตาราง "ผี" ที่ไม่มีจริง — ใช้ `prisma/schema.prisma` แทน |
+| `04_ER_DIAGRAM.md` | ✅ อัปเดต 2026-08-20 — ตรง schema จริงแล้ว (17 models/12 enums, เพิ่ม Membership/SaleRound/TicketReturn) |
 | `05_DIAGRAMS.md` | ⚠️⚠️ ยังโชว์ Stripe/SSE/4-layer-antibot ที่ไม่มีจริง |
 | `06_RESEARCH_SUMMARY.md` | อ้างอิงงานวิจัยเดิม (พรชนก ยมรัตน์ ม.รังสิต 2567) ที่ระบบนี้ต่อยอด |
 | `07_RESPONSIBILITIES.md` | process-only, ยังต้องแก้ 8→2 ชั้น |
 | `08_VERIFICATION.md` | **flag ชัดว่า stale/archive** — เขียนก่อนมีโค้ดจริง (2026-05-25), ห้ามเข้าเล่มวิทยานิพนธ์ |
 | `09_LOCAL_PRESENTATION.md` | คู่มือรันสาธิต — ต้องแก้ payment เป็น PromptPay |
 | `10_PAYMENT_PROVIDERS.md` | ทำไมเลือก PromptPay+EasySlip — ยังแม่นยำ |
-| `11_REQUIREMENTS.md` | source of truth ของ requirement ทั้งหมด (rev 3) |
-| `12_CHANGELOG.md` | ประวัติ session — ล่าสุดที่เห็นคือ Revision 17 (2026-06-04), **ไม่รวมงาน named-ticket + 7-part Codex review** (commit ถึง 2026-07-10) |
+| `11_REQUIREMENTS.md` | source of truth ของ requirement ทั้งหมด (rev 4 — เพิ่ม §2.7 สมาชิก M1–M11) |
+| `12_CHANGELOG.md` | ประวัติ session — ล่าสุด Revision 18 (2026-08-20, ระบบสมาชิก) **ยังขาดช่วงงาน named-ticket + 7-part Codex review (ก.ค. 2026)** |
 | `13_THESIS_EVALUATION.md` | ⚠️⚠️ flag สำคัญสุด — สถิติ "inversion 96.8%" มาจาก test script self-referential |
 | `14_SCREENSHOTS_GUIDE.md` | ต้องแก้ "9/9"→"101"+ route param |
 | `15_PAYMENT_SECURITY.md` | threat model T1-T10 + fix F1-F8/H1-H4/N1-N5 — rated current |
 | `16_PEAK_LOAD.md` | load-shedding/backoff — rated current |
 | `17_GO_LIVE_CHECKLIST.md` | runbook ก่อนขึ้น production |
 | `18_SECURITY_AUDIT.md` | 10 vuln + fix — **น่าจะถูกแก้แล้วผ่าน Codex review series ทีหลัง แต่ยังไม่ verify ซ้ำ** |
-| `19_NAMED_TICKET_PLAN.md` | anti-scalper design — **เอกสารใหม่สุด (2026-07-04), implement ครบ 3 phase แล้ว** |
+| `19_NAMED_TICKET_PLAN.md` | anti-scalper design — implement ครบ 3 phase แล้ว (2026-07-04) |
+| `20_MEMBERSHIP.md` | ระบบสมาชิก + สัญญา `getActiveMembership()` (2026-08-20) |
+| `21_PRESALE_ROUNDS.md` | รอบพรีเซล 4 ชั้น + ลงทะเบียนล่วงหน้า + โค้ดสิทธิ์ ตามแพลตฟอร์มจริง (2026-08-20) |
+| `22_SUBSCRIPTION.md` | แพ็กเกจสมาชิก (ledger แยกจากสถานะสิทธิ์) + รอยต่อเปิดเก็บเงินทีหลัง (2026-08-20) |
+| `23_SOLD_OUT.md` | บัตรหมดอัตโนมัติ + รอบทั่วไปไม่เปิดขายเมื่อหมดตั้งแต่รอบสมาชิก (2026-08-20) |
+| `24_STOREFRONT_UX.md` | **เอกสารใหม่สุด (2026-08-21)** — คำสั่งซื้อของฉัน (จ่ายต่อ/ยกเลิก) + นับถอยหลังเปิดขาย + ค้นหางาน |
 | `SECURITY_TODO.md` | backlog ที่ยังไม่ทำ (bot-score ไม่เช็กตอนซื้อ, Turnstile hostname/action ไม่เช็ก ฯลฯ) |
 | `HANDOFF-security-chapter-for-thesis.md` | **ตัวเลขล่าสุดที่เชื่อได้สุด** (untracked, ยังไม่ commit) |
 
@@ -74,7 +84,7 @@ Root `README.md` (ไม่ใช่ `docs/00_README.md`) **ยังเขี�
 
 ## Test layout
 
-- **Unit**: `tests/unit/*.test.ts` — 22 ไฟล์, ~176 cases, Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
+- **Unit**: `tests/unit/*.test.ts` — 29 ไฟล์, 361 cases, Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
 - **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (8 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลืออีก 7 ดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ
 - **Load**: `tests/load/queue.js` (k6) + `tests/load/concurrent-fairness.mjs` (Node/ioredis)
 - **E2E**: `scripts/e2e-booking.ts` (playwright-core) — `package.json`'s `test:e2e` (`playwright test`) **น่าจะใช้ไม่ได้แล้ว** เพราะไม่มี `@playwright/test` ติดตั้ง
