@@ -24,6 +24,7 @@ import { isSlipFresh } from "@/lib/slip-freshness";
 import { MAX_SLIP_BASE64_LEN, isLikelyBase64Image } from "@/lib/slip-image";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { exceedsTicketLimit, remainingTicketAllowance } from "@/lib/ticket-limit";
+import { resolveEntryForUser, effectiveTicketLimit, entryDenyMessage } from "@/lib/sale-round";
 import { isHolderAccountOldEnough, exceedsHolderCap } from "@/lib/holder-policy";
 import { expireStaleOrders } from "@/lib/order-sweeper";
 import { env } from "@/lib/env";
@@ -75,6 +76,16 @@ export async function holdAndCreateOrder(input: {
     return { ok: false, error: "คอนเสิร์ตไม่เปิดขาย" };
   }
 
+  // 🎟️ Phase 2.1 (docs/21): ด่านรอบพรีเซล — ORDER_CREATE
+  //   คอนเสิร์ตที่ไม่มีรอบเลยจะผ่านทันที (พฤติกรรมเดิม) · มีรอบ = ต้องอยู่ในรอบที่ตัวเองมีสิทธิ์
+  //   เช็คซ้ำที่นี่แม้ queue join เช็คไปแล้ว เพราะ token คิวอาจได้มาตอนรอบก่อนหน้าแล้วเพิ่งมากด
+  const entry = await resolveEntryForUser(concertId, userId);
+  if (!entry.ok) return { ok: false, error: entryDenyMessage(entry) };
+  const round = entry.round;
+
+  // เพดานตั๋วที่ใช้จริง — รอบพรีเซลตึงกว่าได้ (เช่น 2 ใบ) แต่ผ่อนให้หลวมกว่าคอนเสิร์ตไม่ได้
+  const ticketMax = effectiveTicketLimit(concert.maxTicketsPerUser, round?.maxTicketsPerUser ?? null);
+
   // 🧹 F3: กวาด order ที่หมดเวลาแต่ไม่จ่ายของคอนเสิร์ตนี้ก่อน (คืนที่นั่งที่ค้าง HELD)
   // ทำตรงนี้เพราะเป็นจังหวะที่มีคนต้องการที่นั่งพอดี — ปล่อยที่นั่งตายให้กลับมาขายได้
   // และยังเคลียร์ order ค้างของ user เองออกจากยอดนับ F2 ด้านล่างด้วย
@@ -94,14 +105,15 @@ export async function holdAndCreateOrder(input: {
       },
     },
   });
-  if (exceedsTicketLimit({ committed, requested: seatIds.length, max: concert.maxTicketsPerUser })) {
-    const remaining = remainingTicketAllowance({ committed, max: concert.maxTicketsPerUser });
+  if (exceedsTicketLimit({ committed, requested: seatIds.length, max: ticketMax })) {
+    const remaining = remainingTicketAllowance({ committed, max: ticketMax });
+    const scope = round && ticketMax < concert.maxTicketsPerUser ? `ใน${round.name}` : "ต่อคอนเสิร์ต";
     return {
       ok: false,
       error:
         remaining > 0
-          ? `จองได้อีกสูงสุด ${remaining} ที่นั่ง (จำกัด ${concert.maxTicketsPerUser} ที่นั่ง/คน ต่อคอนเสิร์ต)`
-          : `คุณจองครบ ${concert.maxTicketsPerUser} ที่นั่ง/คน สำหรับคอนเสิร์ตนี้แล้ว`,
+          ? `จองได้อีกสูงสุด ${remaining} ที่นั่ง (จำกัด ${ticketMax} ที่นั่ง/คน ${scope})`
+          : `คุณจองครบ ${ticketMax} ที่นั่ง/คน ${scope} แล้ว`,
     };
   }
 
@@ -134,7 +146,8 @@ export async function holdAndCreateOrder(input: {
     userId: BigInt(userId),
     concertId: BigInt(concertId),
     items: seats.map((s) => ({ seatId: s.id, price: s.zone.price })),
-    maxTicketsPerUser: concert.maxTicketsPerUser,
+    maxTicketsPerUser: ticketMax,
+    saleRound: round ? { id: BigInt(round.id), seatQuota: round.seatQuota } : null,
     expiresAt,
   });
 
@@ -146,9 +159,13 @@ export async function holdAndCreateOrder(input: {
         ok: false,
         error:
           reserved.remaining > 0
-            ? `จองได้อีกสูงสุด ${reserved.remaining} ที่นั่ง (จำกัด ${concert.maxTicketsPerUser} ที่นั่ง/คน ต่อคอนเสิร์ต)`
-            : `คุณจองครบ ${concert.maxTicketsPerUser} ที่นั่ง/คน สำหรับคอนเสิร์ตนี้แล้ว`,
+            ? `จองได้อีกสูงสุด ${reserved.remaining} ที่นั่ง (จำกัด ${ticketMax} ที่นั่ง/คน)`
+            : `คุณจองครบ ${ticketMax} ที่นั่ง/คน สำหรับคอนเสิร์ตนี้แล้ว`,
       };
+    }
+    if (reserved.reason === "ROUND_QUOTA") {
+      // โควต้าที่นั่งของรอบพรีเซลเต็ม — ที่นั่งยังว่างแต่รอบนี้ขายได้เท่านี้ (รอรอบถัดไป)
+      return { ok: false, error: `โควต้าที่นั่งของ${round?.name ?? "รอบนี้"}เต็มแล้ว กรุณารอรอบถัดไป` };
     }
     if (reserved.reason === "SEAT_TAKEN") {
       return { ok: false, error: "ที่นั่งบางที่เพิ่งถูกจองไป กรุณาเลือกใหม่" };

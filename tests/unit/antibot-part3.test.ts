@@ -23,6 +23,7 @@ const {
   behaviorUpsert,
   botEventCreate,
   queueTokenCreate,
+  saleRoundFindMany,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   checkRateLimit: vi.fn(),
@@ -34,6 +35,8 @@ const {
   behaviorUpsert: vi.fn(),
   botEventCreate: vi.fn(),
   queueTokenCreate: vi.fn(),
+  // Phase 2.1: route เรียกด่านรอบพรีเซล — คืน [] = คอนเสิร์ตนี้ไม่มีรอบ (พฤติกรรมเดิม ไม่กระทบเทสชุดนี้)
+  saleRoundFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
@@ -48,6 +51,7 @@ vi.mock("@/lib/prisma", () => ({
     botEvent: { create: botEventCreate },
     queueToken: { create: queueTokenCreate },
     behaviorSession: { findFirst: behaviorFindFirst, upsert: behaviorUpsert },
+    saleRound: { findMany: saleRoundFindMany },
   },
 }));
 
@@ -69,6 +73,7 @@ describe("§3 join — behavior escalation (loop fix + poison scope)", () => {
     acquireInflight.mockResolvedValue("slot-1");
     checkRateLimit.mockResolvedValue({ allowed: true });
     concertFindUnique.mockResolvedValue({ status: "ON_SALE" });
+    saleRoundFindMany.mockResolvedValue([]); // ไม่มีรอบพรีเซล → ด่านรอบปล่อยผ่าน
     joinQueue.mockResolvedValue({ token: "tok", deduped: false, bucket: 0, random: 0 });
     botEventCreate.mockResolvedValue({});
     queueTokenCreate.mockResolvedValue({});

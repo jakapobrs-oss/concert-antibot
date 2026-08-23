@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { updateConcertStatus } from "@/app/actions/concert";
+import { AdminSaleRounds, type AdminRoundView } from "@/components/admin-sale-rounds";
 
 export const dynamic = "force-dynamic";
 
@@ -33,10 +34,40 @@ export default async function AdminConcertDetailPage({
         include: { _count: { select: { seats: true } } },
         orderBy: { price: "desc" },
       },
+      // Phase 2.1 — รอบกดบัตร + โค้ดสิทธิ์ของรอบพาร์ทเนอร์
+      saleRounds: {
+        include: {
+          accessCodes: { orderBy: { createdAt: "asc" } },
+          _count: { select: { preRegistrations: true, orders: true } },
+        },
+        orderBy: { startAt: "asc" },
+      },
     },
   });
 
   if (!concert) notFound();
+
+  const rounds: AdminRoundView[] = concert.saleRounds.map((r) => ({
+    id: r.id.toString(),
+    name: r.name,
+    audience: r.audience,
+    startAt: r.startAt.toISOString(),
+    endAt: r.endAt.toISOString(),
+    requiresPreRegistration: r.requiresPreRegistration,
+    preRegisterStartAt: r.preRegisterStartAt?.toISOString() ?? null,
+    preRegisterEndAt: r.preRegisterEndAt?.toISOString() ?? null,
+    maxTicketsPerUser: r.maxTicketsPerUser,
+    seatQuota: r.seatQuota,
+    preRegistrationCount: r._count.preRegistrations,
+    orderCount: r._count.orders,
+    codes: r.accessCodes.map((c) => ({
+      id: c.id.toString(),
+      code: c.code,
+      label: c.label,
+      maxUses: c.maxUses,
+      usedCount: c.usedCount,
+    })),
+  }));
 
   return (
     <>
@@ -122,6 +153,8 @@ export default async function AdminConcertDetailPage({
             ))}
           </div>
         )}
+
+        <AdminSaleRounds concertId={concert.id.toString()} rounds={rounds} />
       </main>
     </>
   );

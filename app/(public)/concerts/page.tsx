@@ -1,6 +1,6 @@
 // Concert listing page — แสดงคอนเสิร์ตทั้งหมด (โทนเวทีมืด)
 import { prisma } from "@/lib/prisma";
-import { ConcertCard } from "@/components/concert-card";
+import { ConcertBrowser, type BrowseConcert } from "@/components/concert-browser";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 
@@ -14,6 +14,19 @@ export default async function ConcertsPage() {
   });
 
   const onSaleCount = concerts.filter((c) => c.status === "ON_SALE").length;
+
+  // serialize ให้ client component (BigInt/Decimal ส่งข้ามไม่ได้)
+  const browseList: BrowseConcert[] = concerts.map((c) => ({
+    id: c.id.toString(),
+    title: c.title,
+    slug: c.slug,
+    venue: c.venue,
+    eventAt: c.eventAt.toISOString(),
+    saleStartAt: c.saleStartAt.toISOString(),
+    status: c.status,
+    coverImageUrl: c.coverImageUrl,
+    zones: c.zones.map((z) => ({ price: z.price.toString() })),
+  }));
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -41,11 +54,7 @@ export default async function ConcertsPage() {
             ยังไม่มีคอนเสิร์ตในระบบ
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {concerts.map((c) => (
-              <ConcertCard key={c.id.toString()} concert={c} />
-            ))}
-          </div>
+          <ConcertBrowser concerts={browseList} />
         )}
       </main>
 

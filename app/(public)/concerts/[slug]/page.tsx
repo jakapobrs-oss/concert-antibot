@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EqBars } from "@/components/eq-bars";
 import { SetChatContext } from "@/components/chat-context";
+import { SaleRoundPanel } from "@/components/sale-round-panel";
+import { Countdown } from "@/components/countdown";
 
 export const revalidate = 60;
 
@@ -37,6 +39,9 @@ export default async function ConcertDetailPage({
 
   const isOnSale = concert.status === "ON_SALE";
   const saleNotYet = concert.status === "SCHEDULED";
+  // 🎫 Phase 2.3: บัตรหมดถูกประกาศอัตโนมัติตอนออกตั๋วใบสุดท้าย (lib/sold-out.ts) —
+  //   แยกป้าย "บัตรหมด" ออกจาก "จบงานแล้ว" เพราะผู้ใช้ต้องทำต่างกัน (รอรอบคืนบัตร vs ไม่ต้องรอ)
+  const isSoldOut = concert.status === "SOLD_OUT";
 
   const zonesSummary = concert.zones
     .map((z) => `- ${z.name}: ${Number(z.price).toLocaleString()} บาท (เหลือ ${z._count.seats} ที่นั่ง)`)
@@ -87,7 +92,8 @@ export default async function ConcertDetailPage({
               </Badge>
             )}
             {saleNotYet && <Badge tone="info">เร็ว ๆ นี้</Badge>}
-            {!isOnSale && !saleNotYet && <Badge tone="neutral">ปิดการขาย</Badge>}
+            {isSoldOut && <Badge tone="danger">บัตรหมดแล้ว (SOLD OUT)</Badge>}
+            {!isOnSale && !saleNotYet && !isSoldOut && <Badge tone="neutral">ปิดการขาย</Badge>}
           </div>
 
           <h1
@@ -173,6 +179,9 @@ export default async function ConcertDetailPage({
                 })}
               </div>
             </div>
+
+            {/* รอบกดบัตร (Phase 2.1) — ไม่มีรอบ = ไม่ render อะไรเลย */}
+            <SaleRoundPanel concertId={concert.id.toString()} />
           </div>
 
           {/* แผง CTA แบบ sticky */}
@@ -193,13 +202,23 @@ export default async function ConcertDetailPage({
                     </Button>
                   </Link>
                 ) : saleNotYet ? (
-                  <div className="flex items-center justify-center gap-2 rounded-lg border border-info/20 bg-info/10 px-4 py-3 text-sm font-medium text-info">
-                    <Clock className="size-4" />
-                    เริ่มขาย {formatThaiDate(concert.saleStartAt)}
+                  <div className="space-y-2 rounded-lg border border-info/20 bg-info/10 px-4 py-3 text-center text-sm font-medium text-info">
+                    <p className="flex items-center justify-center gap-2">
+                      <Clock className="size-4" />
+                      เริ่มขาย {formatThaiDate(concert.saleStartAt)}
+                    </p>
+                    {/* ตัวนับถอยหลังฝั่ง client — ผู้ใช้เห็นว่าเหลืออีกเท่าไร ไม่ต้องเดาแล้วกดรีเฟรชรัว */}
+                    <p className="text-led text-base font-bold">
+                      <Countdown targetAt={concert.saleStartAt.toISOString()} prefix="อีก" />
+                    </p>
+                  </div>
+                ) : isSoldOut ? (
+                  <div className="rounded-lg border border-danger/25 bg-danger/10 px-4 py-3 text-center text-sm font-medium text-danger">
+                    บัตรหมดแล้ว (SOLD OUT)
                   </div>
                 ) : (
                   <div className="rounded-lg bg-fg/10 px-4 py-3 text-center text-sm text-fg-dim">
-                    ขายหมดแล้ว / จบงานแล้ว
+                    ปิดการขาย / จบงานแล้ว
                   </div>
                 )}
               </div>

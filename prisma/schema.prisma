@@ -29,37 +29,42 @@ datasource db {
 // ============================================================
 
 model User {
-  id            BigInt    @id @default(autoincrement())
-  email         String    @unique
-  emailVerified DateTime?
-  name          String?
-  phone         String?
-  image         String?
+  id               BigInt    @id @default(autoincrement())
+  email            String    @unique
+  emailVerified    DateTime?
+  name             String?
+  phone            String?
+  image            String?
   // argon2id hash — null ถ้า login ผ่าน Google เท่านั้น
-  passwordHash  String?
-  role          UserRole  @default(USER)
+  passwordHash     String?
+  role             UserRole  @default(USER)
   // คะแนนความน่าเชื่อถือ ใช้ตัดสินใจ anti-bot escalation (0-100)
-  trustScore    Int       @default(50)
+  trustScore       Int       @default(50)
   // กัน brute-force login
-  failedLoginCount Int    @default(0)
-  lockedUntil   DateTime?
-  lastLoginAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  accounts    Account[]
-  sessions    Session[]
-  orders      Order[]
-  queueTokens QueueToken[]
-  tickets     Ticket[]
+  accounts           Account[]
+  sessions           Session[]
+  orders             Order[]
+  queueTokens        QueueToken[]
+  tickets            Ticket[]
   // named ticket: รายการที่นั่งที่ user นี้ถูกตั้งเป็น "ผู้ถือ" (อาจซื้อโดยคนอื่น)
-  heldItems     OrderItem[]    @relation("ItemHolder")
+  heldItems          OrderItem[]            @relation("ItemHolder")
   // คำขอคืนบัตรที่เงินต้องคืนให้ user นี้ (ผู้ซื้อ)
-  ticketReturns TicketReturn[] @relation("ReturnPayer")
+  ticketReturns      TicketReturn[]         @relation("ReturnPayer")
   // ---- Phase 2 (สมาชิก) ----
   membership         Membership?
   // สมาชิกที่ user นี้ (แอดมิน) เป็นคนกดให้สิทธิ์ — audit ว่าใครให้ใคร
-  grantedMemberships Membership[] @relation("MembershipGrantedBy")
+  grantedMemberships Membership[]           @relation("MembershipGrantedBy")
+  // ---- Phase 2.1 (รอบพรีเซล) ----
+  preRegistrations   PreRegistration[]
+  codeRedemptions    AccessCodeRedemption[]
+  // ---- Phase 2.2 (ซับสคริปชั่น) ----
+  subscriptions      Subscription[]
 
   @@index([email])
   @@map("users")
@@ -116,27 +121,27 @@ model VerificationToken {
 // ============================================================
 
 model Concert {
-  id                  BigInt        @id @default(autoincrement())
-  title               String        @db.VarChar(255)
-  slug                String        @unique @db.VarChar(255)
-  description         String        @db.Text
-  coverImageUrl       String?       @db.VarChar(500)
-  venue               String        @db.VarChar(255)
-  eventAt             DateTime
-  saleStartAt         DateTime
-  saleEndAt           DateTime
-  maxTicketsPerUser   Int           @default(4)
+  id                BigInt        @id @default(autoincrement())
+  title             String        @db.VarChar(255)
+  slug              String        @unique @db.VarChar(255)
+  description       String        @db.Text
+  coverImageUrl     String?       @db.VarChar(500)
+  venue             String        @db.VarChar(255)
+  eventAt           DateTime
+  saleStartAt       DateTime
+  saleEndAt         DateTime
+  maxTicketsPerUser Int           @default(4)
   // ---- Phase 2 (ผังจากรูป) ----
   // รูปผังสถานที่เก็บเป็น base64 (แพทเทิร์นเดียวกับ Payment.slipImageUrl — ไม่ได้ใช้ MinIO/S3)
   // ย่อฝั่ง client ก่อนส่งเสมอ (กว้าง ~1600px, webp) ไม่งั้นชน serverActions.bodySizeLimit = 3mb
-  layoutImageBase64   String?       @db.Text
+  layoutImageBase64 String?       @db.Text
   // ขนาดรูปหลังย่อ (px) — จำเป็นเพราะพิกัดที่นั่งเก็บเป็น "สัดส่วน 0-1" ไม่ใช่พิกเซล
   // ต้องรู้ w/h ไว้ตั้ง viewBox ของ SVG ให้อัตราส่วนตรงรูป ไม่งั้นผังยืด/บี้ตอน render
-  layoutImageWidth    Int?
-  layoutImageHeight   Int?
-  status              ConcertStatus @default(DRAFT)
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  layoutImageWidth  Int?
+  layoutImageHeight Int?
+  status            ConcertStatus @default(DRAFT)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   zones       Zone[]
   orders      Order[]
@@ -149,11 +154,11 @@ model Concert {
 }
 
 enum ConcertStatus {
-  DRAFT       // กำลังเตรียม
-  SCHEDULED   // ตั้งเวลาขายแล้ว
-  ON_SALE     // กำลังขาย
-  SOLD_OUT    // ขายหมด
-  ENDED       // จบงานแล้ว
+  DRAFT // กำลังเตรียม
+  SCHEDULED // ตั้งเวลาขายแล้ว
+  ON_SALE // กำลังขาย
+  SOLD_OUT // ขายหมด
+  ENDED // จบงานแล้ว
 }
 
 model Zone {
@@ -189,11 +194,11 @@ model Seat {
   y          Float?
   createdAt  DateTime   @default(now())
 
-  zone       Zone        @relation(fields: [zoneId], references: [id], onDelete: Cascade)
-  orderItem  OrderItem?
+  zone      Zone       @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  orderItem OrderItem?
   // 1 ที่นั่งมีได้หลายตั๋ว "ในประวัติ" (ตั๋วที่ถูกคืนแล้ว + ตั๋วปัจจุบัน) — ตั๋ว active
   // ถูกบังคับใบเดียวด้วย partial unique index (WHERE returnedAt IS NULL) ใน migration
-  tickets    Ticket[]
+  tickets   Ticket[]
 
   @@unique([zoneId, rowLabel, seatNumber])
   @@index([zoneId, status])
@@ -202,9 +207,9 @@ model Seat {
 
 enum SeatStatus {
   AVAILABLE
-  HELD      // มี hold (Redis lock) — sync มาที่นี่ตอน confirm
+  HELD // มี hold (Redis lock) — sync มาที่นี่ตอน confirm
   SOLD
-  BLOCKED   // admin ปิดที่นั่งนี้
+  BLOCKED // admin ปิดที่นั่งนี้
 }
 
 // ============================================================
@@ -220,18 +225,18 @@ model Order {
   status      OrderStatus @default(PENDING)
   createdAt   DateTime    @default(now())
   paidAt      DateTime?
-  expiresAt   DateTime    // ถ้า pending เกินเวลานี้ → cancel auto
+  expiresAt   DateTime // ถ้า pending เกินเวลานี้ → cancel auto
   // ---- Phase 2 (รอบขาย) ----
   // รอบที่ order นี้เกิด — เก็บไว้ audit/สถิติในเล่ม (แยกยอดรอบสมาชิก vs รอบทั่วไป)
   // ⚠️ ไม่มี logic ไหนอ่าน field นี้ตัดสินใจ — เพดานตั๋วยังนับ "รวมทุกรอบ" ต่อคอนเสิร์ตเหมือนเดิม
   saleRoundId BigInt?
 
-  user      User       @relation(fields: [userId], references: [id])
-  concert   Concert    @relation(fields: [concertId], references: [id])
-  saleRound SaleRound? @relation(fields: [saleRoundId], references: [id], onDelete: SetNull)
-  items   OrderItem[]
-  payment Payment?
-  tickets Ticket[]
+  user      User        @relation(fields: [userId], references: [id])
+  concert   Concert     @relation(fields: [concertId], references: [id])
+  saleRound SaleRound?  @relation(fields: [saleRoundId], references: [id], onDelete: SetNull)
+  items     OrderItem[]
+  payment   Payment?
+  tickets   Ticket[]
 
   @@index([userId, status])
   @@index([status, expiresAt])
@@ -240,17 +245,17 @@ model Order {
 }
 
 enum OrderStatus {
-  PENDING     // รอจ่ายเงิน
-  PAID        // จ่ายแล้ว ออกตั๋วแล้ว
-  CANCELLED   // ยกเลิก / timeout
-  REFUNDED    // คืนเงิน
+  PENDING // รอจ่ายเงิน
+  PAID // จ่ายแล้ว ออกตั๋วแล้ว
+  CANCELLED // ยกเลิก / timeout
+  REFUNDED // คืนเงิน
 }
 
 model OrderItem {
-  id      BigInt  @id @default(autoincrement())
-  orderId BigInt
-  seatId  BigInt  @unique // 1 ที่นั่ง 1 order item
-  price   Decimal @db.Decimal(10, 2) // snapshot ราคา
+  id           BigInt  @id @default(autoincrement())
+  orderId      BigInt
+  seatId       BigInt  @unique // 1 ที่นั่ง 1 order item
+  price        Decimal @db.Decimal(10, 2) // snapshot ราคา
   // named ticket: ผู้ถือบัตรของที่นั่งนี้ — commit ตอน checkout ก่อนจ่าย แก้ไม่ได้หลังจ่าย
   // null = ยังไม่ระบุ (default ตอนออกตั๋ว = ผู้ซื้อ)
   holderUserId BigInt?
@@ -269,23 +274,23 @@ model OrderItem {
 // ============================================================
 // Payment — บันทึกการชำระเงิน (PromptPay + EasySlip verify)
 model Payment {
-  id          BigInt        @id @default(autoincrement())
-  orderId     BigInt        @unique // 1 order 1 payment
-  method      PaymentMethod @default(PROMPTPAY)
-  amount      Decimal       @db.Decimal(10, 2)
-  currency    String        @default("THB") @db.VarChar(3)
-  status      PaymentStatus @default(PENDING)
+  id            BigInt        @id @default(autoincrement())
+  orderId       BigInt        @unique // 1 order 1 payment
+  method        PaymentMethod @default(PROMPTPAY)
+  amount        Decimal       @db.Decimal(10, 2)
+  currency      String        @default("THB") @db.VarChar(3)
+  status        PaymentStatus @default(PENDING)
   // ref จาก slip (transaction id ของธนาคาร) — UNIQUE กันใช้สลิปซ้ำ
-  slipRef     String?       @unique @db.VarChar(255)
-  slipImageUrl String?      @db.VarChar(500) // เก็บใน MinIO
-  senderName  String?       @db.VarChar(255) // ชื่อผู้โอน (จาก EasySlip)
+  slipRef       String?       @unique @db.VarChar(255)
+  slipImageUrl  String?       @db.VarChar(500) // เก็บใน MinIO
+  senderName    String?       @db.VarChar(255) // ชื่อผู้โอน (จาก EasySlip)
   // เลขบัญชี/พร็อกซีผู้จ่าย (จาก EasySlip — มัก masked เช่น xxx-x-x1234-5)
-  senderAccount String?     @db.VarChar(255)
+  senderAccount String?       @db.VarChar(255)
   // คีย์ผู้จ่ายที่ normalize แล้ว (acct:<เลข> หรือ name:<ชื่อ>) — ใช้ทำ "per-payer cap"
   //   กันขบวนการบอทปั๊มหลาย account แต่จ่ายจากบัญชีธนาคารเดียว (ชั้นที่ปลอมไม่ได้ = โอนเงินจริง)
-  payerKey    String?       @db.VarChar(255)
-  paidAt      DateTime?
-  createdAt   DateTime      @default(now())
+  payerKey      String?       @db.VarChar(255)
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
@@ -300,10 +305,10 @@ enum PaymentMethod {
 }
 
 enum PaymentStatus {
-  PENDING   // รอโอน + upload สลิป
+  PENDING // รอโอน + upload สลิป
   VERIFYING // กำลัง verify สลิป
-  SUCCESS   // ยืนยันแล้ว เงินเข้า
-  FAILED    // สลิปผิด / ยอดไม่ตรง
+  SUCCESS // ยืนยันแล้ว เงินเข้า
+  FAILED // สลิปผิด / ยอดไม่ตรง
   // Codex #3: เงินเข้าจริง (สลิปผ่าน verify) แต่ออกตั๋วไม่ได้ (order ตาย/ที่นั่งหลุด/ชน payer cap)
   // → ทีมงานต้องคืนเงินด้วยมือ — เก็บใน DB ให้ตามได้ ไม่ใช่แค่ console log
   REFUND_REQUIRED
@@ -313,21 +318,21 @@ enum PaymentStatus {
 // Ticket — ตั๋วที่ออกหลังจ่ายเงินสำเร็จ
 // named ticket: userId = "ผู้ถือ" (holder — default คือผู้ซื้อ), Order.userId = ผู้ซื้อ (payer)
 model Ticket {
-  id       BigInt   @id @default(autoincrement())
-  orderId  BigInt
+  id          BigInt    @id @default(autoincrement())
+  orderId     BigInt
   // ⚠️ unique เฉพาะตั๋วที่ยังไม่ถูกคืน — partial unique index "tickets_seatId_active_key"
   //    (WHERE returnedAt IS NULL) สร้างใน migration เพราะ Prisma ไม่รองรับ partial index ใน schema
-  seatId   BigInt
-  userId   BigInt
-  qrCode   String   @unique @db.VarChar(255) // legacy static QR (Phase 3 เปลี่ยนเป็น dynamic แล้ว)
-  price    Decimal  @db.Decimal(10, 2)
-  issuedAt DateTime @default(now())
+  seatId      BigInt
+  userId      BigInt
+  qrCode      String    @unique @db.VarChar(255) // legacy static QR (Phase 3 เปลี่ยนเป็น dynamic แล้ว)
+  price       Decimal   @db.Decimal(10, 2)
+  issuedAt    DateTime  @default(now())
   // snapshot ชื่อผู้ถือ ณ ตอนออกตั๋ว — จนท.หน้างานใช้เทียบบัตรประชาชน (ชื่อบนบัตรแก้ไม่ได้)
-  holderName  String   @default("")
+  holderName  String    @default("")
   // check-in กันใช้ซ้ำ: 1 บัตรสแกนเข้าได้ครั้งเดียว
   checkedInAt DateTime?
   // secret สำหรับ dynamic QR (HMAC หมุนตามเวลา) — ห้ามส่งไป client เด็ดขาด
-  qrSecret    String   @default("")
+  qrSecret    String    @default("")
   // คืนบัตรเข้าระบบแล้ว (ที่นั่งกลับเข้า pool) — ตั๋วใบนี้ใช้เข้างานไม่ได้อีก
   returnedAt  DateTime?
 
@@ -364,7 +369,7 @@ model TicketReturn {
 }
 
 enum RefundStatus {
-  PENDING  // รอทีมงานโอนเงินคืน
+  PENDING // รอทีมงานโอนเงินคืน
   REFUNDED // คืนเงินแล้ว (admin กดยืนยัน)
 }
 
@@ -380,12 +385,12 @@ model QueueToken {
   id              BigInt           @id @default(autoincrement())
   token           String           @unique @db.VarChar(64) // secure random — client ถือไว้
   concertId       BigInt
-  userId          BigInt?          // null ได้ถ้ายังไม่ login (กันคิวด้วย fingerprint)
+  userId          BigInt? // null ได้ถ้ายังไม่ login (กันคิวด้วย fingerprint)
   fingerprintHash String?          @db.VarChar(64) // ผูกกับ device กัน 1 คนถือหลาย slot
   ip              String?          @db.VarChar(45)
   // fairness fields — เก็บไว้พิสูจน์ว่าไม่ลำเอียงใน thesis
-  timeBucket      BigInt           // window ที่เข้าคิว (epoch ms / bucketSize) — คนใน bucket เดียวกันเสมอภาค
-  randomScore     Int              // 0-999999 สุ่มภายใน bucket → ตัดสินลำดับแบบสุ่ม ไม่เอาความเร็วระดับ ms
+  timeBucket      BigInt // window ที่เข้าคิว (epoch ms / bucketSize) — คนใน bucket เดียวกันเสมอภาค
+  randomScore     Int // 0-999999 สุ่มภายใน bucket → ตัดสินลำดับแบบสุ่ม ไม่เอาความเร็วระดับ ms
   status          QueueTokenStatus @default(WAITING)
   position        Int? // ตำแหน่งล่าสุดที่ snapshot (อาจ stale — ดู Redis สำหรับ real-time)
   enteredAt       DateTime         @default(now())
@@ -401,11 +406,11 @@ model QueueToken {
 }
 
 enum QueueTokenStatus {
-  WAITING   // อยู่ในห้องรอ
-  ADMITTED  // ถูกปล่อยให้เข้าเลือกที่นั่งแล้ว
-  EXPIRED   // หมดเวลา admit ไม่ทันใช้
+  WAITING // อยู่ในห้องรอ
+  ADMITTED // ถูกปล่อยให้เข้าเลือกที่นั่งแล้ว
+  EXPIRED // หมดเวลา admit ไม่ทันใช้
   CONVERTED // ใช้ token แล้ว (ไปจองสำเร็จ)
-  LEFT      // ออกจากคิวเอง
+  LEFT // ออกจากคิวเอง
 }
 
 // ============================================================
@@ -416,11 +421,11 @@ enum QueueTokenStatus {
 //   - thesis วิเคราะห์ false positive rate / สัดส่วน bot vs human
 //   - audit ย้อนหลังว่าทำไม request ถูก block/challenge
 model BotEvent {
-  id              BigInt        @id @default(autoincrement())
-  userId          BigInt?       // null ถ้ายังไม่ login
-  ip              String?       @db.VarChar(45)
-  userAgent       String?       @db.VarChar(500)
-  fingerprintHash String?       @db.VarChar(64)
+  id              BigInt    @id @default(autoincrement())
+  userId          BigInt? // null ถ้ายังไม่ login
+  ip              String?   @db.VarChar(45)
+  userAgent       String?   @db.VarChar(500)
+  fingerprintHash String?   @db.VarChar(64)
   // คะแนน 0-100 (ยิ่งสูงยิ่งน่าจะเป็นบอท) — รวมจากทุกสัญญาณ
   score           Int
   // ผลการตัดสินใจ
@@ -428,8 +433,8 @@ model BotEvent {
   // signals ที่ fire (เก็บเป็น JSON: { "turnstile": "pass", "ua": "suspicious", ... })
   signals         Json
   // จุดที่ตรวจ (queue_join / seat_select / ...) — ขยายได้
-  checkpoint      String        @default("queue_join") @db.VarChar(50)
-  createdAt       DateTime      @default(now())
+  checkpoint      String    @default("queue_join") @db.VarChar(50)
+  createdAt       DateTime  @default(now())
 
   @@index([createdAt])
   @@index([action, createdAt])
@@ -437,9 +442,9 @@ model BotEvent {
 }
 
 enum BotAction {
-  ALLOW     // ผ่าน — score ต่ำ
+  ALLOW // ผ่าน — score ต่ำ
   CHALLENGE // ให้ทำ CAPTCHA/ยืนยันเพิ่ม — score กลาง (กัน false positive)
-  BLOCK     // ปฏิเสธ — score สูงมาก
+  BLOCK // ปฏิเสธ — score สูงมาก
 }
 
 // ============================================================
@@ -485,6 +490,9 @@ model Membership {
   userId          BigInt           @unique
   status          MembershipStatus @default(ACTIVE)
   source          MembershipSource @default(SELF_SIGNUP)
+  // ระดับสมาชิก (Phase 2.1) — ชั้นสิทธิ์ ไม่ใช่ชั้นราคา: สมัครเองได้ STANDARD เสมอ
+  //   PREMIUM แอดมินให้เท่านั้น (เทียบแฟนคลับ/ระดับพรีเมียมของแพลตฟอร์มจริง) → เข้ารอบ FANCLUB ได้
+  tier            MembershipTier   @default(STANDARD)
   startedAt       DateTime         @default(now())
   // 🔑 หมดอายุคำนวณสดจากเวลาปัจจุบัน ไม่ต้องมี cron มาพลิก status
   //    getActiveMembership() = status ACTIVE && (expiresAt = null || expiresAt > now)
@@ -513,6 +521,52 @@ enum MembershipSource {
   ADMIN_GRANT // แอดมินให้สิทธิ์
 }
 
+enum MembershipTier {
+  STANDARD // สมาชิกทั่วไป (สมัครเองฟรี)
+  PREMIUM // ระดับสูง — แอดมินให้เท่านั้น เข้ารอบ FANCLUB ได้
+}
+
+// ============================================================
+// 8.1 SUBSCRIPTION (Phase 2.2) — ประวัติการสมัครแพ็กเกจสมาชิก
+// ============================================================
+// 🔑 แยกหน้าที่ให้ชัด (กันสองแหล่งความจริงที่ขัดกันเอง):
+//    Membership   = "สถานะสิทธิ์ตอนนี้"  ← ด่านตรวจทุกจุดอ่านจากตารางนี้เท่านั้น
+//    Subscription = "ประวัติการสมัครแต่ละรอบ" (ledger) ← เขียนลง Membership ทุกครั้งที่สมัคร/ต่ออายุ
+// เพราะงั้นถ้าอยากรู้ว่า "ตอนนี้เป็นสมาชิกไหม" ห้ามมาอ่านตารางนี้ ให้ใช้ getActiveMembership()
+//
+// สถานะการจ่ายเงิน: รอบนี้ยัง "ไม่เก็บเงินจริง" (ทีมเคาะ 2026-08-20) — เก็บ priceAmount ไว้เป็นราคาป้าย
+// และ paymentStatus ไว้เป็นรอยต่อสำหรับต่อ PromptPay/EasySlip ทีหลัง โดยไม่ต้องแก้โครงตารางอีก
+model Subscription {
+  id     BigInt @id @default(autoincrement())
+  userId BigInt
+  // รหัสแพ็กเกจจาก lib/subscription.ts เช่น "PREMIUM_12M" — เก็บเป็น string ไม่ทำตาราง plan
+  //   (แพ็กเกจผูกกับระดับสมาชิกที่มีอยู่แล้ว 2 ระดับ ไม่ได้เปลี่ยนบ่อยจนต้องให้แอดมินแก้เอง)
+  planCode    String             @db.VarChar(40)
+  tier        MembershipTier
+  months      Int
+  // ราคาป้าย ณ ตอนสมัคร (snapshot) — ตอนนี้เป็น 0 ทุกแพ็กเกจเพราะยังไม่เปิดเก็บเงิน
+  priceAmount Decimal            @db.Decimal(10, 2)
+  status      SubscriptionStatus @default(ACTIVE)
+  // ช่วงเวลาที่แพ็กเกจนี้ครอบคลุม (ต่ออายุ = รอบใหม่ต่อท้ายรอบเดิม ไม่ทับกัน)
+  startedAt   DateTime
+  expiresAt   DateTime
+  cancelledAt DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([status, expiresAt])
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE    // รอบที่ยังไม่ถึงวันสิ้นสุด
+  ENDED     // จบรอบตามกำหนด (ปิดโดยระบบตอนอ่าน — ไม่ต้องมี cron)
+  CANCELLED // ผู้ใช้ยกเลิกก่อนกำหนด (สิทธิ์ยังใช้ได้จนหมดรอบที่จ่ายไปแล้ว)
+}
+
 // ============================================================
 // 9. SALE ROUND (Phase 2) — รอบกดบัตร ("สมาชิกกดก่อน")
 // ============================================================
@@ -527,23 +581,95 @@ enum MembershipSource {
 //    - ผ่านได้เมื่อ: มีรอบที่ now อยู่ใน [startAt, endAt) และ (audience = PUBLIC หรือ user เป็นสมาชิก active)
 //    - รอบสมาชิกปกติจะจบตรงเวลาที่รอบ PUBLIC เริ่ม (เช่น 19:00-19:30 แล้ว 19:30 เปิดทุกคน)
 model SaleRound {
-  id        BigInt            @id @default(autoincrement())
-  concertId BigInt
-  name      String            @db.VarChar(100) // "รอบสมาชิก", "รอบทั่วไป"
-  audience  SaleRoundAudience @default(PUBLIC)
-  startAt   DateTime
-  endAt     DateTime
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  id                      BigInt            @id @default(autoincrement())
+  concertId               BigInt
+  name                    String            @db.VarChar(100) // "รอบแฟนคลับ", "รอบสมาชิก", "รอบทั่วไป"
+  audience                SaleRoundAudience @default(PUBLIC)
+  startAt                 DateTime
+  endAt                   DateTime
+  // ---- Phase 2.1 (ตามแพลตฟอร์มจริง — docs/21) ----
+  // ลงทะเบียนล่วงหน้า: "ซื้อสมาชิกอย่างเดียวไม่พอ ต้องกดลงทะเบียนในช่วงเวลาที่กำหนด" (แบบ Weverse)
+  //   ประโยชน์เชิงระบบ: รู้ยอดคนล่วงหน้า → ตั้ง cap คิวได้ + กระจายโหลดออกจากวินาทีเปิดขาย
+  requiresPreRegistration Boolean           @default(false)
+  preRegisterStartAt      DateTime?
+  preRegisterEndAt        DateTime?
+  // เพดานตั๋วต่อคนเฉพาะรอบนี้ (รอบพรีเซลจริงมักตึงกว่า เช่น 2 ใบ)
+  //   null = ใช้ค่าของคอนเสิร์ต · ถ้าตั้งไว้ ระบบใช้ค่า "น้อยกว่า" เสมอ — รอบห้ามผ่อนเพดานให้หลวมลง
+  maxTicketsPerUser       Int?
+  // โควต้าที่นั่งของรอบ (รอบแฟนคลับได้โควต้าล็อกไว้ก่อน) — null = ไม่จำกัดเพิ่มจากที่นั่งที่เหลือจริง
+  seatQuota               Int?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
 
-  concert Concert @relation(fields: [concertId], references: [id], onDelete: Cascade)
-  orders  Order[]
+  concert          Concert           @relation(fields: [concertId], references: [id], onDelete: Cascade)
+  orders           Order[]
+  preRegistrations PreRegistration[]
+  accessCodes      AccessCode[]
 
   @@index([concertId, startAt])
   @@map("sale_rounds")
 }
 
+// ลำดับชั้นตามแพลตฟอร์มจริง (docs/21 §1) — เรียงจากเข้าก่อนไปหลัง
+//   FANCLUB → PARTNER → MEMBER_ONLY → PUBLIC
+// ⚠️ ลำดับนี้คือ "ลำดับของรอบเวลา" ไม่ใช่สิทธิ์แซงคิวในรอบเดียวกัน — ในทุกรอบคิวยังเป็น FIFO
 enum SaleRoundAudience {
-  MEMBER_ONLY // เฉพาะสมาชิกที่ยัง active
-  PUBLIC      // ทุกคน (สมาชิกก็เข้าได้)
+  FANCLUB // สมาชิก PREMIUM (+ ลงทะเบียนล่วงหน้าถ้ารอบกำหนด)
+  PARTNER // ต้องมีโค้ดสิทธิ์ (สปอนเซอร์ / บัตรเครดิตร่วมรายการ)
+  MEMBER_ONLY // สมาชิกที่ยัง active ทุกระดับ
+  PUBLIC // ทุกคน (สมาชิกก็เข้าได้)
+}
+
+// ============================================================
+// 10. PRE-REGISTRATION + ACCESS CODE (Phase 2.1) — ด่านสิทธิ์เข้ารอบ
+// ============================================================
+// ลงทะเบียนล่วงหน้า — 1 user ลงได้ 1 ครั้งต่อรอบ ได้ "โค้ดปลดล็อก" ไว้โชว์/อ้างอิง
+//   เก็บใน DB (ไม่ใช่ Redis) เพราะเป็นหลักฐานสิทธิ์ที่ต้องตรวจย้อนหลังได้ ต่างจาก seat-hold ที่เป็นของชั่วคราว
+model PreRegistration {
+  id           BigInt   @id @default(autoincrement())
+  saleRoundId  BigInt
+  userId       BigInt
+  code         String   @unique @db.VarChar(32) // โค้ดปลดล็อก (แสดงให้ผู้ใช้ + ใช้อ้างอิงหน้างาน)
+  registeredAt DateTime @default(now())
+
+  saleRound SaleRound @relation(fields: [saleRoundId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([saleRoundId, userId]) // กันลงทะเบียนซ้ำเพื่อกินโควต้าหลายช่อง
+  @@index([saleRoundId])
+  @@map("pre_registrations")
+}
+
+// โค้ดสิทธิ์ของรอบพาร์ทเนอร์ (พรีเซลบัตรเครดิต / รหัสจากใบเสร็จ)
+//   maxUses = null → โค้ดรวมใช้ได้ไม่จำกัดคน (แบบ "MASTERCARD") · ตั้งเลข → โค้ดโควต้าจำกัด
+//   1 คนใช้โค้ดเดิมซ้ำไม่ได้ (unique ใน AccessCodeRedemption) → กินโควต้าคนอื่นไม่ได้
+model AccessCode {
+  id          BigInt    @id @default(autoincrement())
+  saleRoundId BigInt
+  code        String    @unique @db.VarChar(64)
+  label       String?   @db.VarChar(100) // "Mastercard presale", "ใบเสร็จ 7-11"
+  maxUses     Int?
+  usedCount   Int       @default(0)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  saleRound   SaleRound              @relation(fields: [saleRoundId], references: [id], onDelete: Cascade)
+  redemptions AccessCodeRedemption[]
+
+  @@index([saleRoundId])
+  @@map("access_codes")
+}
+
+model AccessCodeRedemption {
+  id           BigInt   @id @default(autoincrement())
+  accessCodeId BigInt
+  userId       BigInt
+  redeemedAt   DateTime @default(now())
+
+  accessCode AccessCode @relation(fields: [accessCodeId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([accessCodeId, userId])
+  @@index([userId])
+  @@map("access_code_redemptions")
 }

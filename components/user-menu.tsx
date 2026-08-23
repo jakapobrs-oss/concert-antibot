@@ -4,7 +4,7 @@
 // ปิดเมื่อคลิกข้างนอก / กด Escape / เลือกเมนู — เข้าถึงด้วยคีย์บอร์ดได้
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Ticket, LayoutDashboard, LogOut } from "lucide-react";
+import { ChevronDown, Ticket, Receipt, BadgeCheck, LayoutDashboard, LogOut } from "lucide-react";
 
 interface Props {
   name: string;
@@ -74,6 +74,20 @@ export function UserMenu({ name, email, isAdmin, signOutAction }: Props) {
           <div className="p-1.5">
             <MenuLink href="/account/tickets" icon={<Ticket className="size-4" />} onClick={() => setOpen(false)}>
               ตั๋วของฉัน
+            </MenuLink>
+            <MenuLink
+              href="/account/orders"
+              icon={<Receipt className="size-4" />}
+              onClick={() => setOpen(false)}
+            >
+              คำสั่งซื้อของฉัน
+            </MenuLink>
+            <MenuLink
+              href="/account/membership"
+              icon={<BadgeCheck className="size-4" />}
+              onClick={() => setOpen(false)}
+            >
+              สมาชิก
             </MenuLink>
             {isAdmin && (
               <MenuLink

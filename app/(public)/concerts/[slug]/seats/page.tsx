@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { isAdmitted } from "@/lib/queue";
 import { getHeldSeats } from "@/lib/seat-hold";
 import { auth } from "@/lib/auth";
+import { resolveEntryForUser, effectiveTicketLimit } from "@/lib/sale-round";
 
 export const dynamic = "force-dynamic"; // ที่นั่งเปลี่ยนตลอด ต้อง fresh
 
@@ -67,6 +68,16 @@ export default async function SeatsPage({
     redirect(`/concerts/${slug}/queue`);
   }
 
+  // 🎟️ Phase 2.1: เพดานตั๋วของ "รอบที่ผู้ใช้อยู่ตอนนี้" — รอบพรีเซลมักตึงกว่าค่าคอนเสิร์ต
+  //   ให้หน้าจอบอกเลขเดียวกับที่ server บังคับใช้จริง ไม่ใช่ปล่อยให้เลือกเกินแล้วค่อยเด้ง error
+  const entry = await resolveEntryForUser(concert.id, userId);
+  const activeRound = entry.ok ? entry.round : null;
+  const ticketMax = effectiveTicketLimit(
+    concert.maxTicketsPerUser,
+    activeRound?.maxTicketsPerUser ?? null
+  );
+  const roundName = activeRound?.name ?? null;
+
   // ดึงที่นั่งที่ถูก hold อยู่ใน Redis (real-time — คนอื่นกำลังจอง) เพื่อแสดงเป็น HELD
   const allSeatIds = concert.zones.flatMap((z) => z.seats.map((s) => s.id.toString()));
   const heldSet = await getHeldSeats(allSeatIds);
@@ -110,12 +121,13 @@ export default async function SeatsPage({
           </Badge>
         </div>
         <p className="-mt-5 mb-6 text-sm text-fg-faint">
-          เลือกที่นั่ง — จำกัด {concert.maxTicketsPerUser} ใบต่อบัญชี
+          เลือกที่นั่ง — จำกัด {ticketMax} ใบต่อบัญชี
+          {roundName && ticketMax < concert.maxTicketsPerUser ? ` (เพดานของ${roundName})` : ""}
         </p>
 
         <SeatMap
           zones={zonesData}
-          maxSeats={concert.maxTicketsPerUser}
+          maxSeats={ticketMax}
           concertId={concert.id.toString()}
           queueToken={qt!}
         />
