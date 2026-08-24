@@ -5,6 +5,52 @@
 
 ---
 
+## [Revision 21 — เอกสารตามโค้ดทัน: ER 14→17 ตาราง + requirements + จุดยืน resale] — 2026-08-24
+
+### Trigger
+ตรวจแล้วพบว่า **เอกสารในเล่มตามโค้ดไม่ทันมา 2 รอบ** — `04_ER_DIAGRAM.md` ยังเขียนว่ามี 14 ตาราง ทั้งที่ schema จริงมี 17 (ขาด `TicketReturn` / `Membership` / `SaleRound`) และ `Zone.stageSide` ไม่ปรากฏในเอกสารเล่มไหนเลย · เอกสารพวกนี้เข้าเล่มบท 3 ตรง ๆ ถ้าไม่แก้ = ส่งเล่มที่ ER ไม่ตรงระบบจริง
+
+### ของที่แก้
+- **`04_ER_DIAGRAM.md`** — 14 → **17 models**, 8 → **12 enums**
+  - เพิ่ม `TicketReturn`, `Membership`, `SaleRound` ทั้งใน Mermaid และตารางรายละเอียด (§2.15–2.17)
+  - เติมฟิลด์ผังที่นั่งที่ขาด: `Concert.layoutImage*`/`stagePolygon` · `Zone.tier`/`polygon`/`stageSide`/`isStanding`/`rowSpec` · `Seat.x`/`y` · `Order.saleRoundId` · `OrderItem.holderUserId` · `Ticket.holderName`/`qrSecret`/`checkedInAt`/`returnedAt`
+  - 🔴 **แก้ของที่เขียนผิด**: `Ticket.seatId` ไม่ใช่ UNIQUE ธรรมดา แต่เป็น **partial unique `WHERE returnedAt IS NULL`** (อยู่ใน migration `20260703150000` — ดูจาก `schema.prisma` อย่างเดียวไม่เห็น) · `Payment.slipImageUrl` ไม่ได้ "เก็บใน MinIO" แต่เก็บ base64 ลง Postgres
+  - ตรวจด้วยสคริปต์ว่าเอกสารครอบคลุมครบทุก model/field/enum ที่ parse ได้จาก `schema.prisma` (ไม่ได้กวาดตาเอง)
+- **`11_REQUIREMENTS.md` rev 4**
+  - 🆕 §2.2.3 ผังที่นั่ง**ภายในโซน** — กริด 1 แถว = 1 บรรทัด · ทิศเวที · โซนยืน · `rowSpec` · **best-available เป็นค่าเริ่มต้น + เลิกส่งผังทั้งงานไป client (มาตรการกันบอท ไม่ใช่เรื่องความเร็ว)**
+  - 🆕 §2.7 **จุดยืนเรื่อง resale** — ตั๋วผูกชื่อ + QR หมุนตามเวลา + คืนบัตรราคาหน้าบัตรเข้า pool กลางที่ **ผู้คืนเลือกผู้รับไม่ได้** = ตัดตลาดขายต่อด้วยการออกแบบ (โมเดล Face Value Exchange + SafeTix) — ของเดิม §5 เขียนแค่ "❌ Resale market" ซึ่งอ่านผิดเป็น "ไม่มีอะไรเรื่องขายต่อเลย"
+  - 🔴 แก้ §3.3 + §5 ที่ยังเขียนว่า **local-only / ไม่ deploy cloud** ทั้งที่ deploy บน Vercel (Neon + Upstash) จริงแล้ว และ `vercel.json` รัน `prisma migrate deploy` ให้อัตโนมัติทุก build
+  - เพิ่ม 7 แถวใน Decision Log (คืนบัตร · รอบสมาชิก · ผังจากรูป · rowSpec · best-available · Vercel)
+
+### ยืนยันกับโค้ดจริงก่อนเขียน (ไม่ได้เชื่อ handoff)
+`RETURN_CUTOFF_HOURS` (`lib/env-schema.ts:94`) · conditional claim + คืนที่นั่งเฉพาะที่ยัง `SOLD` (`app/actions/tickets.ts:204-232`) · HMAC QR (`lib/entry-code.ts:12`) · `lib/holder-policy.ts` · best-available เป็นค่าเริ่มต้นจริง (`components/seat-map-svg.tsx:157` `useState<SeatedMode>("best")`) · partial unique index (`prisma/migrations/20260703150000/migration.sql:37`)
+
+---
+
+## [Revision 20 — โซนยืน · ระบบเลือกที่นั่งให้ · แถวยาวไม่เท่ากัน] — 2026-08-24
+
+### Trigger
+ผังคอนเสิร์ตจริงมี 3 อย่างที่ระบบยังตอบไม่ได้: โซนยืนที่ไม่มีแถวจริง · คนซื้อส่วนใหญ่อยากได้ "ที่ดีที่สุดที่เหลือ" ไม่อยากไล่จิ้มเอง · แถวหน้า-หลังยาวไม่เท่ากัน — ทำตามแผน `HANDOFF-zone-seat-layout.md` 3 ขั้น (branch `feat/seatmap`, **ยังไม่ commit**)
+
+### ของที่ลง
+- **ขั้น 1 โซนยืน** — `Zone.isStanding` (migration `20260824...standing`): ฝั่งซื้อเป็นแผงเลือกจำนวนใบ, `holdStandingZone` สุ่มที่นั่งว่าง (oversample 3×, retry ≤3) เข้า `holdAndCreateOrder` เดิม, Excel คอลัมน์ "ประเภทโซน"
+- **ขั้น 2 best-available + ปิดรูรั่ว §0.4** — โหมด "ระบบเลือกให้" (ค่าเริ่มต้น): `holdBestAvailable` + `pickBestSeats` เลือกแถวหน้าสุด-ติดกันก่อน; payload หน้าแรกเหลือแค่จำนวนว่างต่อโซน ผังจริงโหลดรายโซนผ่าน endpoint ใหม่หลังด่าน login+คิว+rate-limit (บอทเคยกวาดทั้งผังได้ฟรี)
+- **ขั้น 3 rowSpec** — `Zone.rowSpec` (migration `20260824132751`): JSON จำนวนที่ต่อแถว ผลรวมต้องเท่า `totalSeats`; แผง "จัดแถว" รายโซน + ฟอร์ม + คอลัมน์ Excel "ที่นั่งต่อแถว"; ทุกทางเจนที่นั่งรวมศูนย์ผ่าน `regenerationVerdict()` (DB + Redis สด)
+
+### บั๊กที่เจอตอนตรวจรับ (แก้แล้ว)
+**เรียง `rowLabel` แบบ string ใน SQL ที่มี LIMIT** — `AA` แทรกระหว่าง `A`/`B` ทำโซน >26 แถวที่ว่าง >500 ที่ แจกแถวหลังทั้งที่แถวหน้าว่าง → ต้อง `ORDER BY LENGTH("rowLabel"), "rowLabel"` ทุกครั้ง (กติกาเดียวกับ `compareSeatOrder`)
+
+### ผลทดสอบ (รันจริง 2026-08-24 — รายละเอียด [20_SEATMAP.md](20_SEATMAP.md) §8.2)
+| ชุด | ผล |
+|---|---|
+| typecheck | 0 error |
+| vitest ทั้งโปรเจกต์ | **350/350** |
+| `pnpm test:seatmap` (แอดมิน) | **34/34** |
+| `pnpm test:seatmap-buyer` (คนซื้อ) | **27/27** |
+| ตรวจบนเว็บจริง | ครบทั้ง 3 ขั้น (ยืน→checkout จริง · best-available ได้ A1,A2 · จัดแถว 10/28 แล้วกริดคนซื้อตรง) |
+
+---
+
 ## [Revision 19 — สิทธิ์สมาชิก + รอบกดบัตร] — 2026-08-19
 
 ### Trigger
