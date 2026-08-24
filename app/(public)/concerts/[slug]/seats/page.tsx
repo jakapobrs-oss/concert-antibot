@@ -116,6 +116,42 @@ export default async function SeatsPage({
     redirect(`/concerts/${slug}/queue`);
   }
 
+  // 💳 order ค้างชำระของ user ในคอนเสิร์ตนี้ — โชว์แบนเนอร์ "ไปชำระเงินต่อ"
+  // กันเข้าใจผิดว่าที่นั่งหลุดแล้ว แล้วไปไล่จองซ้ำจนชนโควตาตัวเอง
+  const pendingOrder = await prisma.order.findFirst({
+    where: {
+      userId: BigInt(userId),
+      concertId: concert.id,
+      status: "PENDING",
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  const pendingSeatCount = pendingOrder
+    ? await prisma.orderItem.count({ where: { orderId: pendingOrder.id } })
+    : 0;
+
+  // 🎫 โควตาคงเหลือของ user (แบบเดียวกับ F2 ใน booking action) — ให้หน้าจอจำกัด
+  // ตัวเลือกได้ก่อนถึง server ไม่ใช่ปล่อยกดแล้วค่อยเด้ง error กลับมา
+  // เป็นค่า ณ ตอนโหลดหน้าเท่านั้น ด่านจริงยังอยู่ฝั่ง server (reserveSeatsForOrder)
+  const committedSeats = await prisma.orderItem.count({
+    where: {
+      order: {
+        userId: BigInt(userId),
+        concertId: concert.id,
+        OR: [
+          { status: "PAID" },
+          { status: "PENDING", expiresAt: { gt: new Date() } },
+        ],
+      },
+    },
+  });
+  const remainingQuota = Math.max(
+    0,
+    concert.maxTicketsPerUser - committedSeats,
+  );
+
   // ดึงที่นั่งที่ถูก hold อยู่ใน Redis (real-time — คนอื่นกำลังจอง) เพื่อแสดงเป็น HELD
   const allSeatIds = concert.zones.flatMap((z) =>
     z.seats.map((s) => s.id.toString()),
@@ -214,6 +250,21 @@ export default async function SeatsPage({
           เลือกที่นั่ง — จำกัด {concert.maxTicketsPerUser} ใบต่อบัญชี
         </p>
 
+        {pendingOrder && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/25 bg-warning/10 px-4 py-3">
+            <p className="text-sm text-warning">
+              คุณมีคำสั่งซื้อค้างชำระอยู่ {pendingSeatCount} ที่นั่ง —
+              ที่นั่งยังถูกล็อกให้จนกว่าจะหมดเวลาชำระเงิน
+            </p>
+            <Link
+              href={`/checkout/${pendingOrder.id.toString()}`}
+              className="rounded-lg border border-warning/40 bg-warning/15 px-3 py-1.5 text-sm font-semibold text-warning transition-colors hover:bg-warning/25"
+            >
+              ไปชำระเงินต่อ →
+            </Link>
+          </div>
+        )}
+
         {canUseSvgMap ? (
           <SeatMapSvg
             zones={zonesData.map((z) => ({
@@ -227,6 +278,7 @@ export default async function SeatsPage({
             }}
             stagePolygon={stagePolygon}
             maxSeats={concert.maxTicketsPerUser}
+            remainingQuota={remainingQuota}
             concertId={concert.id.toString()}
             queueToken={qt!}
             turnstileSiteKey={getTurnstileSiteKey()}
@@ -239,6 +291,7 @@ export default async function SeatsPage({
           <SeatMap
             zones={legacyZonesData}
             maxSeats={concert.maxTicketsPerUser}
+            remainingQuota={remainingQuota}
             concertId={concert.id.toString()}
             queueToken={qt!}
             turnstileSiteKey={getTurnstileSiteKey()}

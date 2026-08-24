@@ -139,6 +139,7 @@ export function SeatMapSvg({
   layout,
   stagePolygon,
   maxSeats,
+  remainingQuota,
   concertId,
   queueToken,
   turnstileSiteKey,
@@ -147,6 +148,8 @@ export function SeatMapSvg({
   layout: { base64: string; width: number; height: number };
   stagePolygon: Polygon | null;
   maxSeats: number;
+  /** โควตาที่ user คนนี้ยังจองได้ (maxSeats หักที่จอง/ค้างชำระแล้ว) — ค่า ณ ตอนโหลดหน้า */
+  remainingQuota: number;
   concertId: string;
   queueToken: string;
   turnstileSiteKey: string;
@@ -172,7 +175,14 @@ export function SeatMapSvg({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // server บอกว่ามี order ค้างชำระ → โชว์ปุ่มพาไปจ่ายต่อ แทนปล่อยให้จมกับ error
+  const [pendingOrder, setPendingOrder] = useState<{ orderId: string } | null>(
+    null,
+  );
   const [zoomIndex, setZoomIndex] = useState(0);
+
+  // เพดานเลือกจริงของ user คนนี้ = ลิมิตต่อบัญชี หักโควตาที่ใช้ไปแล้ว
+  const effectiveMax = Math.min(maxSeats, remainingQuota);
 
   const viewW = layout.width;
   const viewH = layout.height;
@@ -280,11 +290,11 @@ export function SeatMapSvg({
     ? [...activeRows].reverse()
     : activeRows;
   const activeStandingLimit = activeZone?.isStanding
-    ? Math.min(maxSeats, availableByZone.get(activeZone.id) ?? 0)
+    ? Math.min(effectiveMax, availableByZone.get(activeZone.id) ?? 0)
     : 0;
   const activeSeatedLimit =
     activeZone && !activeZone.isStanding
-      ? Math.min(maxSeats, availableByZone.get(activeZone.id) ?? 0)
+      ? Math.min(effectiveMax, availableByZone.get(activeZone.id) ?? 0)
       : 0;
 
   function openZone(zone: SvgZone) {
@@ -407,8 +417,12 @@ export function SeatMapSvg({
         next.delete(seat.id);
         setError(null);
       } else {
-        if (next.size >= maxSeats) {
-          setError(`เลือกได้สูงสุด ${maxSeats} ที่นั่งต่อบัญชี`);
+        if (next.size >= effectiveMax) {
+          setError(
+            remainingQuota < maxSeats
+              ? `เลือกได้อีกสูงสุด ${effectiveMax} ที่นั่ง — จองไปแล้ว ${maxSeats - remainingQuota} จากโควตา ${maxSeats} ที่นั่ง/บัญชี`
+              : `เลือกได้สูงสุด ${maxSeats} ที่นั่งต่อบัญชี`,
+          );
           return prev;
         }
         setError(null);
@@ -446,12 +460,15 @@ export function SeatMapSvg({
     standingSelection !== null ||
     bestAvailableSelection !== null ||
     selected.size > 0;
+  // เกินโควตา = ปุ่มจ่ายต้องจางพร้อมเหตุผล ไม่ใช่ปล่อยกดแล้วเด้ง error จาก server
+  const overQuota = remainingQuota === 0 || selectedCount > remainingQuota;
 
   // hold ที่นั่ง + สร้าง order → ไป checkout (ทางเดินเดียวกับผังแบบเดิมทุกประการ)
   async function handleSubmit(turnstileToken?: string) {
     if (!hasSelection) return;
     setSubmitting(true);
     setError(null);
+    setPendingOrder(null);
     const result = standingSelection
       ? await holdStandingZone({
           concertId,
@@ -479,6 +496,8 @@ export function SeatMapSvg({
     } else {
       setError(result.error);
       setSubmitting(false);
+      // มี order ค้างชำระ → โชว์ทางกลับไปจ่ายต่อใต้ข้อความ error
+      setPendingOrder(result.pendingOrder ?? null);
       // ยังไม่ปฏิเสธถาวร — ขอให้ยืนยันว่าไม่ใช่บอทแล้วระบบยิงซ้ำให้เอง
       setNeedChallenge(result.challenge === true);
       // โดนด่านบอทเด้ง = ที่นั่งยังไม่ถูกแตะ ห้ามล้างตัวเลือกทิ้งเหมือน hold ล้มเหลว
@@ -1118,6 +1137,16 @@ export function SeatMapSvg({
           </div>
         )}
 
+        {pendingOrder && (
+          <button
+            type="button"
+            onClick={() => router.push(`/checkout/${pendingOrder.orderId}`)}
+            className="mt-2 w-full rounded-md border border-warning/40 bg-warning/15 px-3 py-2 text-sm font-semibold text-warning transition-colors hover:bg-warning/25"
+          >
+            ไปชำระเงินต่อ (คำสั่งซื้อเดิมยังอยู่) →
+          </button>
+        )}
+
         {needChallenge && (
           <div className="mt-3 space-y-2 rounded-md border border-warning/25 bg-warning/10 p-3">
             <p className="text-center text-xs text-warning">
@@ -1136,15 +1165,23 @@ export function SeatMapSvg({
 
         <Button
           className="mt-4 w-full"
-          disabled={!hasSelection || submitting}
+          disabled={!hasSelection || submitting || overQuota}
           loading={submitting}
           onClick={() => handleSubmit()}
         >
           {submitting ? "กำลังจองบัตร…" : "ดำเนินการชำระเงิน →"}
         </Button>
-        <p className="mt-2.5 text-center text-xs text-fg-faint">
-          บัตรจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน
-        </p>
+        {remainingQuota === 0 ? (
+          <p className="mt-2.5 text-center text-xs text-warning">
+            คุณจองครบโควตา {maxSeats} ที่นั่ง/บัญชีของคอนเสิร์ตนี้แล้ว
+          </p>
+        ) : (
+          <p className="mt-2.5 text-center text-xs text-fg-faint">
+            {remainingQuota < maxSeats
+              ? `จองได้อีก ${remainingQuota} ที่นั่ง · บัตรจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน`
+              : "บัตรจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน"}
+          </p>
+        )}
       </div>
     </div>
   );

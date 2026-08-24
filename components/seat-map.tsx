@@ -34,12 +34,15 @@ interface Selected {
 export function SeatMap({
   zones,
   maxSeats,
+  remainingQuota,
   concertId,
   queueToken,
   turnstileSiteKey,
 }: {
   zones: Zone[];
   maxSeats: number;
+  /** โควตาที่ user คนนี้ยังจองได้ (maxSeats หักที่จอง/ค้างชำระแล้ว) — ค่า ณ ตอนโหลดหน้า */
+  remainingQuota: number;
   concertId: string;
   queueToken: string;
   turnstileSiteKey: string;
@@ -51,6 +54,13 @@ export function SeatMap({
   const [error, setError] = useState<string | null>(null);
   // ด่าน anti-bot ตอนกดซื้อเด้ง CHALLENGE → โชว์ Turnstile แล้วยิงซ้ำพร้อม token
   const [needChallenge, setNeedChallenge] = useState(false);
+  // server บอกว่ามี order ค้างชำระ → โชว์ปุ่มพาไปจ่ายต่อ แทนปล่อยให้จมกับ error
+  const [pendingOrder, setPendingOrder] = useState<{ orderId: string } | null>(
+    null,
+  );
+
+  // เพดานเลือกจริงของ user คนนี้ = ลิมิตต่อบัญชี หักโควตาที่ใช้ไปแล้ว
+  const effectiveMax = Math.min(maxSeats, remainingQuota);
 
   function toggleSeat(seat: Seat, zonePrice: number) {
     if (seat.status !== "AVAILABLE") return; // กดได้เฉพาะที่ว่าง
@@ -61,9 +71,13 @@ export function SeatMap({
         next.delete(seat.id);
         setError(null);
       } else {
-        if (next.size >= maxSeats) {
+        if (next.size >= effectiveMax) {
           // แจ้งในแผงสรุปแทน alert() — ไม่เด้งขวางจังหวะเลือก
-          setError(`เลือกได้สูงสุด ${maxSeats} ที่นั่งต่อบัญชี`);
+          setError(
+            remainingQuota < maxSeats
+              ? `เลือกได้อีกสูงสุด ${effectiveMax} ที่นั่ง — จองไปแล้ว ${maxSeats - remainingQuota} จากโควตา ${maxSeats} ที่นั่ง/บัญชี`
+              : `เลือกได้สูงสุด ${maxSeats} ที่นั่งต่อบัญชี`,
+          );
           return prev;
         }
         setError(null);
@@ -86,6 +100,7 @@ export function SeatMap({
     if (selected.size === 0) return;
     setSubmitting(true);
     setError(null);
+    setPendingOrder(null);
     const result = await holdAndCreateOrder({
       concertId,
       seatIds: Array.from(selected.keys()),
@@ -97,6 +112,8 @@ export function SeatMap({
     } else {
       setError(result.error);
       setSubmitting(false);
+      // มี order ค้างชำระ → โชว์ทางกลับไปจ่ายต่อใต้ข้อความ error
+      setPendingOrder(result.pendingOrder ?? null);
       // ยังไม่ปฏิเสธถาวร — ขอให้ยืนยันว่าไม่ใช่บอทแล้วกดใหม่
       setNeedChallenge(result.challenge === true);
       // ที่นั่งบางที่ถูกจองไป → refresh เพื่อเห็นสถานะใหม่
@@ -225,6 +242,16 @@ export function SeatMap({
           </div>
         )}
 
+        {pendingOrder && (
+          <button
+            type="button"
+            onClick={() => router.push(`/checkout/${pendingOrder.orderId}`)}
+            className="mt-2 w-full rounded-md border border-warning/40 bg-warning/15 px-3 py-2 text-sm font-semibold text-warning transition-colors hover:bg-warning/25"
+          >
+            ไปชำระเงินต่อ (คำสั่งซื้อเดิมยังอยู่) →
+          </button>
+        )}
+
         {needChallenge && (
           <div className="mt-3 space-y-2 rounded-md border border-warning/25 bg-warning/10 p-3">
             <p className="text-center text-xs text-warning">
@@ -243,15 +270,28 @@ export function SeatMap({
 
         <Button
           className="mt-4 w-full"
-          disabled={selected.size === 0 || submitting}
+          disabled={
+            selected.size === 0 ||
+            submitting ||
+            remainingQuota === 0 ||
+            selected.size > remainingQuota
+          }
           loading={submitting}
           onClick={() => handleSubmit()}
         >
           {submitting ? "กำลังจองที่นั่ง…" : "ดำเนินการชำระเงิน →"}
         </Button>
-        <p className="mt-2.5 text-center text-xs text-fg-faint">
-          ที่นั่งจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน
-        </p>
+        {remainingQuota === 0 ? (
+          <p className="mt-2.5 text-center text-xs text-warning">
+            คุณจองครบโควตา {maxSeats} ที่นั่ง/บัญชีของคอนเสิร์ตนี้แล้ว
+          </p>
+        ) : (
+          <p className="mt-2.5 text-center text-xs text-fg-faint">
+            {remainingQuota < maxSeats
+              ? `จองได้อีก ${remainingQuota} ที่นั่ง · ที่นั่งจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน`
+              : "ที่นั่งจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน"}
+          </p>
+        )}
       </div>
     </div>
   );

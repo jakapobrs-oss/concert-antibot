@@ -1,7 +1,9 @@
 // หน้าห้องรอ (Virtual Waiting Room) — Phase 4
 // user เข้าหน้านี้ก่อนถึงจะไปเลือกที่นั่งได้ (กันคนแห่กดพร้อมกัน + fairness)
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
 import { SiteHeader } from "@/components/site-header";
 import { WaitingRoom } from "@/components/waiting-room";
 import { getTurnstileSiteKey } from "@/lib/turnstile";
@@ -23,6 +25,24 @@ export default async function QueuePage({
 
   if (!concert) notFound();
 
+  // 💳 ถ้า user มี order ค้างชำระอยู่ ไม่ต้องต่อคิวใหม่ — ชี้ทางกลับไปจ่ายให้จบ
+  // เคสจริง: กด back จากหน้าชำระเงิน สิทธิ์ผ่านคิว (5 นาที) หมดพอดี โดนเด้งมาหน้านี้
+  // ทั้งที่ order เดิมยังล็อกที่นั่งอยู่ — ถ้าไม่บอก ผู้ใช้จะคิดว่าที่นั่งหลุดแล้ว
+  const session = await auth();
+  const userId = (session?.user as { id?: string } | undefined)?.id;
+  const pendingOrder = userId
+    ? await prisma.order.findFirst({
+        where: {
+          userId: BigInt(userId),
+          concertId: concert.id,
+          status: "PENDING",
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      })
+    : null;
+
   return (
     <div className="flex min-h-screen flex-col">
       <SetChatContext
@@ -36,6 +56,20 @@ export default async function QueuePage({
         <p className="relative mb-5 text-center font-display text-sm font-medium text-fg-faint">
           {concert.title}
         </p>
+
+        {pendingOrder && (
+          <div className="relative mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/25 bg-warning/10 px-4 py-3">
+            <p className="text-sm text-warning">
+              คำสั่งซื้อเดิมของคุณยังไม่หมดอายุ — ไม่ต้องเข้าคิวใหม่
+            </p>
+            <Link
+              href={`/checkout/${pendingOrder.id.toString()}`}
+              className="text-sm font-semibold text-warning underline underline-offset-4 hover:opacity-80"
+            >
+              ไปชำระเงินต่อ →
+            </Link>
+          </div>
+        )}
 
         <div className="animate-fade-in-up relative overflow-hidden rounded-2xl border border-fg/10 bg-ink-850 px-6 py-10 shadow-lg sm:px-10">
           {concert.status === "ON_SALE" ? (

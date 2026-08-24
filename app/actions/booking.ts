@@ -55,7 +55,14 @@ const holdSchema = z.object({
 export type HoldResult =
   | { ok: true; orderId: string; amount: number; qrDataUrl: string; promptPayId: string; expiresAt: string }
   // challenge: true = ยังไม่ปฏิเสธถาวร แค่ขอให้ทำ Turnstile แล้วกดใหม่ (ฝั่ง UI โชว์ widget)
-  | { ok: false; error: string; failedSeats?: string[]; challenge?: true };
+  // pendingOrder: user มี order ค้างชำระที่ยังไม่หมดอายุ — UI ใช้โชว์ปุ่ม "ไปชำระเงินต่อ"
+  | {
+      ok: false;
+      error: string;
+      failedSeats?: string[];
+      challenge?: true;
+      pendingOrder?: { orderId: string };
+    };
 
 // ============================================================
 // 🛡️ ด่าน anti-bot ตอนกดซื้อ (SECURITY_TODO #1)
@@ -124,6 +131,26 @@ async function assessPurchaseForUser(params: {
   };
 }
 
+// หา order ค้างชำระ (PENDING ยังไม่หมดอายุ) ของ user ในคอนเสิร์ตนี้
+// ใช้ชี้ทาง "ไปชำระเงินต่อ" ตอนคิวหมดอายุ/โควตาเต็ม — ผู้ใช้มักคิดว่าที่นั่งหลุดไปแล้ว
+// ทั้งที่ order เดิมยังล็อกที่นั่งอยู่ (เคสจริง: กด back จากหน้าชำระเงินแล้วคิวหมดพอดี)
+async function findActivePendingOrder(
+  userId: string,
+  concertId: string,
+): Promise<{ orderId: string } | undefined> {
+  const order = await prisma.order.findFirst({
+    where: {
+      userId: BigInt(userId),
+      concertId: BigInt(concertId),
+      status: "PENDING",
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  return order ? { orderId: order.id.toString() } : undefined;
+}
+
 export async function holdAndCreateOrder(input: {
   concertId: string;
   seatIds: string[];
@@ -142,7 +169,19 @@ export async function holdAndCreateOrder(input: {
   // 🔒 gate: ต้องมี queue token ที่ถูก admit (กันข้ามคิว)
   // F4: ส่ง userId ไปด้วย → token ต้องเป็นของ user คนนี้จริง (กันแชร์/ใช้ token คนอื่น)
   const admitted = await isAdmitted(queueToken, concertId, userId);
-  if (!admitted) return { ok: false, error: "คิวหมดอายุ กรุณาเข้าคิวใหม่" };
+  if (!admitted) {
+    // คิวหมด แต่ order เดิมอาจยังล็อกที่นั่งอยู่ — บอกทางกลับไปจ่ายแทนทางตัน "เข้าคิวใหม่"
+    const pendingOrder = await findActivePendingOrder(userId, concertId);
+    if (pendingOrder) {
+      return {
+        ok: false,
+        error:
+          "คิวหมดอายุ แต่คำสั่งซื้อเดิมของคุณยังอยู่ — ไปชำระเงินต่อได้เลย ไม่ต้องเข้าคิวใหม่",
+        pendingOrder,
+      };
+    }
+    return { ok: false, error: "คิวหมดอายุ กรุณาเข้าคิวใหม่" };
+  }
 
   // 🛡️ ด่าน anti-bot ตอนกดซื้อ (SECURITY_TODO #1) — วางหลังด่านคิวเพราะด่านคิวเป็น Redis
   //    ราคาถูกกว่า และคัดคำขอที่ไม่มี token ที่ถูก admit ออกไปก่อนแล้ว
@@ -195,6 +234,8 @@ export async function holdAndCreateOrder(input: {
         remaining > 0
           ? `จองได้อีกสูงสุด ${remaining} ที่นั่ง (จำกัด ${concert.maxTicketsPerUser} ที่นั่ง/คน ต่อคอนเสิร์ต)`
           : `คุณจองครบ ${concert.maxTicketsPerUser} ที่นั่ง/คน สำหรับคอนเสิร์ตนี้แล้ว`,
+      // โควตาที่หายไปมักคือ order ค้างชำระของตัวเอง — ชี้ทางไปจ่ายให้จบ
+      pendingOrder: await findActivePendingOrder(userId, concertId),
     };
   }
 
@@ -243,6 +284,7 @@ export async function holdAndCreateOrder(input: {
           reserved.remaining > 0
             ? `จองได้อีกสูงสุด ${reserved.remaining} ที่นั่ง (จำกัด ${concert.maxTicketsPerUser} ที่นั่ง/คน ต่อคอนเสิร์ต)`
             : `คุณจองครบ ${concert.maxTicketsPerUser} ที่นั่ง/คน สำหรับคอนเสิร์ตนี้แล้ว`,
+        pendingOrder: await findActivePendingOrder(userId, concertId),
       };
     }
     if (reserved.reason === "SEAT_TAKEN") {
