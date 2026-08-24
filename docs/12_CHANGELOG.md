@@ -5,6 +5,34 @@
 
 ---
 
+## [Revision 22 — ด่าน anti-bot ตอน "กดซื้อ" (ปิด SECURITY_TODO #1)] — 2026-08-25
+
+### Trigger
+`docs/SECURITY_TODO.md` ข้อ 1 ค้างมาตั้งแต่ audit รอบแรก: anti-bot ตรวจแค่ตอนเข้าคิว ตอนกดซื้อไม่ตรวจอะไรเลย
+
+### จุดที่ทำให้ต้องออกแบบใหม่ ไม่ทำตามแนวทางเดิมใน TODO
+แนวทางที่ TODO เขียนไว้ ("อ่าน `BotEvent` ล่าสุดของ user มาเทียบ threshold") **แทบไม่กันอะไร** —
+ด่านคิวปฏิเสธ 403 ตั้งแต่ BLOCK อยู่แล้ว คนที่ถือ queue token ที่ admit แล้วจึงเคยได้ ALLOW เสมอ
+→ ช่องจริงคือ **คำขอตอนกดซื้อไม่เคยถูกประเมิน** (เข้าคิวด้วยมือ แล้วส่ง session ให้สคริปต์ยิงต่อ
+หรือสัญญาณ Layer 2 ที่เพิ่งติดตอนเลือกที่นั่งไม่มีใครอ่านซ้ำ) → ประเมิน **คำขอนี้ใหม่** แทน
+
+### ของที่เพิ่ม
+- **`lib/antibot-purchase.ts` (ใหม่)** — `assessPurchase()` เป็นฟังก์ชันบริสุทธิ์ ไม่แตะ DB (ผู้เรียกป้อนข้อมูลเข้ามา) เพื่อให้เทสได้โดยไม่ต้อง mock Prisma
+  - สัญญาณ: UA + headers ของคำขอนี้ (น้ำหนักเดียวกับด่านคิว ใช้ `scoreUserAgent`/`scoreHeaders` ที่ export ออกมาใหม่) · `BehaviorSession.isLikelyBot` +30 · เคยโดน BLOCK ใน 30 นาที +45 · Turnstile ส่งมาแล้วไม่ผ่าน +55
+  - threshold เดียวกับด่านคิว (CHALLENGE 40 / BLOCK 70)
+  - 🔑 **"ไม่ส่ง Turnstile token" = 0 คะแนน ไม่ใช่ +40** — ตอนกดซื้อไม่มี token ติดมือมาแต่แรก ถ้ายืมกติกาด่านคิวมาตรง ๆ คนซื้อจริงโดน CHALLENGE ยกแผงบนเส้นทางเงิน
+  - ทำ Turnstile ผ่านสด ๆ → ปลด CHALLENGE เป็น ALLOW (กันวนลูปยืนยันไม่จบ) แต่ **ไม่ปลด BLOCK** เพราะสคริปต์ก็ทำ Turnstile ผ่านได้
+- **`app/actions/booking.ts`** — `assessPurchaseForUser()` อ่าน BotEvent + BehaviorSession แบบขนาน แล้วตัดสินก่อนล็อกที่นั่ง · เขียน `BotEvent` (`checkpoint: "purchase"`) ใน try/catch — **บันทึก audit ล้มเหลวต้องไม่ทำให้ซื้อไม่ได้** · ไม่มีพารามิเตอร์ "ข้ามด่าน" เพราะ server action ถูกเรียกจาก client ด้วยอาร์กิวเมนต์อะไรก็ได้
+- **UI ยืนยันตัวตนที่หน้าเลือกที่นั่ง** (`components/seat-map-svg.tsx`, `components/seat-map.tsx`) — โดน CHALLENGE แล้วขึ้นกล่อง Turnstile ตรงแถบสรุป **โดยไม่ล้างที่นั่งที่เลือกไว้** ยืนยันผ่านแล้วยิงคำสั่งซื้อต่อให้อัตโนมัติ · `TurnstileWidget` รับ prop `size` เพิ่ม (กล่องข้างผังกว้าง ~266px ส่วน widget ปกติ 300px จะล้น → ใช้ `compact`)
+- **index**: `bot_events(userId, createdAt)` + `behavior_sessions(userId, createdAt)` — migration `20260824190000_add_bot_event_user_idx` (query ใหม่อยู่บนเส้นทางเงิน ต้องไม่ scan)
+
+### หลักฐาน (ไม่ได้เชื่อว่าเขียนแล้วต้องทำงาน)
+- `tests/unit/antibot-purchase.test.ts` **12 เทส** — เน้นเคส false positive: เบราว์เซอร์ปกติไม่มี token ต้องได้ 0 คะแนน · ไม่เรียก `verifyTurnstile` ถ้าไม่มี token · สัญญาณอ่อนตัวเดียวไม่พอเด้ง
+- `pnpm test:purchase-antibot` (ใหม่) **7/7 บนเบราว์เซอร์จริง + DB จริง + Redis จริง** — ให้บอทถือ queue token ที่ admit แล้ว (สมมติว่าด่านคิวถูกข้ามไปแล้ว) แล้วพิสูจน์ว่า: คนจริงยังซื้อได้ · UA สคริปต์ไม่ถึงหน้า checkout · มี `BotEvent checkpoint=purchase` ลง DB จริง · ที่นั่งของบอทไม่ถูกผูกกับ order ใด
+- `pnpm test:seatmap-buyer` **27/27** · unit ทั้งชุด **362/362** · typecheck + lint สะอาด
+
+---
+
 ## [Revision 21 — เอกสารตามโค้ดทัน: ER 14→17 ตาราง + requirements + จุดยืน resale] — 2026-08-24
 
 ### Trigger

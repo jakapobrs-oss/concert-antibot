@@ -25,6 +25,7 @@ import {
   holdBestAvailable,
   holdStandingZone,
 } from "@/app/actions/booking";
+import { TurnstileWidget } from "@/components/turnstile-widget";
 import { formatSeatLabel } from "@/lib/seatmap/seat-rows";
 import {
   distanceFromStage,
@@ -140,6 +141,7 @@ export function SeatMapSvg({
   maxSeats,
   concertId,
   queueToken,
+  turnstileSiteKey,
 }: {
   zones: SvgZone[];
   layout: { base64: string; width: number; height: number };
@@ -147,6 +149,7 @@ export function SeatMapSvg({
   maxSeats: number;
   concertId: string;
   queueToken: string;
+  turnstileSiteKey: string;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Map<string, Selected>>(new Map());
@@ -155,6 +158,8 @@ export function SeatMapSvg({
   const [bestAvailableSelection, setBestAvailableSelection] =
     useState<BestAvailableSelection | null>(null);
   const [seatedMode, setSeatedMode] = useState<SeatedMode>("best");
+  // ด่าน anti-bot ตอนกดซื้อเด้ง CHALLENGE → โชว์ Turnstile แล้วยิงคำสั่งเดิมซ้ำพร้อม token
+  const [needChallenge, setNeedChallenge] = useState(false);
   const [seatsByZone, setSeatsByZone] = useState<Map<string, SvgSeat[]>>(
     new Map(),
   );
@@ -443,7 +448,7 @@ export function SeatMapSvg({
     selected.size > 0;
 
   // hold ที่นั่ง + สร้าง order → ไป checkout (ทางเดินเดียวกับผังแบบเดิมทุกประการ)
-  async function handleSubmit() {
+  async function handleSubmit(turnstileToken?: string) {
     if (!hasSelection) return;
     setSubmitting(true);
     setError(null);
@@ -453,6 +458,7 @@ export function SeatMapSvg({
           zoneId: standingSelection.zoneId,
           quantity: standingSelection.quantity,
           queueToken,
+          turnstileToken,
         })
       : bestAvailableSelection
         ? await holdBestAvailable({
@@ -460,17 +466,23 @@ export function SeatMapSvg({
             zoneId: bestAvailableSelection.zoneId,
             quantity: bestAvailableSelection.quantity,
             queueToken,
+            turnstileToken,
           })
         : await holdAndCreateOrder({
             concertId,
             seatIds: Array.from(selected.keys()),
             queueToken,
+            turnstileToken,
           });
     if (result.ok) {
       router.push(`/checkout/${result.orderId}`);
     } else {
       setError(result.error);
       setSubmitting(false);
+      // ยังไม่ปฏิเสธถาวร — ขอให้ยืนยันว่าไม่ใช่บอทแล้วระบบยิงซ้ำให้เอง
+      setNeedChallenge(result.challenge === true);
+      // โดนด่านบอทเด้ง = ที่นั่งยังไม่ถูกแตะ ห้ามล้างตัวเลือกทิ้งเหมือน hold ล้มเหลว
+      if (result.challenge) return;
       if (
         !standingSelection &&
         !bestAvailableSelection &&
@@ -1106,11 +1118,27 @@ export function SeatMapSvg({
           </div>
         )}
 
+        {needChallenge && (
+          <div className="mt-3 space-y-2 rounded-md border border-warning/25 bg-warning/10 p-3">
+            <p className="text-center text-xs text-warning">
+              ยืนยันว่าคุณไม่ใช่บอท แล้วระบบจะจองบัตรให้ต่ออัตโนมัติ
+            </p>
+            <TurnstileWidget
+              siteKey={turnstileSiteKey}
+              size="compact"
+              onVerify={(token) => {
+                setNeedChallenge(false);
+                void handleSubmit(token);
+              }}
+            />
+          </div>
+        )}
+
         <Button
           className="mt-4 w-full"
           disabled={!hasSelection || submitting}
           loading={submitting}
-          onClick={handleSubmit}
+          onClick={() => handleSubmit()}
         >
           {submitting ? "กำลังจองบัตร…" : "ดำเนินการชำระเงิน →"}
         </Button>

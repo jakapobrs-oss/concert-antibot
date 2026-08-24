@@ -25,6 +25,7 @@
     "test:seatmap": "tsx scripts/test-seatmap-ui.ts",
     "test:seatmap-buyer": "tsx scripts/test-seatmap-buyer.ts",
     "test:sale-round": "tsx scripts/test-sale-round.ts",
+    "test:purchase-antibot": "tsx scripts/test-purchase-antibot.ts",
     "test:e2e": "playwright test",
     "test:load": "k6 run tests/load/queue.js"
   },

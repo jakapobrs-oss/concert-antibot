@@ -453,6 +453,9 @@ model BotEvent {
 
   @@index([createdAt])
   @@index([action, createdAt])
+  // ด่าน bot-score ตอนกดซื้อ (SECURITY_TODO #1) ต้องหา "BLOCK ล่าสุดของ user คนนี้"
+  // บนเส้นทางเงินตอนคนแย่งบัตร — ไม่มี index นี้ = สแกนตาราง audit ที่โตเรื่อย ๆ
+  @@index([userId, createdAt])
   @@map("bot_events")
 }
 
@@ -490,6 +493,9 @@ model BehaviorSession {
 
   @@index([sessionKey])
   @@index([createdAt])
+  // ด่าน bot-score ตอนกดซื้อ อ่านสัญญาณ Layer 2 ด้วย userId (ไม่ใช่ sessionKey — ตอนกดซื้อ
+  // ไม่มี fingerprint ติดมือ และ userId คือ scope ที่กัน poison อยู่แล้ว)
+  @@index([userId, createdAt])
   @@map("behavior_sessions")
 }
 

@@ -8,6 +8,7 @@ import { X } from "lucide-react";
 import { formatTHB } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { holdAndCreateOrder } from "@/app/actions/booking";
+import { TurnstileWidget } from "@/components/turnstile-widget";
 
 interface Seat {
   id: string;
@@ -35,17 +36,21 @@ export function SeatMap({
   maxSeats,
   concertId,
   queueToken,
+  turnstileSiteKey,
 }: {
   zones: Zone[];
   maxSeats: number;
   concertId: string;
   queueToken: string;
+  turnstileSiteKey: string;
 }) {
   const router = useRouter();
   // เก็บ seatId ที่เลือก → ราคา + ป้ายชื่อที่นั่ง
   const [selected, setSelected] = useState<Map<string, Selected>>(new Map());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ด่าน anti-bot ตอนกดซื้อเด้ง CHALLENGE → โชว์ Turnstile แล้วยิงซ้ำพร้อม token
+  const [needChallenge, setNeedChallenge] = useState(false);
 
   function toggleSeat(seat: Seat, zonePrice: number) {
     if (seat.status !== "AVAILABLE") return; // กดได้เฉพาะที่ว่าง
@@ -77,7 +82,7 @@ export function SeatMap({
   );
 
   // hold ที่นั่ง + สร้าง order → ไป checkout
-  async function handleSubmit() {
+  async function handleSubmit(turnstileToken?: string) {
     if (selected.size === 0) return;
     setSubmitting(true);
     setError(null);
@@ -85,12 +90,15 @@ export function SeatMap({
       concertId,
       seatIds: Array.from(selected.keys()),
       queueToken,
+      turnstileToken,
     });
     if (result.ok) {
       router.push(`/checkout/${result.orderId}`);
     } else {
       setError(result.error);
       setSubmitting(false);
+      // ยังไม่ปฏิเสธถาวร — ขอให้ยืนยันว่าไม่ใช่บอทแล้วกดใหม่
+      setNeedChallenge(result.challenge === true);
       // ที่นั่งบางที่ถูกจองไป → refresh เพื่อเห็นสถานะใหม่
       if (result.failedSeats?.length) {
         setTimeout(() => router.refresh(), 1500);
@@ -217,11 +225,27 @@ export function SeatMap({
           </div>
         )}
 
+        {needChallenge && (
+          <div className="mt-3 space-y-2 rounded-md border border-warning/25 bg-warning/10 p-3">
+            <p className="text-center text-xs text-warning">
+              ยืนยันว่าคุณไม่ใช่บอท แล้วระบบจะจองที่นั่งให้ต่ออัตโนมัติ
+            </p>
+            <TurnstileWidget
+              siteKey={turnstileSiteKey}
+              size="compact"
+              onVerify={(token) => {
+                setNeedChallenge(false);
+                void handleSubmit(token);
+              }}
+            />
+          </div>
+        )}
+
         <Button
           className="mt-4 w-full"
           disabled={selected.size === 0 || submitting}
           loading={submitting}
-          onClick={handleSubmit}
+          onClick={() => handleSubmit()}
         >
           {submitting ? "กำลังจองที่นั่ง…" : "ดำเนินการชำระเงิน →"}
         </Button>

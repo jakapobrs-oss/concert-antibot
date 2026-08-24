@@ -46,7 +46,7 @@ const BOT_UA_KEYWORDS = [
 ];
 
 // ประเมิน UA → คืนคะแนนที่เพิ่ม + label
-function scoreUserAgent(ua: string | null): { score: number; label: BotSignals["userAgent"] } {
+export function scoreUserAgent(ua: string | null): { score: number; label: BotSignals["userAgent"] } {
   if (!ua || ua.trim() === "") return { score: 35, label: "empty" }; // ไม่มี UA = น่าสงสัยมาก
   const lower = ua.toLowerCase();
   if (BOT_UA_KEYWORDS.some((k) => lower.includes(k))) {
@@ -58,7 +58,7 @@ function scoreUserAgent(ua: string | null): { score: number; label: BotSignals["
 }
 
 // ประเมิน header completeness — บอทมักขาด header ที่ browser จริงส่งเสมอ
-function scoreHeaders(headers: Headers): { score: number; label: BotSignals["headers"] } {
+export function scoreHeaders(headers: Headers): { score: number; label: BotSignals["headers"] } {
   const hasAcceptLang = !!headers.get("accept-language");
   const hasAccept = !!headers.get("accept");
   if (!hasAcceptLang || !hasAccept) {

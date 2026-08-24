@@ -21,6 +21,7 @@ interface TurnstileOptions {
   "error-callback"?: () => void;
   "expired-callback"?: () => void;
   theme?: "light" | "dark" | "auto";
+  size?: "normal" | "compact";
 }
 
 const SCRIPT_URL =
@@ -29,9 +30,12 @@ const SCRIPT_URL =
 export function TurnstileWidget({
   siteKey,
   onVerify,
+  // "compact" (150px) สำหรับกล่องแคบ เช่น แถบสรุปที่นั่งข้างผัง — ขนาด normal กว้าง 300px จะล้นกล่อง
+  size = "normal",
 }: {
   siteKey: string;
   onVerify: (token: string) => void;
+  size?: "normal" | "compact";
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
@@ -45,6 +49,7 @@ export function TurnstileWidget({
           callback: onVerify,
           // ธีมมืดให้กลืนกับพื้นเวทีของเว็บ
           theme: "dark",
+          size,
         });
       }
     }
@@ -63,7 +68,7 @@ export function TurnstileWidget({
         document.head.appendChild(s);
       }
     }
-  }, [siteKey, onVerify]);
+  }, [siteKey, onVerify, size]);
 
   return <div ref={ref} className="flex justify-center" />;
 }

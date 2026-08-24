@@ -14,6 +14,7 @@ import { isAdmitted } from "@/lib/queue";
 import { checkSaleAccess } from "@/lib/sale-round-guard";
 import { getHeldSeats } from "@/lib/seat-hold";
 import { auth } from "@/lib/auth";
+import { getTurnstileSiteKey } from "@/lib/turnstile";
 
 export const dynamic = "force-dynamic"; // ที่นั่งเปลี่ยนตลอด ต้อง fresh
 
@@ -228,6 +229,7 @@ export default async function SeatsPage({
             maxSeats={concert.maxTicketsPerUser}
             concertId={concert.id.toString()}
             queueToken={qt!}
+            turnstileSiteKey={getTurnstileSiteKey()}
           />
         ) : hasStandingZones ? (
           <div className="rounded-xl border border-warning/25 bg-warning/10 p-5 text-sm text-warning">
@@ -239,6 +241,7 @@ export default async function SeatsPage({
             maxSeats={concert.maxTicketsPerUser}
             concertId={concert.id.toString()}
             queueToken={qt!}
+            turnstileSiteKey={getTurnstileSiteKey()}
           />
         )}
       </main>

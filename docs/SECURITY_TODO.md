@@ -7,14 +7,38 @@
 
 ## ระดับ Medium — ควรทำก่อน Go-Live
 
-### 1. Bot score ไม่ถูกตรวจที่จุด Purchase
-- **ไฟล์**: `app/actions/booking.ts` → `holdAndCreateOrder()`
-- **ปัญหา**: Anti-bot score ถูกตรวจที่ queue join เท่านั้น บอทที่ผ่าน queue มาได้
+### 1. Bot score ไม่ถูกตรวจที่จุด Purchase — ✅ แก้แล้ว (2026-08-25)
+- **ไฟล์**: `lib/antibot-purchase.ts` (ใหม่) · `app/actions/booking.ts` → `assessPurchaseForUser()`
+  · `components/seat-map-svg.tsx` / `components/seat-map.tsx` (UI ยืนยัน)
+- **ปัญหาเดิม**: Anti-bot score ถูกตรวจที่ queue join เท่านั้น บอทที่ผ่าน queue มาได้
   สามารถซื้อตั๋วได้โดยตรง (เช่น หาก token รั่ว)
-- **แนวทาง**: ดึง `BotEvent` ล่าสุดของ userId ก่อน hold seat
-  ถ้า score สูงเกิน threshold → reject พร้อม `action: "CHALLENGE"`
-- **ข้อระวัง**: เพิ่ม latency ~5–10ms (DB read), ต้องกำหนด threshold ให้ดี
-  กัน false positive กับคนซื้อตั๋วปกติ
+- **ที่ทำจริง ต่างจาก "แนวทาง" ที่เขียนไว้เดิม — และทำไมถึงต่าง**:
+  แนวทางเดิม ("ดึง `BotEvent` ล่าสุดของ userId มาเทียบ threshold") แทบไม่กันอะไรเลย
+  เพราะด่านคิว (`app/api/queue/join/route.ts`) ปฏิเสธ 403 ทันทีเมื่อ BLOCK
+  → ใครถือ queue token ที่ admit แล้ว ย่อมเคยได้ ALLOW (คะแนน < 40) มาก่อนเสมอ
+  → อ่านคะแนนเก่ามาเทียบ ก็ผ่านทุกครั้ง
+  ช่องที่เปิดอยู่จริงคือ **ตัวคำขอตอนกดซื้อไม่เคยถูกประเมิน** (คนเข้าคิวเป็นมนุษย์
+  แล้วส่ง session ให้สคริปต์ยิงต่อ / สัญญาณ Layer 2 ที่เพิ่งติดตอนเลือกที่นั่งไม่มีใครอ่านซ้ำ)
+  จึงประเมิน **คำขอนี้ใหม่** แทนการใช้ผลเก่า
+- **สัญญาณที่ใช้** (`assessPurchase()`): UA + headers ของคำขอนี้ (น้ำหนักเดียวกับด่านคิว)
+  · `BehaviorSession.isLikelyBot` (Layer 2) +30 · เคยโดน BLOCK ใน 30 นาที +45
+  · Turnstile ที่ส่งมาแล้วไม่ผ่าน +55 · threshold เดียวกับด่านคิว (CHALLENGE 40 / BLOCK 70)
+- **จุดที่จงใจต่างจากด่านคิว**: "ไม่ส่ง Turnstile token" = **0 คะแนน** ไม่ใช่ +40
+  เพราะตอนกดซื้อไม่มี token ติดมือมาตั้งแต่แรก — ถ้ายืมกติกาด่านคิวมาตรง ๆ
+  คนซื้อจริงจะโดน CHALLENGE ยกแผงบนเส้นทางเงิน
+- **กันวนลูป**: ทำ Turnstile ผ่านสด ๆ → ปลด CHALLENGE เป็น ALLOW แต่ **ไม่ปลด BLOCK**
+  (สคริปต์ก็ทำ Turnstile ผ่านได้ UA `python-requests` จึงยังต้องโดนบล็อก)
+- **ไม่มีพารามิเตอร์ "ข้ามด่าน"**: server action ถูกเรียกจาก client ด้วยอาร์กิวเมนต์อะไรก็ได้
+  จึงห้ามรับ flag ข้ามด่านจาก client เด็ดขาด
+- **latency**: อ่าน DB 2 query แบบขนาน (`BotEvent` ล่าสุด + `BehaviorSession`)
+  + ยิง Turnstile เฉพาะเมื่อมี token · การเขียน `BotEvent` (checkpoint `purchase`)
+  อยู่ใน try/catch — บันทึก audit ล้มเหลวต้องไม่ทำให้ซื้อไม่ได้
+- **index ที่เพิ่ม**: `bot_events(userId, createdAt)` + `behavior_sessions(userId, createdAt)`
+  (migration `20260824190000_add_bot_event_user_idx`)
+- **หลักฐาน**: `tests/unit/antibot-purchase.test.ts` 12 เทส (รวมเคส false positive)
+  · `pnpm test:purchase-antibot` เทสบนเบราว์เซอร์จริง 7/7
+  (คนจริงยังซื้อได้ / UA สคริปต์ถูกหยุดไม่ถึง checkout / มี BotEvent ลง DB / ที่นั่งไม่ถูกล็อกค้าง)
+  · `pnpm test:seatmap-buyer` 27/27 ยืนยันว่าไม่ทำให้คนซื้อปกติพัง
 
 ### 2. Turnstile: ไม่ตรวจ `hostname` และ `action`
 - **ไฟล์**: `lib/antibot.ts` → `verifyTurnstile()`

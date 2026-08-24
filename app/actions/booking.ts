@@ -30,6 +30,9 @@ import { expireStaleOrders } from "@/lib/order-sweeper";
 import { checkSaleAccess } from "@/lib/sale-round-guard";
 import { env } from "@/lib/env";
 import { pickBestSeats } from "@/lib/seatmap/best-available";
+import { assessPurchase, RECENT_BLOCK_WINDOW_MS } from "@/lib/antibot-purchase";
+import { headers } from "next/headers";
+import { clientIpFromXff } from "@/lib/get-ip";
 
 // F1: rate limit ของ submitSlip — กันยิงสลิปรัวเผาโควต้า EasySlip (500/เดือน) + brute-force สลิป
 // key ผูก userId ทั้งคู่ เพื่อกัน attacker เอา orderId ของเหยื่อมา spam ล็อกไม่ให้เหยื่อจ่าย
@@ -44,16 +47,88 @@ const holdSchema = z.object({
   concertId: z.string().min(1),
   seatIds: z.array(z.string().min(1)).min(1).max(10),
   queueToken: z.string().min(1), // ต้องผ่านคิว
+  // token จาก Turnstile — มีเฉพาะรอบที่ผู้ใช้เพิ่งทำ challenge หลังโดนด่าน anti-bot เด้ง
+  // cap ความยาวไว้กันยัด payload ยักษ์เข้ามาให้ verifyTurnstile ไปยิงต่อ
+  turnstileToken: z.string().max(2048).optional(),
 });
 
 export type HoldResult =
   | { ok: true; orderId: string; amount: number; qrDataUrl: string; promptPayId: string; expiresAt: string }
-  | { ok: false; error: string; failedSeats?: string[] };
+  // challenge: true = ยังไม่ปฏิเสธถาวร แค่ขอให้ทำ Turnstile แล้วกดใหม่ (ฝั่ง UI โชว์ widget)
+  | { ok: false; error: string; failedSeats?: string[]; challenge?: true };
+
+// ============================================================
+// 🛡️ ด่าน anti-bot ตอนกดซื้อ (SECURITY_TODO #1)
+// ============================================================
+// วางไว้ใน holdAndCreateOrder จุดเดียว เพราะ holdStandingZone / holdBestAvailable
+// ต่อท่อเข้ามาที่ฟังก์ชันนี้ทั้งคู่ = choke point เดียวของเส้นทางเงิน
+// (ยอมให้ retry loop ของสองตัวนั้นเรียกซ้ำได้ไม่เกิน 3 ครั้ง — แลกกับการไม่ต้องรื้อโค้ดเงิน
+//  เป็นฟังก์ชันภายใน ซึ่งเสี่ยงกว่าค่าอ่าน DB ที่ประหยัดได้)
+//
+// ⚠️ ห้ามทำเป็นพารามิเตอร์ "ข้ามด่าน" ส่งต่อกันเอง — server action ถูกเรียกจาก client
+//    ด้วยอาร์กิวเมนต์อะไรก็ได้ ธงข้ามด่านใด ๆ จะกลายเป็นช่องให้บอทปิดด่านนี้เอง
+async function assessPurchaseForUser(params: {
+  userId: string;
+  turnstileToken?: string;
+}): Promise<{ blocked: boolean; challenge: boolean; message: string }> {
+  const hdrs = await headers();
+  const ip = clientIpFromXff(hdrs.get("x-forwarded-for"));
+  const since = new Date(Date.now() - RECENT_BLOCK_WINDOW_MS);
+
+  // อ่านสัญญาณจาก DB (index [userId, createdAt] ทั้งสองตาราง — ดู migration 20260824190000)
+  const [recentBlock, behavior] = await Promise.all([
+    prisma.botEvent.findFirst({
+      where: { userId: BigInt(params.userId), action: "BLOCK", createdAt: { gte: since } },
+      select: { id: true },
+    }),
+    prisma.behaviorSession.findFirst({
+      where: { userId: BigInt(params.userId), isLikelyBot: true, createdAt: { gte: since } },
+      select: { id: true },
+    }),
+  ]);
+
+  const assessment = await assessPurchase({
+    userAgent: hdrs.get("user-agent"),
+    headers: hdrs,
+    turnstileToken: params.turnstileToken,
+    ip,
+    behaviorLikelyBot: !!behavior,
+    hasRecentBlock: !!recentBlock,
+  });
+
+  // บันทึก audit ทุกครั้ง (dashboard + สถิติในเล่ม) — ห้ามให้ audit ล้มแล้วบล็อกการซื้อ
+  try {
+    await prisma.botEvent.create({
+      data: {
+        userId: BigInt(params.userId),
+        ip: ip ?? null,
+        userAgent: hdrs.get("user-agent"),
+        fingerprintHash: null,
+        score: assessment.score,
+        action: assessment.action,
+        signals: { ...assessment.signals },
+        checkpoint: "purchase",
+      },
+    });
+  } catch {
+    // เงียบไว้ — audit ไม่ใช่เส้นทางวิกฤต
+  }
+
+  return {
+    blocked: assessment.action === "BLOCK",
+    challenge: assessment.action === "CHALLENGE",
+    message:
+      assessment.action === "BLOCK"
+        ? "ระบบตรวจพบกิจกรรมที่ผิดปกติ ไม่สามารถทำรายการได้"
+        : "กรุณายืนยันว่าคุณไม่ใช่บอทก่อนทำรายการ",
+  };
+}
 
 export async function holdAndCreateOrder(input: {
   concertId: string;
   seatIds: string[];
   queueToken: string;
+  turnstileToken?: string;
 }): Promise<HoldResult> {
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
@@ -62,12 +137,19 @@ export async function holdAndCreateOrder(input: {
   const parsed = holdSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "ข้อมูลไม่ถูกต้อง" };
 
-  const { concertId, seatIds, queueToken } = parsed.data;
+  const { concertId, seatIds, queueToken, turnstileToken } = parsed.data;
 
   // 🔒 gate: ต้องมี queue token ที่ถูก admit (กันข้ามคิว)
   // F4: ส่ง userId ไปด้วย → token ต้องเป็นของ user คนนี้จริง (กันแชร์/ใช้ token คนอื่น)
   const admitted = await isAdmitted(queueToken, concertId, userId);
   if (!admitted) return { ok: false, error: "คิวหมดอายุ กรุณาเข้าคิวใหม่" };
+
+  // 🛡️ ด่าน anti-bot ตอนกดซื้อ (SECURITY_TODO #1) — วางหลังด่านคิวเพราะด่านคิวเป็น Redis
+  //    ราคาถูกกว่า และคัดคำขอที่ไม่มี token ที่ถูก admit ออกไปก่อนแล้ว
+  //    วางก่อนแตะที่นั่ง/สร้าง order เพราะไม่ควรให้บอทได้ยึดที่นั่งไว้ระหว่างถูกตรวจ
+  const botGate = await assessPurchaseForUser({ userId, turnstileToken });
+  if (botGate.blocked) return { ok: false, error: botGate.message };
+  if (botGate.challenge) return { ok: false, error: botGate.message, challenge: true };
 
   // ตรวจ max ตั๋วต่อ user + ที่นั่งยัง AVAILABLE จริงใน DB
   const concert = await prisma.concert.findUnique({
@@ -193,6 +275,7 @@ const standingHoldSchema = z.object({
   zoneId: z.string().regex(/^\d+$/),
   quantity: z.number().int().positive().max(20),
   queueToken: z.string().min(1),
+  turnstileToken: z.string().max(2048).optional(),
 });
 
 export async function holdStandingZone(input: {
@@ -200,6 +283,7 @@ export async function holdStandingZone(input: {
   zoneId: string;
   quantity: number;
   queueToken: string;
+  turnstileToken?: string;
 }): Promise<HoldResult> {
   // 1) auth + zod มาก่อนเสมอ — กันผู้ไม่ล็อกอินและค่าขนาดผิดปกติก่อนแตะฐานข้อมูล
   const session = await auth();
@@ -208,7 +292,7 @@ export async function holdStandingZone(input: {
 
   const parsed = standingHoldSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "ข้อมูลไม่ถูกต้อง" };
-  const { concertId, zoneId, quantity, queueToken } = parsed.data;
+  const { concertId, zoneId, quantity, queueToken, turnstileToken } = parsed.data;
 
   // 2) ยืนยันทั้งสถานะขายและ ownership ของโซน ก่อนเชื่อ zoneId จาก client
   const [concert, zone] = await Promise.all([
@@ -272,6 +356,7 @@ export async function holdStandingZone(input: {
       concertId,
       seatIds: candidates.slice(0, quantity),
       queueToken,
+      turnstileToken,
     });
     if (result.ok) return result;
 
@@ -290,6 +375,7 @@ const bestAvailableHoldSchema = z.object({
   zoneId: z.string().regex(/^\d+$/),
   quantity: z.number().int().positive().max(20),
   queueToken: z.string().min(1),
+  turnstileToken: z.string().max(2048).optional(),
 });
 
 const BEST_AVAILABLE_CANDIDATE_LIMIT = 500;
@@ -299,6 +385,7 @@ export async function holdBestAvailable(input: {
   zoneId: string;
   quantity: number;
   queueToken: string;
+  turnstileToken?: string;
 }): Promise<HoldResult> {
   // 1) auth + zod มาก่อนเสมอ — กันผู้ไม่ล็อกอินและ payload ผิดรูปก่อนแตะฐานข้อมูล
   const session = await auth();
@@ -307,7 +394,7 @@ export async function holdBestAvailable(input: {
 
   const parsed = bestAvailableHoldSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "ข้อมูลไม่ถูกต้อง" };
-  const { concertId, zoneId, quantity, queueToken } = parsed.data;
+  const { concertId, zoneId, quantity, queueToken, turnstileToken } = parsed.data;
 
   // 2) ยืนยันสถานะขายและ ownership ของโซนก่อนเชื่อ zoneId จาก client
   const [concert, zone] = await Promise.all([
@@ -364,7 +451,7 @@ export async function holdBestAvailable(input: {
     }
 
     // 4) ต่อเข้าท่อเดิมทั้งก้อน เพื่อคงด่านคิว/รอบขาย/ลิมิต/Redis hold/transaction เดิมทุกชั้น
-    const result = await holdAndCreateOrder({ concertId, seatIds, queueToken });
+    const result = await holdAndCreateOrder({ concertId, seatIds, queueToken, turnstileToken });
     if (result.ok) return result;
 
     // 5) retry เฉพาะตัวที่ชน Redis แล้วเลือกชุดดีที่สุดใหม่จากผู้สมัครที่เหลือ ไม่เกิน 3 รอบ
