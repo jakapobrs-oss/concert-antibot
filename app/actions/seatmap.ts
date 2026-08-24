@@ -16,8 +16,14 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { assertVerifiedAdmin } from "@/lib/admin-guard";
-import { buildSeatRows } from "@/lib/seatmap/seat-rows";
-import { parsePolygon, type Polygon } from "@/lib/seatmap/polygon";
+import {
+  buildSeatRows,
+  buildSeatRowsFromSpec,
+  buildStandingSeats,
+  parseRowSpec,
+  type SeatSpot,
+} from "@/lib/seatmap/seat-rows";
+import { parsePolygon, type Polygon, type StageSide } from "@/lib/seatmap/polygon";
 import { hasSignificantAspectRatioChange } from "@/lib/seatmap/aspect-ratio";
 import { readZoneSheet } from "@/lib/seatmap/zone-sheet-xlsx";
 import { canRegenerateZoneSeats, type ExistingSeatState } from "@/lib/seatmap/guard";
@@ -37,6 +43,12 @@ const MAX_LAYOUT_IMAGE_BASE64_LEN = 2_800_000;
 const MAX_SEATS_PER_ZONE = 5_000;
 
 const idSchema = z.string().regex(/^\d+$/, "รหัสไม่ถูกต้อง");
+const stageSideSchema = z.enum(["auto", "top", "bottom", "left", "right"]);
+const rowSpecStringSchema = z
+  .string()
+  .max(2_000, "ที่นั่งต่อแถวยาวเกินไป")
+  .optional()
+  .nullable();
 
 // พิกัดทุกจุดต้องเป็นสัดส่วน 0-1 ของขนาดรูป (ไม่ใช่พิกเซล)
 const pointSchema = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]);
@@ -62,7 +74,93 @@ const zoneSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "สีต้องเป็นรหัส hex เช่น #ef4444"),
   polygon: polygonSchema,
   seatCount: z.coerce.number().int().min(1).max(MAX_SEATS_PER_ZONE),
+  isStanding: z.boolean().default(false),
+  rowSpec: rowSpecStringSchema,
 });
+
+type RowSpecValidation =
+  | { ok: true; spec: number[] | null; serialized: string | null }
+  | { ok: false; error: string };
+
+/** ตรวจ invariant ของ rowSpec ร่วมกับจำนวนบัตร — ห้ามปรับยอดให้อัตโนมัติเมื่อไม่ตรง */
+function validateRowSpecForZone(
+  value: string | null | undefined,
+  seatCount: number,
+  isStanding: boolean,
+): RowSpecValidation {
+  const text = value?.trim() ?? "";
+  if (!text) return { ok: true, spec: null, serialized: null };
+
+  const spec = parseRowSpec(text);
+  if (!spec) {
+    return {
+      ok: false,
+      error: "ที่นั่งต่อแถวไม่ถูกต้อง — ใช้จำนวนเต็มบวก เช่น 12,14,16",
+    };
+  }
+  if (isStanding) return { ok: false, error: "โซนยืนกำหนดที่นั่งต่อแถวไม่ได้" };
+
+  const total = spec.reduce((sum, count) => sum + count, 0);
+  if (total !== seatCount) {
+    return {
+      ok: false,
+      error: `ที่นั่งต่อแถวรวม ${total} ไม่เท่ากับจำนวนที่นั่ง ${seatCount}`,
+    };
+  }
+  return { ok: true, spec, serialized: JSON.stringify(spec) };
+}
+
+function buildZoneSeats(
+  seatCount: number,
+  isStanding: boolean,
+  rowSpec: number[] | null,
+): SeatSpot[] {
+  if (isStanding) return buildStandingSeats(seatCount);
+  return rowSpec ? buildSeatRowsFromSpec(rowSpec) : buildSeatRows(seatCount);
+}
+
+/** ด่านเดียวของทุก path ที่จะลบ/เจนที่นั่งโซนเดิม รวม hold จริงใน Redis */
+async function regenerationVerdict(zoneId: bigint) {
+  const existing = await prisma.seat.findMany({
+    where: { zoneId },
+    select: {
+      id: true,
+      status: true,
+      orderItem: { select: { id: true } },
+      tickets: { select: { id: true }, take: 1 },
+    },
+  });
+  const heldInRedis = await getHeldSeats(existing.map((seat) => seat.id.toString()));
+  const states: ExistingSeatState[] = existing.map((seat) => ({
+    status: heldInRedis.has(seat.id.toString()) ? "HELD" : seat.status,
+    hasOrderItem: seat.orderItem !== null,
+    hasTicket: seat.tickets.length > 0,
+  }));
+  return canRegenerateZoneSeats(states);
+}
+
+async function createSeats(
+  tx: Prisma.TransactionClient,
+  zoneId: bigint,
+  seats: SeatSpot[],
+): Promise<void> {
+  await tx.seat.createMany({
+    data: seats.map((seat) => ({
+      zoneId,
+      rowLabel: seat.rowLabel,
+      seatNumber: seat.seatNumber,
+    })),
+  });
+}
+
+async function replaceSeats(
+  tx: Prisma.TransactionClient,
+  zoneId: bigint,
+  seats: SeatSpot[],
+): Promise<void> {
+  await tx.seat.deleteMany({ where: { zoneId } });
+  await createSeats(tx, zoneId, seats);
+}
 
 /** บันทึกรูปผังสถานที่ (เก็บเป็น base64 ใน Postgres แบบเดียวกับสลิป ไม่ได้ใช้ MinIO/S3) */
 export async function saveLayoutImage(input: {
@@ -145,6 +243,8 @@ export async function saveZoneWithSeats(input: {
   color: string;
   polygon: Polygon;
   seatCount: number;
+  isStanding?: boolean;
+  rowSpec?: string | null;
 }): Promise<SeatmapActionResult> {
   await assertVerifiedAdmin();
 
@@ -152,7 +252,10 @@ export async function saveZoneWithSeats(input: {
   if (!parsed.success) {
     return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
   }
-  const { concertId, zoneId, name, tier, price, color, polygon, seatCount } = parsed.data;
+  const { concertId, zoneId, name, tier, price, color, polygon, seatCount, isStanding } =
+    parsed.data;
+  const validatedRowSpec = validateRowSpecForZone(parsed.data.rowSpec, seatCount, isStanding);
+  if (!validatedRowSpec.ok) return validatedRowSpec;
 
   const concert = await prisma.concert.findUnique({
     where: { id: BigInt(concertId) },
@@ -171,31 +274,11 @@ export async function saveZoneWithSeats(input: {
   }
 
   // ที่นั่งเป็นแค่รายชื่อแถว/เลขที่นั่ง ไม่มีพิกัดบนรูป -> ขนาดกรอบไม่จำกัดจำนวนที่นั่งแล้ว
-  const seats = buildSeatRows(seatCount);
+  const seats = buildZoneSeats(seatCount, isStanding, validatedRowSpec.spec);
 
   // ---------- ด่านกันเจนทับของที่มีภาระผูกพัน ----------
   if (zoneId) {
-    const existing = await prisma.seat.findMany({
-      where: { zoneId: BigInt(zoneId) },
-      select: {
-        id: true,
-        status: true,
-        orderItem: { select: { id: true } },
-        tickets: { select: { id: true }, take: 1 },
-      },
-    });
-
-    // ⚠️ hold จริงอยู่ใน Redis (TTL 300s) — DB จะเป็น HELD ก็ต่อเมื่อ confirm แล้วเท่านั้น
-    //    ถ้าดูแค่ DB จะพลาดคนที่กำลังอยู่หน้าจ่ายเงิน แล้วลบที่นั่งใต้เท้าเขา
-    const heldInRedis = await getHeldSeats(existing.map((s) => s.id.toString()));
-
-    const states: ExistingSeatState[] = existing.map((seat) => ({
-      status: heldInRedis.has(seat.id.toString()) ? "HELD" : seat.status,
-      hasOrderItem: seat.orderItem !== null,
-      hasTicket: seat.tickets.length > 0,
-    }));
-
-    const verdict = canRegenerateZoneSeats(states);
+    const verdict = await regenerationVerdict(BigInt(zoneId));
     if (!verdict.allowed) return { ok: false, error: verdict.reason };
   }
 
@@ -204,7 +287,16 @@ export async function saveZoneWithSeats(input: {
     const zone = zoneId
       ? await tx.zone.update({
           where: { id: BigInt(zoneId) },
-          data: { name, tier: tier ?? null, price, color, polygon, totalSeats: seats.length },
+          data: {
+            name,
+            tier: tier ?? null,
+            price,
+            color,
+            polygon,
+            totalSeats: seats.length,
+            isStanding,
+            rowSpec: validatedRowSpec.serialized,
+          },
         })
       : await tx.zone.create({
           data: {
@@ -215,19 +307,14 @@ export async function saveZoneWithSeats(input: {
             color,
             polygon,
             totalSeats: seats.length,
+            isStanding,
+            rowSpec: validatedRowSpec.serialized,
           },
         });
 
     // เจนใหม่ = ล้างที่นั่งเดิมของโซนนี้ทิ้งทั้งหมด (ผ่านด่านข้างบนมาแล้วว่าไม่มีภาระผูกพัน)
-    if (zoneId) await tx.seat.deleteMany({ where: { zoneId: zone.id } });
-
-    await tx.seat.createMany({
-      data: seats.map((seat) => ({
-        zoneId: zone.id,
-        rowLabel: seat.rowLabel,
-        seatNumber: seat.seatNumber,
-      })),
-    });
+    if (zoneId) await replaceSeats(tx, zone.id, seats);
+    else await createSeats(tx, zone.id, seats);
 
     return zone.id.toString();
   });
@@ -238,6 +325,63 @@ export async function saveZoneWithSeats(input: {
     ok: true,
     message: `บันทึกโซน "${name}" แล้ว — เจนที่นั่ง ${seats.length} ที่ (zone ${savedZoneId})`,
   };
+}
+
+/** ปรับจำนวนที่นั่งรายแถวโดยคงจำนวนบัตรรวมของโซนเดิมไว้เท่าเดิม */
+export async function saveZoneRowSpec(input: {
+  concertId: string;
+  zoneId: string;
+  rowSpec: string;
+}): Promise<SeatmapActionResult> {
+  await assertVerifiedAdmin();
+
+  const parsed = z
+    .object({
+      concertId: idSchema,
+      zoneId: idSchema,
+      rowSpec: z.string().min(1, "กรุณากำหนดอย่างน้อย 1 แถว").max(2_000),
+    })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
+  }
+
+  const zone = await prisma.zone.findUnique({
+    where: { id: BigInt(parsed.data.zoneId) },
+    select: { id: true, concertId: true, name: true, totalSeats: true, isStanding: true },
+  });
+  if (!zone) return { ok: false, error: "ไม่พบโซนนี้" };
+  if (zone.concertId !== BigInt(parsed.data.concertId)) {
+    return { ok: false, error: "โซนนี้ไม่ได้อยู่ในคอนเสิร์ตนี้" };
+  }
+  if (zone.isStanding) return { ok: false, error: "โซนยืนจัดแถวไม่ได้" };
+
+  const validatedRowSpec = validateRowSpecForZone(
+    parsed.data.rowSpec,
+    zone.totalSeats,
+    false,
+  );
+  if (!validatedRowSpec.ok || !validatedRowSpec.spec || !validatedRowSpec.serialized) {
+    return validatedRowSpec.ok
+      ? { ok: false, error: "กรุณากำหนดอย่างน้อย 1 แถว" }
+      : validatedRowSpec;
+  }
+
+  const verdict = await regenerationVerdict(zone.id);
+  if (!verdict.allowed) return { ok: false, error: verdict.reason };
+
+  const seats = buildSeatRowsFromSpec(validatedRowSpec.spec);
+  await prisma.$transaction(async (tx) => {
+    await replaceSeats(tx, zone.id, seats);
+    await tx.zone.update({
+      where: { id: zone.id },
+      data: { rowSpec: validatedRowSpec.serialized },
+    });
+  });
+
+  revalidatePath(`/admin/concerts/${parsed.data.concertId}`);
+  revalidatePath(`/admin/concerts/${parsed.data.concertId}/seatmap`);
+  return { ok: true, message: `จัดแถวโซน "${zone.name}" แล้ว (${validatedRowSpec.spec.length} แถว)` };
 }
 
 /** ลบโซนทั้งโซน — ใช้ด่านชุดเดียวกับการเจนทับ เพราะผลลัพธ์กับที่นั่งเหมือนกันคือหายไป */
@@ -261,23 +405,7 @@ export async function deleteZone(input: {
     return { ok: false, error: "โซนนี้ไม่ได้อยู่ในคอนเสิร์ตนี้" };
   }
 
-  const existing = await prisma.seat.findMany({
-    where: { zoneId: zone.id },
-    select: {
-      id: true,
-      status: true,
-      orderItem: { select: { id: true } },
-      tickets: { select: { id: true }, take: 1 },
-    },
-  });
-  const heldInRedis = await getHeldSeats(existing.map((s) => s.id.toString()));
-  const verdict = canRegenerateZoneSeats(
-    existing.map((seat) => ({
-      status: heldInRedis.has(seat.id.toString()) ? "HELD" : seat.status,
-      hasOrderItem: seat.orderItem !== null,
-      hasTicket: seat.tickets.length > 0,
-    })),
-  );
+  const verdict = await regenerationVerdict(zone.id);
   if (!verdict.allowed) return { ok: false, error: verdict.reason.replace("เจนที่นั่งใหม่ทับ", "ลบ") };
 
   // Seat มี onDelete: Cascade จาก Zone อยู่แล้ว — ลบโซนที่นั่งหายตาม
@@ -327,6 +455,48 @@ export async function assignZoneFrame(input: {
   revalidatePath(`/admin/concerts/${concertId}`);
   revalidatePath(`/admin/concerts/${concertId}/seatmap`);
   return { ok: true, message: `ตั้งกรอบโซน "${zone.name}" แล้ว` };
+}
+
+/** ตั้งทิศเวทีของโซนโดยไม่แตะข้อมูลที่นั่ง ค่า auto จะกลับไปใช้การคำนวณจากกรอบ */
+export async function setZoneStageSide(input: {
+  concertId: string;
+  zoneId: string;
+  stageSide: "auto" | StageSide;
+}): Promise<SeatmapActionResult> {
+  await assertVerifiedAdmin();
+
+  const parsed = z
+    .object({ concertId: idSchema, zoneId: idSchema, stageSide: stageSideSchema })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
+  }
+  const { concertId, zoneId, stageSide } = parsed.data;
+
+  const zone = await prisma.zone.findUnique({
+    where: { id: BigInt(zoneId) },
+    select: { id: true, name: true, concertId: true },
+  });
+  if (!zone) return { ok: false, error: "ไม่พบโซนนี้" };
+  if (zone.concertId !== BigInt(concertId)) {
+    return { ok: false, error: "โซนนี้ไม่ได้อยู่ในคอนเสิร์ตนี้" };
+  }
+
+  await prisma.zone.update({
+    where: { id: zone.id },
+    data: { stageSide: stageSide === "auto" ? null : stageSide },
+  });
+
+  revalidatePath(`/admin/concerts/${concertId}`);
+  revalidatePath(`/admin/concerts/${concertId}/seatmap`);
+  const stageSideLabel =
+    stageSide === "auto"
+      ? "อัตโนมัติ"
+      : { top: "บน", bottom: "ล่าง", left: "ซ้าย", right: "ขวา" }[stageSide];
+  return {
+    ok: true,
+    message: `ตั้งทิศเวทีของโซน "${zone.name}" เป็น ${stageSideLabel} แล้ว`,
+  };
 }
 
 /**
@@ -426,7 +596,7 @@ export async function importZonesFromSheet(input: {
 
   const existingZones = await prisma.zone.findMany({
     where: { concertId: concert.id },
-    select: { id: true, name: true, totalSeats: true },
+    select: { id: true, name: true, totalSeats: true, isStanding: true, rowSpec: true },
   });
   const byName = new Map(existingZones.map((zone) => [zone.name.toLowerCase(), zone]));
 
@@ -438,7 +608,8 @@ export async function importZonesFromSheet(input: {
     const existing = byName.get(row.name.toLowerCase());
 
     if (!existing) {
-      const seats = buildSeatRows(row.seatCount);
+      const normalizedRowSpec = row.rowSpec ? JSON.stringify(row.rowSpec) : null;
+      const seats = buildZoneSeats(row.seatCount, row.isStanding, row.rowSpec);
       await prisma.$transaction(async (tx) => {
         const zone = await tx.zone.create({
           data: {
@@ -448,15 +619,11 @@ export async function importZonesFromSheet(input: {
             price: row.price,
             color: row.color,
             totalSeats: seats.length,
+            isStanding: row.isStanding,
+            rowSpec: normalizedRowSpec,
           },
         });
-        await tx.seat.createMany({
-          data: seats.map((seat) => ({
-            zoneId: zone.id,
-            rowLabel: seat.rowLabel,
-            seatNumber: seat.seatNumber,
-          })),
-        });
+        await createSeats(tx, zone.id, seats);
       });
       created += 1;
       continue;
@@ -469,46 +636,33 @@ export async function importZonesFromSheet(input: {
     });
     updated += 1;
 
-    if (existing.totalSeats === row.seatCount) continue;
+    const normalizedRowSpec = row.rowSpec ? JSON.stringify(row.rowSpec) : null;
+    const needsRegeneration =
+      existing.totalSeats !== row.seatCount ||
+      existing.isStanding !== row.isStanding ||
+      existing.rowSpec !== normalizedRowSpec;
+    if (!needsRegeneration) continue;
 
-    // ---- เปลี่ยนจำนวนที่นั่ง = ลบสร้างใหม่ ต้องผ่านด่านเงินก่อน ----
-    const seatsNow = await prisma.seat.findMany({
-      where: { zoneId: existing.id },
-      select: {
-        id: true,
-        status: true,
-        orderItem: { select: { id: true } },
-        tickets: { select: { id: true }, take: 1 },
-      },
-    });
-    const heldInRedis = await getHeldSeats(seatsNow.map((seat) => seat.id.toString()));
-    const states: ExistingSeatState[] = seatsNow.map((seat) => ({
-      status: heldInRedis.has(seat.id.toString()) ? "HELD" : seat.status,
-      hasOrderItem: seat.orderItem !== null,
-      hasTicket: seat.tickets.length > 0,
-    }));
-
-    const verdict = canRegenerateZoneSeats(states);
+    // ---- เปลี่ยนจำนวนหรือชนิดโซน = ลบสร้างใหม่ ต้องผ่านด่านเงินก่อน ----
+    const verdict = await regenerationVerdict(existing.id);
     if (!verdict.allowed) {
       skipped.push(
-        `${row.name}: คงจำนวนที่นั่งเดิม ${existing.totalSeats} ที่ (ไฟล์สั่ง ${row.seatCount}) — ${verdict.reason}`,
+        `${row.name}: คงรูปแบบเดิม ${existing.isStanding ? "โซนยืน" : "โซนนั่ง"} ${existing.totalSeats} ใบ ` +
+          `(ไฟล์สั่ง ${row.isStanding ? "โซนยืน" : "โซนนั่ง"} ${row.seatCount} ใบ) — ${verdict.reason}`,
       );
       continue;
     }
 
-    const seats = buildSeatRows(row.seatCount);
+    const seats = buildZoneSeats(row.seatCount, row.isStanding, row.rowSpec);
     await prisma.$transaction(async (tx) => {
-      await tx.seat.deleteMany({ where: { zoneId: existing.id } });
-      await tx.seat.createMany({
-        data: seats.map((seat) => ({
-          zoneId: existing.id,
-          rowLabel: seat.rowLabel,
-          seatNumber: seat.seatNumber,
-        })),
-      });
+      await replaceSeats(tx, existing.id, seats);
       await tx.zone.update({
         where: { id: existing.id },
-        data: { totalSeats: seats.length },
+        data: {
+          totalSeats: seats.length,
+          isStanding: row.isStanding,
+          rowSpec: normalizedRowSpec,
+        },
       });
     });
   }

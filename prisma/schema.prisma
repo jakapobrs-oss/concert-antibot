@@ -177,6 +177,17 @@ model Zone {
   // กรอบโซนที่แอดมินคลิกวาดทับรูป: [[x,y],[x,y],...] พิกัดเป็นสัดส่วน 0-1 ของขนาดรูป
   // null = โซนแบบเดิม (ไม่มีผังเชิงพื้นที่) -> ฝั่งคนซื้อ fallback ไป seat-map ปุ่มแบบเก่า
   polygon     Json?
+  // ทิศที่เวทีอยู่เมื่อมองจากโซนนี้: "top" | "bottom" | "left" | "right"
+  // null = ให้คำนวณอัตโนมัติจาก Concert.stagePolygon เทียบกับ polygon ของโซน
+  // (แอดมินตั้งค่านี้เพื่อ override เมื่อการคำนวณอัตโนมัติให้ทิศที่ผิด)
+  stageSide   String? @db.VarChar(6)
+  // โซนยืน: ยังเจน Seat ปกติทุกใบ ("ที่นั่งผี" rowLabel "S") เพื่อให้ลิมิตตั๋ว/คิว/hold/
+  // คืนบัตร/เช็คอินเดิมทำงานต่อได้ แต่ฝั่งคนซื้อขายเป็น "จำนวนใบ" ไม่เปิดให้เลือกรายที่นั่ง
+  isStanding  Boolean @default(false)
+  // ผังแถวรายโซน (แบบ C ประหยัด): JSON array จำนวนที่นั่งต่อแถว เช่น "[12,14,16]"
+  // = แถว A 12 ที่, B 14, C 16 (ผลรวมต้องเท่า totalSeats) — null = จัดแถวอัตโนมัติแบบเดิม
+  // ใช้กับโซนนั่งเท่านั้น (โซนยืนไม่มีแถวจริง) — เก็บเป็น string เพื่อ validate ผ่าน parseRowSpec ชั้นเดียว
+  rowSpec     String? @db.VarChar(2000)
 
   concert Concert @relation(fields: [concertId], references: [id], onDelete: Cascade)
   seats   Seat[]

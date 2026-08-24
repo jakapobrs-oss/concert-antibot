@@ -5,8 +5,10 @@ import {
   insertMidpointWithinCap,
   isPointInPolygon,
   movePolygonPoint,
+  parseStageSide,
   polygonCentroid,
   polygonPoleOfInaccessibility,
+  stageSideAuto,
   translatePolygonWithinBounds,
   type Point,
   type Polygon,
@@ -172,5 +174,44 @@ describe("polygonPoleOfInaccessibility — หาจุดปักป้าย�
     ]);
 
     expect(point.every(Number.isFinite)).toBe(true);
+  });
+});
+
+describe("stageSideAuto — หาทิศเวทีจากกรอบโซน", () => {
+  const box = (centerX: number, centerY: number): Polygon => [
+    [centerX - 0.125, centerY - 0.125],
+    [centerX + 0.125, centerY - 0.125],
+    [centerX + 0.125, centerY + 0.125],
+    [centerX - 0.125, centerY + 0.125],
+  ];
+  const zone = box(0.5, 0.5);
+
+  it.each([
+    ["เหนือโซน", box(0.5, 0.125), "top"],
+    ["ใต้โซน", box(0.5, 0.875), "bottom"],
+    ["ซ้ายของโซน", box(0.125, 0.5), "left"],
+    ["ขวาของโซน", box(0.875, 0.5), "right"],
+  ] as const)("เวทีอยู่%s คืน %s", (_description, stage, expected) => {
+    expect(stageSideAuto(zone, stage)).toBe(expected);
+  });
+
+  it("ทแยง 45 องศาเลือกแกนตั้งแบบคงที่", () => {
+    expect(stageSideAuto(box(0.25, 0.25), box(0.75, 0.75))).toBe("bottom");
+  });
+
+  it("ไม่มีกรอบเวที กรอบว่าง หรือข้อมูลที่ parse ไม่ได้ คืน null", () => {
+    expect(stageSideAuto(zone, null)).toBeNull();
+    expect(stageSideAuto(zone, [])).toBeNull();
+    expect(stageSideAuto(zone, [[0, 0], [1, 1]] as Polygon)).toBeNull();
+  });
+});
+
+describe("parseStageSide — ตรวจค่าทิศเวทีจาก DB", () => {
+  it.each(["top", "bottom", "left", "right"] as const)("ยอมรับค่า %s", (value) => {
+    expect(parseStageSide(value)).toBe(value);
+  });
+
+  it.each(["north", 5, ""])("ปฏิเสธค่า %j", (value) => {
+    expect(parseStageSide(value)).toBeNull();
   });
 });

@@ -5,6 +5,7 @@
 // ============================================================
 // flow: holdAndCreateOrder → (แสดง QR) → submitSlip → (verify) → issue tickets
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   finalizePaidOrder,
@@ -28,6 +29,7 @@ import { isHolderAccountOldEnough, exceedsHolderCap } from "@/lib/holder-policy"
 import { expireStaleOrders } from "@/lib/order-sweeper";
 import { checkSaleAccess } from "@/lib/sale-round-guard";
 import { env } from "@/lib/env";
+import { pickBestSeats } from "@/lib/seatmap/best-available";
 
 // F1: rate limit ของ submitSlip — กันยิงสลิปรัวเผาโควต้า EasySlip (500/เดือน) + brute-force สลิป
 // key ผูก userId ทั้งคู่ เพื่อกัน attacker เอา orderId ของเหยื่อมา spam ล็อกไม่ให้เหยื่อจ่าย
@@ -183,6 +185,194 @@ export async function holdAndCreateOrder(input: {
     await releaseSeats(seatIds, userId);
     return { ok: false, error: "สร้างคำสั่งซื้อไม่สำเร็จ" };
   }
+}
+
+// ---- 1.1 โซนยืน: เลือกที่นั่งผีให้ตามจำนวน แล้วต่อเข้าท่อจองเดิมทั้งก้อน ----
+const standingHoldSchema = z.object({
+  concertId: z.string().regex(/^\d+$/),
+  zoneId: z.string().regex(/^\d+$/),
+  quantity: z.number().int().positive().max(20),
+  queueToken: z.string().min(1),
+});
+
+export async function holdStandingZone(input: {
+  concertId: string;
+  zoneId: string;
+  quantity: number;
+  queueToken: string;
+}): Promise<HoldResult> {
+  // 1) auth + zod มาก่อนเสมอ — กันผู้ไม่ล็อกอินและค่าขนาดผิดปกติก่อนแตะฐานข้อมูล
+  const session = await auth();
+  const userId = (session?.user as { id?: string } | undefined)?.id;
+  if (!userId) return { ok: false, error: "กรุณาเข้าสู่ระบบก่อนจองตั๋ว" };
+
+  const parsed = standingHoldSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "ข้อมูลไม่ถูกต้อง" };
+  const { concertId, zoneId, quantity, queueToken } = parsed.data;
+
+  // 2) ยืนยันทั้งสถานะขายและ ownership ของโซน ก่อนเชื่อ zoneId จาก client
+  const [concert, zone] = await Promise.all([
+    prisma.concert.findUnique({
+      where: { id: BigInt(concertId) },
+      select: { maxTicketsPerUser: true, status: true },
+    }),
+    prisma.zone.findUnique({
+      where: { id: BigInt(zoneId) },
+      select: { concertId: true, isStanding: true },
+    }),
+  ]);
+  if (!concert || concert.status !== "ON_SALE") {
+    return { ok: false, error: "คอนเสิร์ตไม่เปิดขาย" };
+  }
+  if (!zone || !zone.isStanding || zone.concertId !== BigInt(concertId)) {
+    return { ok: false, error: "โซนนี้ไม่ใช่โซนยืนของคอนเสิร์ตนี้" };
+  }
+
+  // 3) 🔴 clamp ก่อน query ที่นั่งหรือยิง Redis เสมอ: กันงานสุ่มก้อนใหญ่แบบ DoS
+  // และกัน request เกินเพดานจำนวนมากไหลไปชน lock พร้อมกันจนเกิด thundering herd
+  if (quantity > concert.maxTicketsPerUser) {
+    return {
+      ok: false,
+      error: `เลือกได้สูงสุด ${concert.maxTicketsPerUser} ใบต่อบัญชีสำหรับคอนเสิร์ตนี้`,
+    };
+  }
+
+  const loadCandidates = async (): Promise<string[]> => {
+    const rows = await prisma.$queryRaw<Array<{ id: bigint }>>`
+      SELECT id FROM seats
+      WHERE "zoneId" = ${BigInt(zoneId)} AND status = 'AVAILABLE'
+      ORDER BY random()
+      LIMIT ${quantity * 3}
+    `;
+    return rows.map((row) => row.id.toString());
+  };
+
+  // 4) ดึงเผื่อราวสามเท่าไว้เติมตัวที่ชน Redis โดยไม่ต้องยิง query ใหม่ทุกครั้ง
+  let candidates = await loadCandidates();
+  if (candidates.length < quantity) {
+    return { ok: false, error: `ที่ว่างไม่พอ (เหลือ ${candidates.length} ใบ)` };
+  }
+
+  const rejected = new Set<string>();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (candidates.length < quantity) {
+      const known = new Set(candidates);
+      const fresh = await loadCandidates();
+      for (const seatId of fresh) {
+        if (!rejected.has(seatId) && !known.has(seatId)) {
+          candidates.push(seatId);
+          known.add(seatId);
+        }
+      }
+    }
+    if (candidates.length < quantity) continue;
+
+    // 5) ใช้ท่อเดิมทั้งก้อน เพื่อให้คิว/รอบขาย/ลิมิต/Redis hold/transaction วิ่งเหมือนโซนนั่ง
+    const result = await holdAndCreateOrder({
+      concertId,
+      seatIds: candidates.slice(0, quantity),
+      queueToken,
+    });
+    if (result.ok) return result;
+
+    // 6) retry เฉพาะการชน Redis ที่ระบุ failedSeats; error จากคิว/ลิมิต/รอบขายต้องคืนทันที
+    if (!result.failedSeats?.length) return result;
+    for (const seatId of result.failedSeats) rejected.add(seatId);
+    candidates = candidates.filter((seatId) => !rejected.has(seatId));
+  }
+
+  return { ok: false, error: "คนกดเยอะมาก ลองอีกครั้ง" };
+}
+
+// ---- 1.2 โซนนั่งแบบ best-available: ส่งแค่จำนวนจาก client แล้วเลือกที่ดีที่สุดฝั่ง server ----
+const bestAvailableHoldSchema = z.object({
+  concertId: z.string().regex(/^\d+$/),
+  zoneId: z.string().regex(/^\d+$/),
+  quantity: z.number().int().positive().max(20),
+  queueToken: z.string().min(1),
+});
+
+const BEST_AVAILABLE_CANDIDATE_LIMIT = 500;
+
+export async function holdBestAvailable(input: {
+  concertId: string;
+  zoneId: string;
+  quantity: number;
+  queueToken: string;
+}): Promise<HoldResult> {
+  // 1) auth + zod มาก่อนเสมอ — กันผู้ไม่ล็อกอินและ payload ผิดรูปก่อนแตะฐานข้อมูล
+  const session = await auth();
+  const userId = (session?.user as { id?: string } | undefined)?.id;
+  if (!userId) return { ok: false, error: "กรุณาเข้าสู่ระบบก่อนจองตั๋ว" };
+
+  const parsed = bestAvailableHoldSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "ข้อมูลไม่ถูกต้อง" };
+  const { concertId, zoneId, quantity, queueToken } = parsed.data;
+
+  // 2) ยืนยันสถานะขายและ ownership ของโซนก่อนเชื่อ zoneId จาก client
+  const [concert, zone] = await Promise.all([
+    prisma.concert.findUnique({
+      where: { id: BigInt(concertId) },
+      select: { maxTicketsPerUser: true, status: true },
+    }),
+    prisma.zone.findUnique({
+      where: { id: BigInt(zoneId) },
+      select: { concertId: true, isStanding: true },
+    }),
+  ]);
+  if (!concert || concert.status !== "ON_SALE") {
+    return { ok: false, error: "คอนเสิร์ตไม่เปิดขาย" };
+  }
+  if (!zone || zone.isStanding || zone.concertId !== BigInt(concertId)) {
+    return { ok: false, error: "โซนนี้ไม่ใช่โซนนั่งของคอนเสิร์ตนี้" };
+  }
+
+  // 3) 🔴 clamp ก่อน query ผู้สมัครหรือยิง Redis: กันบอทขอชุดใหญ่เพื่อกิน DB/lock พร้อมกัน
+  if (quantity > concert.maxTicketsPerUser) {
+    return {
+      ok: false,
+      error: `เลือกได้สูงสุด ${concert.maxTicketsPerUser} ที่นั่งต่อบัญชีสำหรับคอนเสิร์ตนี้`,
+    };
+  }
+
+  const rejected = new Set<string>();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // จำกัดผู้สมัครไว้ 500 ที่แรกตามลำดับผัง ป้องกันการดึงสต็อกทั้งโซนขนาดใหญ่เข้าหน่วยความจำ
+    // ⚠️ ต้องเรียง "ความยาวชื่อแถวก่อนตัวอักษร" ให้ตรง compareSeatOrder — ถ้าเรียง string ล้วน
+    // แถว AA จะแทรกระหว่าง A กับ B แล้วเบียดแถวหน้าหลุดจากโควตา 500 → ระบบแจกแถวหลังทั้งที่แถวหน้าว่าง
+    const candidates = await prisma.$queryRaw<
+      Array<{ id: bigint; rowLabel: string; seatNumber: number }>
+    >`
+      SELECT id, "rowLabel", "seatNumber" FROM seats
+      WHERE "zoneId" = ${BigInt(zoneId)} AND status = 'AVAILABLE'
+      ${
+        rejected.size > 0
+          ? Prisma.sql`AND id NOT IN (${Prisma.join([...rejected].map((seatId) => BigInt(seatId)))})`
+          : Prisma.empty
+      }
+      ORDER BY LENGTH("rowLabel"), "rowLabel", "seatNumber"
+      LIMIT ${BEST_AVAILABLE_CANDIDATE_LIMIT}
+    `;
+    const seatIds = pickBestSeats(
+      candidates.map((seat) => ({ ...seat, id: seat.id.toString() })),
+      quantity,
+    );
+    if (seatIds.length < quantity) {
+      return attempt === 0
+        ? { ok: false, error: `ที่ว่างไม่พอ (เหลือ ${candidates.length} ที่)` }
+        : { ok: false, error: "คนกดเยอะมาก ลองอีกครั้ง" };
+    }
+
+    // 4) ต่อเข้าท่อเดิมทั้งก้อน เพื่อคงด่านคิว/รอบขาย/ลิมิต/Redis hold/transaction เดิมทุกชั้น
+    const result = await holdAndCreateOrder({ concertId, seatIds, queueToken });
+    if (result.ok) return result;
+
+    // 5) retry เฉพาะตัวที่ชน Redis แล้วเลือกชุดดีที่สุดใหม่จากผู้สมัครที่เหลือ ไม่เกิน 3 รอบ
+    if (!result.failedSeats?.length) return result;
+    for (const seatId of result.failedSeats) rejected.add(seatId);
+  }
+
+  return { ok: false, error: "คนกดเยอะมาก ลองอีกครั้ง" };
 }
 
 // ---- 2. Submit สลิป → verify → issue tickets ----

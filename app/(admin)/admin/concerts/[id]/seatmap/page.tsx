@@ -9,7 +9,8 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { SiteHeader } from "@/components/site-header";
 import { SeatmapEditor } from "@/components/seatmap-editor";
-import { parsePolygon } from "@/lib/seatmap/polygon";
+import { parsePolygon, parseStageSide } from "@/lib/seatmap/polygon";
+import { compareSeatOrder, parseRowSpec } from "@/lib/seatmap/seat-rows";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,10 @@ export default async function AdminSeatmapPage({ params }: { params: Promise<{ i
           price: true,
           color: true,
           totalSeats: true,
+          isStanding: true,
+          rowSpec: true,
           polygon: true,
+          stageSide: true,
         },
       },
     },
@@ -44,16 +48,33 @@ export default async function AdminSeatmapPage({ params }: { params: Promise<{ i
 
   if (!concert) notFound();
 
-  // นับที่นั่งที่ขายแล้ว/จองค้างแบบ aggregate — ไม่ดึงแถวที่นั่งจริงมาทั้งหมด
-  // ผังจริงมีได้ถึงหลักหมื่นที่นั่ง (BABYMONSTER = 11,000) ถ้าดึงรายตัวหน้านี้จะอืดโดยไม่ได้ใช้อะไรเลย
-  const seatCounts = await prisma.seat.groupBy({
-    by: ["zoneId", "status"],
-    where: { zone: { concertId }, status: { in: ["SOLD", "HELD"] } },
-    _count: { _all: true },
-  });
+  // ดึงเฉพาะยอดรวม ไม่ดึงที่นั่งหลักหมื่นแถวขึ้นหน้าแอดมิน
+  const [seatCounts, rowCounts] = await Promise.all([
+    prisma.seat.groupBy({
+      by: ["zoneId", "status"],
+      where: { zone: { concertId }, status: { in: ["SOLD", "HELD"] } },
+      _count: { _all: true },
+    }),
+    prisma.seat.groupBy({
+      by: ["zoneId", "rowLabel"],
+      where: { zone: { concertId } },
+      _count: { _all: true },
+    }),
+  ]);
 
   const countOf = (zoneId: bigint, status: "SOLD" | "HELD") =>
     seatCounts.find((row) => row.zoneId === zoneId && row.status === status)?._count._all ?? 0;
+
+  const actualRowsOf = (zoneId: bigint) =>
+    rowCounts
+      .filter((row) => row.zoneId === zoneId)
+      .sort((a, b) =>
+        compareSeatOrder(
+          { rowLabel: a.rowLabel, seatNumber: 1 },
+          { rowLabel: b.rowLabel, seatNumber: 1 },
+        ),
+      )
+      .map((row) => row._count._all);
 
   // BigInt/Decimal ส่งข้าม server->client ตรง ๆ ไม่ได้ ต้องแปลงเป็น string ก่อน
   const zones = concert.zones.map((zone) => ({
@@ -63,7 +84,11 @@ export default async function AdminSeatmapPage({ params }: { params: Promise<{ i
     price: zone.price.toString(),
     color: zone.color,
     totalSeats: zone.totalSeats,
+    isStanding: zone.isStanding,
+    rowSpec: parseRowSpec(zone.rowSpec),
+    rowCounts: actualRowsOf(zone.id),
     polygon: parsePolygon(zone.polygon),
+    stageSide: parseStageSide(zone.stageSide),
     soldCount: countOf(zone.id, "SOLD"),
     heldCount: countOf(zone.id, "HELD"),
   }));

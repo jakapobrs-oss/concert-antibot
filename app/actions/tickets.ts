@@ -21,6 +21,7 @@ import {
   buildEntryQrText,
   parseEntryQrText,
 } from "@/lib/entry-code";
+import { formatSeatLabel } from "@/lib/seatmap/seat-rows";
 
 async function sessionUserId(): Promise<string | null> {
   const session = await auth();
@@ -93,7 +94,9 @@ export async function checkInTicket(input: { qrText: string }): Promise<CheckInR
         select: {
           rowLabel: true,
           seatNumber: true,
-          zone: { select: { name: true, concert: { select: { title: true } } } },
+          zone: {
+            select: { name: true, isStanding: true, concert: { select: { title: true } } },
+          },
         },
       },
     },
@@ -131,7 +134,12 @@ export async function checkInTicket(input: { qrText: string }): Promise<CheckInR
     holderName: ticket.holderName || "(ไม่มีชื่อบนตั๋ว)",
     concertTitle: ticket.seat.zone.concert.title,
     zoneName: ticket.seat.zone.name,
-    seat: `${ticket.seat.rowLabel}${ticket.seat.seatNumber}`,
+    seat: formatSeatLabel({
+      zoneName: ticket.seat.zone.name,
+      isStanding: ticket.seat.zone.isStanding,
+      rowLabel: ticket.seat.rowLabel,
+      seatNumber: ticket.seat.seatNumber,
+    }),
     checkedInAt: now.toISOString(),
   };
 }
@@ -162,7 +170,9 @@ export async function returnTicket(input: { ticketId: string }): Promise<ReturnT
         select: {
           rowLabel: true,
           seatNumber: true,
-          zone: { select: { name: true, concert: { select: { eventAt: true } } } },
+          zone: {
+            select: { name: true, isStanding: true, concert: { select: { eventAt: true } } },
+          },
         },
       },
     },
@@ -184,7 +194,12 @@ export async function returnTicket(input: { ticketId: string }): Promise<ReturnT
     };
   }
 
-  const seatLabel = `${ticket.seat.zone.name} ${ticket.seat.rowLabel}${ticket.seat.seatNumber}`;
+  const seatLabel = formatSeatLabel({
+    zoneName: ticket.seat.zone.name,
+    isStanding: ticket.seat.zone.isStanding,
+    rowLabel: ticket.seat.rowLabel,
+    seatNumber: ticket.seat.seatNumber,
+  });
   try {
     await prisma.$transaction(async (tx) => {
       // claim ตั๋วแบบ conditional — กันคืนซ้ำ/ชนกับ check-in ที่กำลังเกิดพร้อมกัน

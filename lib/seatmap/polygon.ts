@@ -10,6 +10,9 @@ export type Point = [number, number];
 /** กรอบที่แอดมินคลิกวาด (โซนหรือเวที) — ต้องมีอย่างน้อย 3 จุด */
 export type Polygon = Point[];
 
+/** ทิศที่เวทีอยู่เมื่อมองจากโซน พิกัดแกน y ของรูปชี้ลง */
+export type StageSide = "top" | "bottom" | "left" | "right";
+
 export interface CappedPolygonUpdate {
   points: Polygon;
   added: boolean;
@@ -88,6 +91,14 @@ export function parsePolygon(value: unknown): Point[] | null {
     points.push([x, y]);
   }
   return points.length >= 3 ? points : null;
+}
+
+/** อ่านทิศเวทีจาก DB โดยยอมรับเฉพาะค่าที่ UI รองรับ */
+export function parseStageSide(value: unknown): StageSide | null {
+  if (value === "top" || value === "bottom" || value === "left" || value === "right") {
+    return value;
+  }
+  return null;
 }
 
 /**
@@ -222,6 +233,26 @@ export function polygonPoleOfInaccessibility(polygon: Polygon): Point {
   }
 
   return bestPoint;
+}
+
+/**
+ * หาทิศเวทีอัตโนมัติจากจุดภายในที่เหมาะกับรูปเว้าของทั้งโซนและเวที
+ * ถ้าเวกเตอร์ทแยงเท่ากันให้แกนตั้งชนะ เพื่อให้ผลลัพธ์คงที่ทุกครั้ง
+ */
+export function stageSideAuto(zone: Polygon, stage: Polygon | null): StageSide | null {
+  const validZone = parsePolygon(zone);
+  const validStage = parsePolygon(stage);
+  if (!validZone || !validStage) return null;
+
+  const [zoneX, zoneY] = polygonPoleOfInaccessibility(validZone);
+  const [stageX, stageY] = polygonPoleOfInaccessibility(validStage);
+  const deltaX = stageX - zoneX;
+  const deltaY = stageY - zoneY;
+
+  if (Math.abs(deltaY) >= Math.abs(deltaX)) {
+    return deltaY < 0 ? "top" : "bottom";
+  }
+  return deltaX < 0 ? "left" : "right";
 }
 
 /**

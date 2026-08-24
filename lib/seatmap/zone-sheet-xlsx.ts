@@ -135,6 +135,8 @@ export async function readZoneSheet(data: ArrayBuffer | Buffer): Promise<ZoneShe
       color: colorCell ? cellText(colorCell) : "",
       fillColor: fillSource ? cellFillArgb(fillSource) : null,
       seatCount: cellAt("seatCount") ? cellText(cellAt("seatCount")!) : "",
+      kind: cellAt("kind") ? cellText(cellAt("kind")!) : "",
+      rowSpec: cellAt("rowSpec") ? cellText(cellAt("rowSpec")!) : "",
     });
   }
 
@@ -142,13 +144,28 @@ export async function readZoneSheet(data: ArrayBuffer | Buffer): Promise<ZoneShe
 }
 
 /** หนึ่งแถวตัวอย่างในไฟล์เทมเพลต */
-const TEMPLATE_ROWS: { name: string; tier: string; price: number; color: string }[] = [
-  { name: "V1", tier: "เรท 1", price: 7300, color: "FFE11D48" },
+const TEMPLATE_ROWS: {
+  name: string;
+  tier: string;
+  price: number;
+  color: string;
+  kind?: "ยืน";
+  seatCount?: number;
+  rowSpec?: string;
+}[] = [
+  {
+    name: "V1",
+    tier: "เรท 1",
+    price: 7300,
+    color: "FFE11D48",
+    seatCount: 42,
+    rowSpec: "12,14,16",
+  },
   { name: "V2", tier: "เรท 1", price: 7300, color: "FFE11D48" },
   { name: "A1", tier: "เรท 2", price: 6500, color: "FFF59E0B" },
   { name: "A2", tier: "เรท 2", price: 6500, color: "FFF59E0B" },
   { name: "B1", tier: "เรท 3", price: 4500, color: "FF22C55E" },
-  { name: "B2", tier: "เรท 3", price: 4500, color: "FF22C55E" },
+  { name: "B2", tier: "เรท 3", price: 4500, color: "FF22C55E", kind: "ยืน" },
 ];
 
 /**
@@ -166,6 +183,8 @@ export async function buildZoneTemplate(): Promise<Buffer> {
     { header: "ราคา", key: "price", width: 12 },
     { header: "สี", key: "color", width: 14 },
     { header: "จำนวนที่นั่ง", key: "seatCount", width: 14 },
+    { header: "ประเภทโซน", key: "kind", width: 14 },
+    { header: "ที่นั่งต่อแถว", key: "rowSpec", width: 20 },
   ];
   sheet.getRow(1).font = { bold: true };
 
@@ -175,7 +194,9 @@ export async function buildZoneTemplate(): Promise<Buffer> {
       tier: template.tier,
       price: template.price,
       color: `#${template.color.slice(2).toLowerCase()}`,
-      seatCount: 200,
+      seatCount: template.seatCount ?? 200,
+      kind: template.kind ?? "",
+      rowSpec: template.rowSpec ?? "",
     });
     row.getCell("color").fill = {
       type: "pattern",
@@ -197,6 +218,8 @@ export async function buildZoneTemplate(): Promise<Buffer> {
     "               ⚠️ ระบายสีให้เลือกจากแถว Standard Colors — สีจากแถว Theme Colors ระบบอ่านไม่ได้",
     "               ⚠️ เรทต่างกันต้องคนละสี ไม่งั้นคนซื้อแยกราคาจากผังไม่ได้",
     "จำนวนที่นั่ง   จำนวนเต็ม 1–5000 ต่อโซน",
+    "ประเภทโซน     เว้นว่าง/พิมพ์ “นั่ง” สำหรับโซนนั่ง · พิมพ์ “ยืน” สำหรับโซนยืน",
+    "ที่นั่งต่อแถว   คอลัมน์เสริม · กรอกจำนวนคั่นด้วยจุลภาค เช่น 12,14,16 และผลรวมต้องเท่าจำนวนที่นั่ง",
     "",
     "อัปโหลดแล้วระบบจะสร้างโซนให้ครบทุกแถว จากนั้นไปวาดกรอบโซนทับรูปผังในหน้าแอดมิน",
   ]) {

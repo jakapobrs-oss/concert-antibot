@@ -13,7 +13,7 @@
 //
 // 🔑 พิกัดทุกจุดเก็บเป็นสัดส่วน 0-1 ของขนาดรูป ไม่ใช่พิกเซลบนจอ
 //    คลิกจากจอไหน ขนาดเท่าไร ก็ได้ค่าเดียวกัน
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ImageUp,
@@ -37,9 +37,11 @@ import {
   insertMidpointWithinCap,
   movePolygonPoint,
   polygonPoleOfInaccessibility,
+  stageSideAuto,
   translatePolygonWithinBounds,
   type Point,
   type Polygon,
+  type StageSide,
 } from "@/lib/seatmap/polygon";
 import {
   selectImageFitPlan,
@@ -48,11 +50,14 @@ import {
 import {
   saveLayoutImage,
   saveZoneWithSeats,
+  saveZoneRowSpec,
   deleteZone,
   assignZoneFrame,
+  setZoneStageSide,
   saveStagePolygon,
   importZonesFromSheet,
 } from "@/app/actions/seatmap";
+import { MAX_ROWS, rowLabelFor } from "@/lib/seatmap/seat-rows";
 
 interface ZoneView {
   id: string;
@@ -61,7 +66,11 @@ interface ZoneView {
   price: string;
   color: string;
   totalSeats: number;
+  isStanding: boolean;
+  rowSpec: number[] | null;
+  rowCounts: number[];
   polygon: Point[] | null;
+  stageSide: StageSide | null;
   soldCount: number;
   heldCount: number;
 }
@@ -75,6 +84,17 @@ interface Props {
 
 /** กำลังวาดอะไรอยู่ — กรอบโซน หรือกรอบเวที */
 type DrawMode = "zone" | "stage";
+
+const STAGE_SIDE_LABEL: Record<StageSide, string> = {
+  top: "บน",
+  bottom: "ล่าง",
+  left: "ซ้าย",
+  right: "ขวา",
+};
+
+function stageSideLabel(stageSide: StageSide | null): string {
+  return stageSide ? STAGE_SIDE_LABEL[stageSide] : "-";
+}
 
 // ระดับซูมของผัง — ผังสนามจริงมีโซนย่อยหลายสิบโซน บางโซนกว้างไม่ถึง 20 พิกเซลบนจอ
 // ถ้าวาดมุมกรอบบนรูปย่ออย่างเดียวจะกะขอบโซนไม่ได้เลย (ใช้ระดับเดียวกับฝั่งคนซื้อเพื่อให้คุ้นมือ)
@@ -179,7 +199,14 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
   const [price, setPrice] = useState("1500");
   const [color, setColor] = useState("#ef4444");
   const [seatCount, setSeatCount] = useState("100");
+  const [isStanding, setIsStanding] = useState(false);
+  const [manualRowSpec, setManualRowSpec] = useState("");
+  const [rowEditorZoneId, setRowEditorZoneId] = useState<string | null>(null);
+  const [rowDrafts, setRowDrafts] = useState<string[]>([]);
   const [zoomIndex, setZoomIndex] = useState(0);
+  const [stageSideDrafts, setStageSideDrafts] = useState<
+    Record<string, "auto" | StageSide>
+  >({});
 
   // ขนาด viewBox ของ SVG — ใช้ขนาดรูปจริงเพื่อให้อัตราส่วนตรงกับพื้นหลังเป๊ะ
   const viewW = layout.width ?? 1600;
@@ -202,6 +229,8 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
     setPrice("1500");
     setColor("#ef4444");
     setSeatCount("100");
+    setIsStanding(false);
+    setManualRowSpec("");
   }
 
   function loadZoneForEdit(zone: ZoneView) {
@@ -213,6 +242,8 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
     setPrice(String(Math.round(Number(zone.price))));
     setColor(zone.color);
     setSeatCount(String(zone.totalSeats));
+    setIsStanding(zone.isStanding);
+    setManualRowSpec(zone.rowSpec?.join(",") ?? "");
     setFeedback(null);
   }
 
@@ -531,11 +562,47 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
       color,
       polygon: points,
       seatCount: Number(seatCount),
+      isStanding,
+      rowSpec: manualRowSpec.trim() ? `[${manualRowSpec}]` : null,
     });
     setFeedback({ ok: result.ok, text: result.ok ? result.message : result.error });
     setBusy(false);
     if (result.ok) {
       resetForm();
+      startTransition(() => router.refresh());
+    }
+  }
+
+  function toggleRowEditor(zone: ZoneView) {
+    if (rowEditorZoneId === zone.id) {
+      setRowEditorZoneId(null);
+      setRowDrafts([]);
+      return;
+    }
+    setRowEditorZoneId(zone.id);
+    setRowDrafts((zone.rowSpec ?? zone.rowCounts).map(String));
+    setFeedback(null);
+  }
+
+  function updateRowDraft(index: number, value: string) {
+    setRowDrafts((current) =>
+      current.map((rowValue, currentIndex) => (currentIndex === index ? value : rowValue)),
+    );
+  }
+
+  async function handleSaveRowSpec(zone: ZoneView) {
+    setBusy(true);
+    setFeedback(null);
+    const result = await saveZoneRowSpec({
+      concertId,
+      zoneId: zone.id,
+      rowSpec: JSON.stringify(rowDrafts.map(Number)),
+    });
+    setFeedback({ ok: result.ok, text: result.ok ? result.message : result.error });
+    setBusy(false);
+    if (result.ok) {
+      setRowEditorZoneId(null);
+      setRowDrafts([]);
       startTransition(() => router.refresh());
     }
   }
@@ -589,6 +656,25 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
     }
   }
 
+  /** เปลี่ยนทิศเวทีทันทีและคืนค่าเดิมใน select เมื่อ action ไม่สำเร็จ */
+  async function handleStageSideChange(zone: ZoneView, stageSide: "auto" | StageSide) {
+    setStageSideDrafts((current) => ({ ...current, [zone.id]: stageSide }));
+    setBusy(true);
+    setFeedback(null);
+    const result = await setZoneStageSide({ concertId, zoneId: zone.id, stageSide });
+    setFeedback({ ok: result.ok, text: result.ok ? result.message : result.error });
+    setBusy(false);
+    if (result.ok) {
+      startTransition(() => router.refresh());
+    } else {
+      setStageSideDrafts((current) => {
+        const next = { ...current };
+        delete next[zone.id];
+        return next;
+      });
+    }
+  }
+
   const working = busy || pending;
   const zonesWithoutFrame = zones.filter((zone) => !zone.polygon).length;
   const editingZone = editingZoneId
@@ -597,6 +683,106 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
   const stageLabelPoint = stagePolygon && stagePolygon.length >= 3
     ? polygonPoleOfInaccessibility(stagePolygon)
     : null;
+  const automaticStageSides = useMemo(
+    () =>
+      new Map(
+        zones.map((zone) => [
+          zone.id,
+          zone.polygon ? stageSideAuto(zone.polygon, stagePolygon) : null,
+        ]),
+      ),
+    [zones, stagePolygon],
+  );
+
+  function renderRowEditor(zone: ZoneView) {
+    const hasInvalidRow = rowDrafts.some((value) => {
+      const text = value.trim();
+      const count = Number(text);
+      return !/^\d+$/.test(text) || !Number.isInteger(count) || count < 1 || count > 5_000;
+    });
+    const rowTotal = rowDrafts.reduce((sum, value) => {
+      const count = Number(value);
+      return Number.isFinite(count) ? sum + count : sum;
+    }, 0);
+    const disabledReason =
+      rowDrafts.length === 0
+        ? "ต้องมีอย่างน้อย 1 แถว"
+        : hasInvalidRow
+          ? "ทุกแถวต้องเป็นจำนวนเต็มมากกว่า 0"
+          : rowTotal !== zone.totalSeats
+            ? `ยอดรวมต้องเท่ากับ ${zone.totalSeats}`
+            : null;
+
+    return (
+      <div className="mt-3 rounded-lg border border-brand-400/20 bg-ink-850 p-3">
+        <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+          {rowDrafts.map((value, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <span className="w-8 shrink-0 text-center font-display text-sm font-semibold text-fg">
+                {rowLabelFor(index)}
+              </span>
+              <Input
+                type="number"
+                min={1}
+                max={5_000}
+                step={1}
+                value={value}
+                disabled={working}
+                onChange={(event) => updateRowDraft(index, event.target.value)}
+                aria-label={`จำนวนที่นั่งแถว ${rowLabelFor(index)}`}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={working}
+                onClick={() =>
+                  setRowDrafts((current) =>
+                    current.filter((_, currentIndex) => currentIndex !== index),
+                  )
+                }
+                aria-label={`ลบแถว ${rowLabelFor(index)}`}
+              >
+                <Trash2 className="size-3.5" aria-hidden />
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        <Button
+          type="button"
+          variant="subtle"
+          size="sm"
+          className="mt-2 w-full"
+          disabled={working || rowDrafts.length >= MAX_ROWS}
+          title={rowDrafts.length >= MAX_ROWS ? `เพิ่มได้ไม่เกิน ${MAX_ROWS} แถว` : undefined}
+          onClick={() => setRowDrafts((current) => [...current, "1"])}
+        >
+          เพิ่มแถว
+        </Button>
+
+        <p
+          className={`mt-3 text-sm font-medium ${
+            disabledReason ? "text-warning" : "text-success"
+          }`}
+        >
+          รวม {rowTotal} / ต้องได้ {zone.totalSeats}
+        </p>
+        {disabledReason && <p className="mt-1 text-xs text-warning">{disabledReason}</p>}
+        <Button
+          type="button"
+          size="sm"
+          className="mt-2 w-full"
+          loading={working}
+          disabled={working || disabledReason !== null}
+          title={disabledReason ?? undefined}
+          onClick={() => handleSaveRowSpec(zone)}
+        >
+          บันทึกการจัดแถว
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -928,7 +1114,8 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
         <div className="rounded-xl border border-fg/10 bg-ink-850 p-4">
           <h3 className="mb-1 font-display text-sm font-semibold text-fg">ข้อมูลโซนจาก Excel</h3>
           <p className="mb-3 text-xs leading-relaxed text-fg-faint">
-            ไฟล์เดียวได้ทุกโซน (ชื่อโซน · เรทราคา · ราคา · สี · จำนวนที่นั่ง) แล้วค่อยมาวาดกรอบทีละโซน
+            ไฟล์เดียวได้ทุกโซน (ชื่อโซน · เรทราคา · ราคา · สี · จำนวนที่นั่ง · ประเภทโซน)
+            แล้วค่อยมาวาดกรอบทีละโซน
           </p>
           <input
             ref={sheetRef}
@@ -1063,6 +1250,41 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
                 <Input value={color} onChange={(e) => setColor(e.target.value)} maxLength={7} />
               </div>
             </div>
+            <div>
+              <Label htmlFor="zone-row-spec">ที่นั่งต่อแถว (เช่น 12,14,16)</Label>
+              <Input
+                id="zone-row-spec"
+                type="text"
+                value={manualRowSpec}
+                disabled={isStanding}
+                onChange={(event) => setManualRowSpec(event.target.value)}
+                placeholder="เว้นว่างเพื่อจัดแถวอัตโนมัติ"
+              />
+              <p className="mt-1 text-xs text-fg-faint">
+                ผลรวมต้องเท่ากับจำนวนที่นั่งของโซน
+              </p>
+            </div>
+            <label
+              htmlFor="zone-standing"
+              className="flex cursor-pointer items-start gap-2 rounded-lg border border-fg/10 bg-ink-900/60 p-3"
+            >
+              <input
+                id="zone-standing"
+                type="checkbox"
+                checked={isStanding}
+                onChange={(event) => {
+                  setIsStanding(event.target.checked);
+                  if (event.target.checked) setManualRowSpec("");
+                }}
+                className="mt-0.5 size-4 accent-brand-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-fg">โซนยืน</span>
+                <span className="block text-xs text-fg-faint">
+                  ขายเป็นจำนวนใบ ระบบยังเจนที่นั่งผีครบทุกใบเพื่อใช้ hold และออกตั๋ว
+                </span>
+              </span>
+            </label>
 
             <Button
               type="button"
@@ -1148,6 +1370,29 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
                     {zone.soldCount > 0 && <Badge tone="danger">ขายแล้ว {zone.soldCount}</Badge>}
                     {zone.heldCount > 0 && <Badge tone="warning">จองค้าง {zone.heldCount}</Badge>}
                   </div>
+                  <label className="mt-2 flex items-center gap-2 text-xs text-fg-faint">
+                    <span className="shrink-0">ทิศเวที</span>
+                    <select
+                      value={stageSideDrafts[zone.id] ?? zone.stageSide ?? "auto"}
+                      disabled={working}
+                      onChange={(event) =>
+                        handleStageSideChange(
+                          zone,
+                          event.currentTarget.value as "auto" | StageSide,
+                        )
+                      }
+                      className="min-w-0 flex-1 rounded-md border border-fg/15 bg-ink-850 px-2 py-1.5 text-xs text-fg outline-none transition-colors focus:border-brand-400 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`ทิศเวทีของโซน ${zone.name}`}
+                    >
+                      <option value="auto">
+                        อัตโนมัติ ({stageSideLabel(automaticStageSides.get(zone.id) ?? null)})
+                      </option>
+                      <option value="top">บน</option>
+                      <option value="bottom">ล่าง</option>
+                      <option value="left">ซ้าย</option>
+                      <option value="right">ขวา</option>
+                    </select>
+                  </label>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <Button
                       type="button"
@@ -1158,6 +1403,17 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
                     >
                       แก้ไข
                     </Button>
+                    {!zone.isStanding && (
+                      <Button
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        disabled={working}
+                        onClick={() => toggleRowEditor(zone)}
+                      >
+                        {rowEditorZoneId === zone.id ? "ปิดจัดแถว" : "จัดแถว"}
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="subtle"
@@ -1184,6 +1440,7 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
                       ลบ
                     </Button>
                   </div>
+                  {rowEditorZoneId === zone.id && renderRowEditor(zone)}
                 </li>
               ))}
             </ul>

@@ -21,6 +21,9 @@ const BLOCK_WIDTH_TO_DEPTH = 2;
 // ขอบเขตจำนวนที่นั่งต่อแถว — น้อยกว่านี้แถวจะเยอะจนเลื่อนหาไม่เจอ มากกว่านี้แถวยาวจนล้นจอมือถือ
 const MIN_SEATS_PER_ROW = 8;
 const MAX_SEATS_PER_ROW = 40;
+// เพดาน rowSpec — กัน payload ใหญ่เกินเหตุและยังอยู่ในช่วงชื่อแถวที่ UI จัดการได้
+export const MAX_ROWS = 200;
+export const MAX_SEATS_PER_ZONE = 5_000;
 
 /** 0 ได้ A, 25 ได้ Z, 26 ได้ AA, 27 ได้ AB (เลขฐาน 26 แบบ bijective — ไม่มีชื่อแถวซ้ำ) */
 export function rowLabelFor(index: number): string {
@@ -80,4 +83,69 @@ export function buildSeatRows(seatCount: number, seatsPerRow?: number): SeatSpot
     });
   }
   return seats;
+}
+
+/**
+ * อ่าน rowSpec จาก JSON/ค่าดิบ — ผิดรูปแบบใด ๆ คืน null โดยไม่โยน exception
+ * รูปแบบที่เก็บในฐานข้อมูลคือ JSON array เช่น "[12,14,16]"
+ */
+export function parseRowSpec(value: unknown): number[] | null {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!Array.isArray(candidate) || candidate.length < 1 || candidate.length > MAX_ROWS) {
+    return null;
+  }
+
+  let total = 0;
+  for (const seatsInRow of candidate) {
+    if (!Number.isInteger(seatsInRow) || seatsInRow <= 0) return null;
+    total += seatsInRow;
+    if (total > MAX_SEATS_PER_ZONE) return null;
+  }
+
+  return total >= 1 ? [...candidate] : null;
+}
+
+/** เจนที่นั่งตามจำนวนรายแถวที่แอดมินกำหนด โดยเรียง A1..An, B1..Bn แบบคงที่ */
+export function buildSeatRowsFromSpec(spec: number[]): SeatSpot[] {
+  const seats: SeatSpot[] = [];
+  spec.forEach((seatsInRow, rowIndex) => {
+    for (let seatNumber = 1; seatNumber <= seatsInRow; seatNumber++) {
+      seats.push({ rowLabel: rowLabelFor(rowIndex), seatNumber });
+    }
+  });
+  return seats;
+}
+
+/**
+ * เจน "ที่นั่งผี" สำหรับโซนยืน — ทุกใบอยู่แถว S และเลขใบไล่ 1..N
+ * ยังสร้าง Seat จริงครบทุกใบเพื่อให้ลิมิต/hold/คืนบัตร/เช็คอินใช้ทางเดิมได้ทั้งหมด
+ */
+export function buildStandingSeats(seatCount: number): SeatSpot[] {
+  const total = Math.floor(seatCount);
+  if (!Number.isFinite(total) || total <= 0) return [];
+
+  return Array.from({ length: total }, (_, index) => ({
+    rowLabel: "S",
+    seatNumber: index + 1,
+  }));
+}
+
+/** ป้ายที่นั่งกลาง — โซนยืนซ่อนเลขแถวและเรียกเลข Seat ว่าเลขใบ */
+export function formatSeatLabel(input: {
+  zoneName: string;
+  isStanding: boolean;
+  rowLabel: string;
+  seatNumber: number;
+}): string {
+  return input.isStanding
+    ? `${input.zoneName} · ใบที่ ${input.seatNumber}`
+    : `${input.zoneName} ${input.rowLabel}${input.seatNumber}`;
 }

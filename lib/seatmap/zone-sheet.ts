@@ -11,6 +11,7 @@
 //
 // ตั้งใจแยกจาก zone-sheet-xlsx.ts เพื่อให้เทสได้ตรง ๆ โดยไม่ต้องสร้างไฟล์ .xlsx จริง
 // และ error ทุกใบต้อง "บอกเลขแถวในไฟล์" เพราะแอดมินต้องกลับไปแก้ใน Excel ให้ถูกแถว
+import { parseRowSpec } from "./seat-rows";
 
 /** แถวดิบที่ดึงมาจากไฟล์ — ยังไม่ผ่านการตรวจ (ค่าจาก Excel เป็น string หรือ number ก็ได้) */
 export interface RawZoneRow {
@@ -24,6 +25,10 @@ export interface RawZoneRow {
   /** สีพื้นของเซลล์ที่อ่านได้จากไฟล์ — null = ไม่ได้ระบายสี หรืออ่านไม่ได้ (สีตามธีม) */
   fillColor: string | null;
   seatCount: unknown;
+  /** ประเภทโซนเป็นคอลัมน์เสริม — ไม่มี/ว่าง = โซนนั่ง */
+  kind?: unknown;
+  /** จำนวนที่นั่งรายแถวคั่นด้วยจุลภาค — ไม่มี/ว่าง = จัดแถวอัตโนมัติ */
+  rowSpec?: unknown;
 }
 
 /** โซนหนึ่งแถวที่ผ่านการตรวจแล้ว */
@@ -35,6 +40,8 @@ export interface ParsedZone {
   /** hex ตัวพิมพ์เล็กเสมอ เช่น #f59e0b — ตรงกับรูปแบบที่ Zone.color ในฐานข้อมูลใช้ */
   color: string;
   seatCount: number;
+  isStanding: boolean;
+  rowSpec: number[] | null;
 }
 
 /** หนึ่งบรรทัดของคำอธิบายสี (legend) — ได้จากการยุบโซนตามเรทราคา */
@@ -69,6 +76,8 @@ export const COLUMN_ALIASES = {
   price: ["ราคา", "price", "amount"],
   color: ["สี", "color", "colour", "hex"],
   seatCount: ["จำนวนที่นั่ง", "ที่นั่ง", "จำนวน", "seats", "seat count", "capacity"],
+  kind: ["ประเภทโซน", "ประเภท", "type", "zone type", "kind"],
+  rowSpec: ["ที่นั่งต่อแถว", "แถว", "rows", "row spec", "seats per row"],
 } as const;
 
 export type ZoneColumnKey = keyof typeof COLUMN_ALIASES;
@@ -135,10 +144,40 @@ function toText(input: unknown): string {
   return "";
 }
 
+const STANDING_KINDS = new Set(["ยืน", "โซนยืน", "standing", "stand"]);
+const SEATED_KINDS = new Set(["", "นั่ง", "seated"]);
+
+/** แปลงประเภทโซนแบบไม่สนตัวพิมพ์/ช่องว่าง — valid=false ใช้ฟ้องค่าที่ไม่รู้จักพร้อมเลขแถว */
+function parseZoneKind(input: unknown): { valid: boolean; isStanding: boolean; value: string } {
+  const value = toText(input);
+  const normalized = value.toLowerCase();
+  if (STANDING_KINDS.has(normalized)) return { valid: true, isStanding: true, value };
+  if (SEATED_KINDS.has(normalized)) return { valid: true, isStanding: false, value };
+  return { valid: false, isStanding: false, value };
+}
+
+/** อ่านค่าแบบ 12,14,16 จากเซลล์ โดยอนุญาตช่องว่างรอบตัวเลขเท่านั้น */
+function parseSheetRowSpec(input: unknown): {
+  present: boolean;
+  value: number[] | null;
+} {
+  const text = toText(input);
+  if (!text) return { present: false, value: null };
+
+  const parts = text.split(",").map((part) => part.trim());
+  if (parts.some((part) => !/^\d+$/.test(part))) return { present: true, value: null };
+  return { present: true, value: parseRowSpec(parts.map(Number)) };
+}
+
 /** แถวว่างเปล่า (คนมักเว้นบรรทัดท้ายไฟล์) — ข้ามไปเงียบ ๆ ไม่ต้องฟ้อง */
 function isBlankRow(row: RawZoneRow): boolean {
   return (
-    !toText(row.name) && !toText(row.tier) && !toText(row.price) && !toText(row.seatCount)
+    !toText(row.name) &&
+    !toText(row.tier) &&
+    !toText(row.price) &&
+    !toText(row.seatCount) &&
+    !toText(row.kind) &&
+    !toText(row.rowSpec)
   );
 }
 
@@ -177,6 +216,8 @@ export function parseZoneRows(rows: RawZoneRow[]): ZoneSheetResult {
     const tier = toText(row.tier);
     const price = toNumber(row.price);
     const seatCount = toNumber(row.seatCount);
+    const kind = parseZoneKind(row.kind);
+    const rowSpec = parseSheetRowSpec(row.rowSpec);
     // คอลัมน์ "สี" มาก่อนสีพื้นเซลล์เสมอ — คนพิมพ์ hex มาแปลว่าตั้งใจกำหนดเอง
     const color = normalizeColor(row.color) ?? normalizeColor(row.fillColor);
 
@@ -213,8 +254,56 @@ export function parseZoneRows(rows: RawZoneRow[]): ZoneSheetResult {
       );
     }
 
-    if (name && tier && price !== null && seatCount !== null && color) {
-      zones.push({ rowNumber: row.rowNumber, name, tier, price, color, seatCount });
+    if (!kind.valid) {
+      errors.push(
+        `${at}: ประเภทโซน "${kind.value}" ไม่ถูกต้อง — ใช้ "นั่ง" หรือ "ยืน"`,
+      );
+    }
+
+    if (rowSpec.present && rowSpec.value === null) {
+      errors.push(
+        `${at}: ที่นั่งต่อแถวไม่ถูกต้อง — ใช้จำนวนเต็มบวกคั่นด้วยจุลภาค เช่น 12,14,16`,
+      );
+    }
+
+    const rowSpecTotal = rowSpec.value?.reduce((sum, count) => sum + count, 0) ?? null;
+    const rowSpecMatchesSeats =
+      rowSpecTotal === null ||
+      seatCount === null ||
+      !Number.isInteger(seatCount) ||
+      rowSpecTotal === seatCount;
+    if (!rowSpecMatchesSeats) {
+      errors.push(
+        `${at}: ที่นั่งต่อแถวรวม ${rowSpecTotal} ไม่เท่ากับจำนวนที่นั่ง ${seatCount}`,
+      );
+    }
+
+    const rowSpecAllowed = !kind.isStanding || !rowSpec.present;
+    if (!rowSpecAllowed) {
+      errors.push(`${at}: โซนยืนกำหนดที่นั่งต่อแถวไม่ได้`);
+    }
+
+    if (
+      name &&
+      tier &&
+      price !== null &&
+      seatCount !== null &&
+      color &&
+      kind.valid &&
+      (!rowSpec.present || rowSpec.value !== null) &&
+      rowSpecMatchesSeats &&
+      rowSpecAllowed
+    ) {
+      zones.push({
+        rowNumber: row.rowNumber,
+        name,
+        tier,
+        price,
+        color,
+        seatCount,
+        isStanding: kind.isStanding,
+        rowSpec: rowSpec.value,
+      });
     }
   }
 

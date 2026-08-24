@@ -71,7 +71,7 @@ export function CheckinClient() {
                 <UserRound className="size-6 text-brand-300" /> {result.holderName}
               </p>
               <p className="mt-2 text-sm text-fg-dim">
-                {result.concertTitle} · โซน {result.zoneName} · ที่นั่ง {result.seat}
+                {result.concertTitle} · {result.seat}
               </p>
             </div>
           </div>

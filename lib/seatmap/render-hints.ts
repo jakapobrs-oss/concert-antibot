@@ -9,6 +9,21 @@
 //
 // แยกออกมาเป็น pure function เพราะเทสตรงได้ (เทส component ต้องมี DOM + จำลองการวัดขนาด)
 
+import type { StageSide } from "@/lib/seatmap/polygon";
+
+export interface SeatGridRenderHints {
+  stageSide: StageSide | null;
+  reverseRows: boolean;
+}
+
+/** ตัดสินตำแหน่งแถบเวทีและลำดับแถว โดยไม่ผูกกับ React หรือ DOM */
+export function seatGridRenderHints(stageSide: StageSide | null): SeatGridRenderHints {
+  return {
+    stageSide,
+    reverseRows: stageSide === "bottom",
+  };
+}
+
 /** ค่าความสว่างของสีขาว/ดำในสูตร WCAG — ใช้ซ้ำหลายที่ เลยตั้งชื่อไว้แทนตัวเลขลอย */
 const LUMINANCE_WHITE = 1;
 const LUMINANCE_BLACK = 0;

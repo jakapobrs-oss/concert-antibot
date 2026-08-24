@@ -16,8 +16,21 @@ import {
   OUTLINE_LIGHT,
   parseHexColor,
   relativeLuminance,
+  seatGridRenderHints,
   seatOutline,
 } from "@/lib/seatmap/render-hints";
+
+describe("seatGridRenderHints — ตำแหน่งเวทีและลำดับแถว", () => {
+  it.each([
+    ["top", false],
+    ["bottom", true],
+    ["left", false],
+    ["right", false],
+    [null, false],
+  ] as const)("ทิศ %s วางแถบถูกด้านและ reverseRows = %s", (stageSide, reverseRows) => {
+    expect(seatGridRenderHints(stageSide)).toEqual({ stageSide, reverseRows });
+  });
+});
 
 describe("parsePolygon — ยอมรับเฉพาะกรอบที่ใช้วาดได้จริง", () => {
   it("กรอบสามเหลี่ยม (จุดน้อยสุดที่เป็นรูปปิดได้) ผ่าน", () => {

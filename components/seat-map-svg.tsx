@@ -20,12 +20,20 @@ import { X, ZoomIn, ZoomOut } from "lucide-react";
 
 import { formatTHB } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { holdAndCreateOrder } from "@/app/actions/booking";
+import {
+  holdAndCreateOrder,
+  holdBestAvailable,
+  holdStandingZone,
+} from "@/app/actions/booking";
+import { formatSeatLabel } from "@/lib/seatmap/seat-rows";
 import {
   distanceFromStage,
   polygonPoleOfInaccessibility,
+  stageSideAuto,
   type Polygon,
+  type StageSide,
 } from "@/lib/seatmap/polygon";
+import { seatGridRenderHints } from "@/lib/seatmap/render-hints";
 
 export interface SvgSeat {
   id: string;
@@ -34,7 +42,7 @@ export interface SvgSeat {
   status: string; // AVAILABLE | HELD | SOLD | BLOCKED
 }
 
-export interface SvgZone {
+interface SvgZoneBase {
   id: string;
   name: string;
   /** ชื่อเรทราคาที่โซนนี้สังกัด — null = โซนเก่าที่ยังไม่ได้นำเข้าจาก Excel */
@@ -42,13 +50,35 @@ export interface SvgZone {
   price: number;
   color: string;
   polygon: Polygon | null;
-  seats: SvgSeat[];
+  stageSide: StageSide | null;
+}
+
+export interface SvgZone extends SvgZoneBase {
+  isStanding: boolean;
+  /** หน้าแรกรู้แค่ยอดรวม ที่นั่งรายตัวของโซนนั่งต้องโหลดผ่าน endpoint หลังผ่านคิว */
+  availability: { available: number; total: number };
 }
 
 interface Selected {
   price: number;
   label: string;
 }
+
+interface StandingSelection {
+  zoneId: string;
+  zoneName: string;
+  price: number;
+  quantity: number;
+}
+
+interface BestAvailableSelection {
+  zoneId: string;
+  zoneName: string;
+  price: number;
+  quantity: number;
+}
+
+type SeatedMode = "best" | "manual";
 
 // ระดับซูม — ผังสนามจริงมีโซนเล็ก ๆ ริมขอบที่ชื่อโซนอ่านไม่ออกถ้าไม่ขยาย
 const ZOOM_STEPS = [1, 1.75, 2.5] as const;
@@ -59,6 +89,49 @@ const ZONE_FILL_ALPHA = "59"; // ~35%
 const ZONE_FILL_ALPHA_ACTIVE = "b3"; // ~70% สำหรับโซนที่กำลังเลือก
 // โซนที่ขายหมดแล้ววาดเป็นสีเทา ไม่ใช่สีเรท — กันคนเสียเวลากดเข้าไปแล้วพบว่าไม่เหลือที่
 const SOLD_OUT_COLOR = "#52525b";
+
+function zoneAvailable(zone: SvgZone): number {
+  return zone.availability.available;
+}
+
+function zoneTotal(zone: SvgZone): number {
+  return zone.availability.total;
+}
+
+/** แถบเวทีในแผงเลือกที่นั่ง แกนข้างใช้ข้อความแนวตั้งเพื่อไม่กินพื้นที่กริด */
+function StageMarker({ side }: { side: StageSide }) {
+  const vertical = side === "left" || side === "right";
+  const description = "แถว A ใกล้เวทีที่สุด";
+
+  return (
+    <div
+      className={
+        vertical
+          ? "flex w-12 shrink-0 flex-col items-center justify-center rounded-lg border border-spot-400/30 bg-spot-400/10 px-2 py-3 text-spot-300"
+          : `${side === "top" ? "mb-2" : "mt-2"} flex min-h-10 items-center justify-center gap-2 rounded-lg border border-spot-400/30 bg-spot-400/10 px-3 py-2 text-center text-spot-300`
+      }
+      role="note"
+      aria-label={`เวที ${description}`}
+      title={description}
+    >
+      <span
+        className={
+          vertical
+            ? "font-display text-sm font-semibold [writing-mode:vertical-rl]"
+            : "font-display text-sm font-semibold"
+        }
+        aria-hidden
+      >
+        เวที
+      </span>
+      {vertical ? (
+        <span className="sr-only">{description}</span>
+      ) : (
+        <span className="text-xs text-fg-faint">{description}</span>
+      )}
+    </div>
+  );
+}
 
 export function SeatMapSvg({
   zones,
@@ -77,9 +150,23 @@ export function SeatMapSvg({
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Map<string, Selected>>(new Map());
+  const [standingSelection, setStandingSelection] =
+    useState<StandingSelection | null>(null);
+  const [bestAvailableSelection, setBestAvailableSelection] =
+    useState<BestAvailableSelection | null>(null);
+  const [seatedMode, setSeatedMode] = useState<SeatedMode>("best");
+  const [seatsByZone, setSeatsByZone] = useState<Map<string, SvgSeat[]>>(
+    new Map(),
+  );
+  const [loadingZoneId, setLoadingZoneId] = useState<string | null>(null);
+  const [seatLoadError, setSeatLoadError] = useState<{
+    zoneId: string;
+    message: string;
+  } | null>(null);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [zoomIndex, setZoomIndex] = useState(0);
 
   const viewW = layout.width;
@@ -95,13 +182,16 @@ export function SeatMapSvg({
     return [...zones]
       .map((zone) => ({
         zone,
-        available: zone.seats.filter((seat) => seat.status === "AVAILABLE").length,
-        distance: zone.polygon ? distanceFromStage(zone.polygon, stagePolygon) : Infinity,
+        available: zoneAvailable(zone),
+        distance: zone.polygon
+          ? distanceFromStage(zone.polygon, stagePolygon)
+          : Infinity,
       }))
       .sort((a, b) =>
         stagePolygon
           ? a.distance - b.distance || b.zone.price - a.zone.price
-          : b.zone.price - a.zone.price || a.zone.name.localeCompare(b.zone.name),
+          : b.zone.price - a.zone.price ||
+            a.zone.name.localeCompare(b.zone.name),
       );
   }, [zones, stagePolygon]);
 
@@ -120,14 +210,21 @@ export function SeatMapSvg({
   const priceTiers = useMemo(() => {
     const map = new Map<
       string,
-      { key: string; label: string; price: number; color: string; zoneCount: number; seats: number }
+      {
+        key: string;
+        label: string;
+        price: number;
+        color: string;
+        zoneCount: number;
+        seats: number;
+      }
     >();
     for (const zone of zones) {
       const key = zone.tier ?? `${zone.color}|${zone.price}`;
       const tier = map.get(key);
       if (tier) {
         tier.zoneCount += 1;
-        tier.seats += zone.seats.length;
+        tier.seats += zoneTotal(zone);
       } else {
         map.set(key, {
           key,
@@ -135,11 +232,13 @@ export function SeatMapSvg({
           price: zone.price,
           color: zone.color,
           zoneCount: 1,
-          seats: zone.seats.length,
+          seats: zoneTotal(zone),
         });
       }
     }
-    return [...map.values()].sort((a, b) => b.price - a.price || a.label.localeCompare(b.label));
+    return [...map.values()].sort(
+      (a, b) => b.price - a.price || a.label.localeCompare(b.label),
+    );
   }, [zones]);
 
   const activeZone = useMemo(
@@ -149,9 +248,11 @@ export function SeatMapSvg({
 
   /** ที่นั่งของโซนที่เปิดอยู่ จัดกลุ่มตามแถว (A, B, C…) ตามลำดับที่เจนมา */
   const activeRows = useMemo(() => {
-    if (!activeZone) return [];
+    if (!activeZone || activeZone.isStanding) return [];
+    const activeSeats = seatsByZone.get(activeZone.id);
+    if (!activeSeats) return [];
     const rows = new Map<string, SvgSeat[]>();
-    for (const seat of activeZone.seats) {
+    for (const seat of activeSeats) {
       const bucket = rows.get(seat.rowLabel);
       if (bucket) bucket.push(seat);
       else rows.set(seat.rowLabel, [seat]);
@@ -160,10 +261,140 @@ export function SeatMapSvg({
       label,
       seats: [...seats].sort((a, b) => a.seatNumber - b.seatNumber),
     }));
-  }, [activeZone]);
+  }, [activeZone, seatsByZone]);
+  const effectiveStageSide = useMemo(
+    () =>
+      activeZone?.stageSide ??
+      (activeZone?.polygon
+        ? stageSideAuto(activeZone.polygon, stagePolygon)
+        : null),
+    [activeZone, stagePolygon],
+  );
+  const gridHints = seatGridRenderHints(effectiveStageSide);
+  const displayedRows = gridHints.reverseRows
+    ? [...activeRows].reverse()
+    : activeRows;
+  const activeStandingLimit = activeZone?.isStanding
+    ? Math.min(maxSeats, availableByZone.get(activeZone.id) ?? 0)
+    : 0;
+  const activeSeatedLimit =
+    activeZone && !activeZone.isStanding
+      ? Math.min(maxSeats, availableByZone.get(activeZone.id) ?? 0)
+      : 0;
+
+  function openZone(zone: SvgZone) {
+    setActiveZoneId(zone.id);
+    setError(null);
+
+    if (zone.isStanding) {
+      if (selected.size > 0 || bestAvailableSelection) {
+        setSelected(new Map());
+        setBestAvailableSelection(null);
+        setNotice("เลือกโซนยืนแล้ว จึงล้างตัวเลือกของโซนนั่งที่ค้างไว้");
+      } else {
+        setNotice(null);
+      }
+      setStandingSelection({
+        zoneId: zone.id,
+        zoneName: zone.name,
+        price: zone.price,
+        quantity: 1,
+      });
+      return;
+    }
+
+    // โซนนั่งเปิดด้วย best-available ทุกครั้ง และไม่ผสมกับโซนยืน/ที่นั่งรายตัวใน order เดียว
+    if (standingSelection || selected.size > 0 || bestAvailableSelection) {
+      setNotice("เปิดโซนนั่งแบบระบบเลือกแล้ว จึงล้างตัวเลือกเดิมที่ค้างไว้");
+    } else {
+      setNotice(null);
+    }
+    setStandingSelection(null);
+    setSelected(new Map());
+    setSeatedMode("best");
+    setSeatLoadError(null);
+    setBestAvailableSelection({
+      zoneId: zone.id,
+      zoneName: zone.name,
+      price: zone.price,
+      quantity: 1,
+    });
+  }
+
+  function chooseBestAvailableMode(zone: SvgZone) {
+    if (zone.isStanding) return;
+    const clearedManualSeats = selected.size > 0;
+    setSeatedMode("best");
+    setSelected(new Map());
+    setStandingSelection(null);
+    setError(null);
+    setBestAvailableSelection({
+      zoneId: zone.id,
+      zoneName: zone.name,
+      price: zone.price,
+      quantity: 1,
+    });
+    setNotice(
+      clearedManualSeats
+        ? "เปลี่ยนเป็นระบบเลือกให้แล้ว จึงล้างที่นั่งรายตัวที่เลือกไว้"
+        : null,
+    );
+  }
+
+  async function chooseManualMode(zone: SvgZone, force = false) {
+    if (zone.isStanding) return;
+    const clearedBestAvailable = bestAvailableSelection !== null;
+    setSeatedMode("manual");
+    setBestAvailableSelection(null);
+    setStandingSelection(null);
+    setError(null);
+    setNotice(
+      clearedBestAvailable
+        ? "เปลี่ยนเป็นเลือกที่นั่งเองแล้ว จึงล้างจำนวนที่ระบบเลือกไว้"
+        : null,
+    );
+
+    if (!force && seatsByZone.has(zone.id) && seatLoadError?.zoneId !== zone.id)
+      return;
+
+    setLoadingZoneId(zone.id);
+    setSeatLoadError(null);
+    try {
+      const response = await fetch(
+        `/api/concerts/${concertId}/zones/${zone.id}/seats?qt=${encodeURIComponent(queueToken)}`,
+        { cache: "no-store" },
+      );
+      const payload = (await response.json()) as {
+        seats?: SvgSeat[];
+        error?: string;
+      };
+      if (!response.ok || !Array.isArray(payload.seats)) {
+        throw new Error(payload.error ?? "โหลดที่นั่งไม่สำเร็จ");
+      }
+      setSeatsByZone((current) => {
+        const next = new Map(current);
+        next.set(zone.id, payload.seats!);
+        return next;
+      });
+    } catch (cause) {
+      setSeatLoadError({
+        zoneId: zone.id,
+        message:
+          cause instanceof Error ? cause.message : "โหลดที่นั่งไม่สำเร็จ",
+      });
+    } finally {
+      setLoadingZoneId(null);
+    }
+  }
 
   function toggleSeat(seat: SvgSeat, zonePrice: number, zoneName: string) {
     if (seat.status !== "AVAILABLE") return; // กดได้เฉพาะที่ว่าง
+
+    if (standingSelection || bestAvailableSelection) {
+      setStandingSelection(null);
+      setBestAvailableSelection(null);
+      setNotice("เลือกที่นั่งแบบระบุเลขแล้ว จึงล้างตัวเลือกแบบจำนวนที่ค้างไว้");
+    }
 
     setSelected((prev) => {
       const next = new Map(prev);
@@ -180,33 +411,84 @@ export function SeatMapSvg({
         // ถ้าโชว์แค่ "A1" ผู้ซื้อจะแยกไม่ออกว่าที่นั่งในตะกร้าอยู่โซนไหน ราคาเท่าไร
         next.set(seat.id, {
           price: zonePrice,
-          label: `${zoneName} ${seat.rowLabel}${seat.seatNumber}`,
+          label: formatSeatLabel({
+            zoneName,
+            isStanding: false,
+            rowLabel: seat.rowLabel,
+            seatNumber: seat.seatNumber,
+          }),
         });
       }
       return next;
     });
   }
 
-  const total = useMemo(
-    () => Array.from(selected.values()).reduce((sum, item) => sum + item.price, 0),
+  const seatedTotal = useMemo(
+    () =>
+      Array.from(selected.values()).reduce((sum, item) => sum + item.price, 0),
     [selected],
   );
+  const total = standingSelection
+    ? standingSelection.price * standingSelection.quantity
+    : bestAvailableSelection
+      ? bestAvailableSelection.price * bestAvailableSelection.quantity
+      : seatedTotal;
+  const selectedCount =
+    standingSelection?.quantity ??
+    bestAvailableSelection?.quantity ??
+    selected.size;
+  const hasSelection =
+    standingSelection !== null ||
+    bestAvailableSelection !== null ||
+    selected.size > 0;
 
   // hold ที่นั่ง + สร้าง order → ไป checkout (ทางเดินเดียวกับผังแบบเดิมทุกประการ)
   async function handleSubmit() {
-    if (selected.size === 0) return;
+    if (!hasSelection) return;
     setSubmitting(true);
     setError(null);
-    const result = await holdAndCreateOrder({
-      concertId,
-      seatIds: Array.from(selected.keys()),
-      queueToken,
-    });
+    const result = standingSelection
+      ? await holdStandingZone({
+          concertId,
+          zoneId: standingSelection.zoneId,
+          quantity: standingSelection.quantity,
+          queueToken,
+        })
+      : bestAvailableSelection
+        ? await holdBestAvailable({
+            concertId,
+            zoneId: bestAvailableSelection.zoneId,
+            quantity: bestAvailableSelection.quantity,
+            queueToken,
+          })
+        : await holdAndCreateOrder({
+            concertId,
+            seatIds: Array.from(selected.keys()),
+            queueToken,
+          });
     if (result.ok) {
       router.push(`/checkout/${result.orderId}`);
     } else {
       setError(result.error);
       setSubmitting(false);
+      if (
+        !standingSelection &&
+        !bestAvailableSelection &&
+        activeZone &&
+        !activeZone.isStanding
+      ) {
+        // hold รายที่นั่งล้มเหลวแปลว่า cache อาจเก่า ล้างให้ปุ่มเลือกเอง/ลองใหม่ fetch สถานะสดได้
+        setSelected(new Map());
+        setSeatsByZone((current) => {
+          const next = new Map(current);
+          next.delete(activeZone.id);
+          return next;
+        });
+        setSeatLoadError({
+          zoneId: activeZone.id,
+          message: "ข้อมูลที่นั่งเปลี่ยนไป กรุณาลองโหลดใหม่",
+        });
+      }
       // ที่นั่งบางที่ถูกจองไป → refresh เพื่อเห็นสถานะใหม่
       if (result.failedSeats?.length) {
         setTimeout(() => router.refresh(), 1500);
@@ -239,14 +521,18 @@ export function SeatMapSvg({
             >
               <ZoomOut className="size-4" aria-hidden />
             </Button>
-            <span className="w-10 text-center font-display text-xs text-fg-faint">{zoom}×</span>
+            <span className="w-10 text-center font-display text-xs text-fg-faint">
+              {zoom}×
+            </span>
             <Button
               type="button"
               variant="ghost"
               size="sm"
               aria-label="ขยายผัง"
               disabled={zoomIndex === ZOOM_STEPS.length - 1}
-              onClick={() => setZoomIndex((i) => Math.min(ZOOM_STEPS.length - 1, i + 1))}
+              onClick={() =>
+                setZoomIndex((i) => Math.min(ZOOM_STEPS.length - 1, i + 1))
+              }
             >
               <ZoomIn className="size-4" aria-hidden />
             </Button>
@@ -257,7 +543,11 @@ export function SeatMapSvg({
         <div className="overflow-auto rounded-xl border border-fg/10 bg-ink-950">
           <div className="relative" style={{ width: `${zoom * 100}%` }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={layout.base64} alt="ผังสถานที่จัดงาน" className="block w-full" />
+            <img
+              src={layout.base64}
+              alt="ผังสถานที่จัดงาน"
+              className="block w-full"
+            />
             <svg
               viewBox={`0 0 ${viewW} ${viewH}`}
               className="absolute inset-0 h-full w-full"
@@ -268,7 +558,9 @@ export function SeatMapSvg({
               {stagePolygon && stageLabelPoint && (
                 <g data-stage="true">
                   <polygon
-                    points={stagePolygon.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
+                    points={stagePolygon
+                      .map(([x, y]) => `${x * viewW},${y * viewH}`)
+                      .join(" ")}
                     fill="#e4e4e7cc"
                     stroke="#fafafa"
                     strokeWidth={viewW / 400}
@@ -299,14 +591,20 @@ export function SeatMapSvg({
                   <g
                     key={zone.id}
                     data-zone-name={zone.name}
-                    onClick={() => setActiveZoneId(soldOut ? null : zone.id)}
-                    className={soldOut ? "cursor-not-allowed" : "cursor-pointer"}
+                    onClick={() => {
+                      if (!soldOut) openZone(zone);
+                    }}
+                    className={
+                      soldOut ? "cursor-not-allowed" : "cursor-pointer"
+                    }
                   >
                     <title>
-                      {`${zone.name} · ${formatTHB(zone.price)} · ${soldOut ? "เต็มแล้ว" : `ว่าง ${available} ที่`}`}
+                      {`${zone.name} · ${formatTHB(zone.price)} · ${soldOut ? "เต็มแล้ว" : `ว่าง ${available} ${zone.isStanding ? "ใบ" : "ที่"}`}`}
                     </title>
                     <polygon
-                      points={zone.polygon.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
+                      points={zone.polygon
+                        .map(([x, y]) => `${x * viewW},${y * viewH}`)
+                        .join(" ")}
                       fill={`${baseColor}${isActive ? ZONE_FILL_ALPHA_ACTIVE : ZONE_FILL_ALPHA}`}
                       stroke={isActive ? "#ffffff" : baseColor}
                       strokeWidth={(viewW / 500) * (isActive ? 2.5 : 1)}
@@ -321,7 +619,11 @@ export function SeatMapSvg({
                       opacity={soldOut ? 0.5 : 1}
                       className="pointer-events-none select-none font-display font-semibold"
                       // ขอบดำจาง ๆ รอบตัวอักษร — กันชื่อโซนกลืนกับสีพื้นที่แอดมินตั้งให้ตรงกับรูป
-                      style={{ paintOrder: "stroke", stroke: "#00000099", strokeWidth: labelSize / 6 }}
+                      style={{
+                        paintOrder: "stroke",
+                        stroke: "#00000099",
+                        strokeWidth: labelSize / 6,
+                      }}
                     >
                       {zone.name}
                     </text>
@@ -338,11 +640,18 @@ export function SeatMapSvg({
             <div key={tier.key} className="flex items-center gap-2">
               <span
                 className="inline-block size-3 shrink-0 rounded-sm"
-                style={{ backgroundColor: tier.color, boxShadow: `0 0 8px ${tier.color}90` }}
+                style={{
+                  backgroundColor: tier.color,
+                  boxShadow: `0 0 8px ${tier.color}90`,
+                }}
                 aria-hidden
               />
-              <span className="w-24 shrink-0 font-display text-fg-dim">{tier.label}</span>
-              <span className="text-led w-20 shrink-0 text-spot-400">{formatTHB(tier.price)}</span>
+              <span className="w-24 shrink-0 font-display text-fg-dim">
+                {tier.label}
+              </span>
+              <span className="text-led w-20 shrink-0 text-spot-400">
+                {formatTHB(tier.price)}
+              </span>
               <span className="min-w-0">
                 {tier.zoneCount} โซน · {tier.seats.toLocaleString()} ที่นั่ง
               </span>
@@ -353,7 +662,9 @@ export function SeatMapSvg({
         {/* ---------- รายการโซน (เรียงตามระยะจากเวที) ---------- */}
         <div>
           <h3 className="mb-2 font-display text-sm font-semibold text-fg">
-            {stagePolygon ? "โซนทั้งหมด — เรียงจากใกล้เวทีที่สุด" : "โซนทั้งหมด"}
+            {stagePolygon
+              ? "โซนทั้งหมด — เรียงจากใกล้เวทีที่สุด"
+              : "โซนทั้งหมด"}
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {orderedZones.map(({ zone, available }) => {
@@ -364,7 +675,7 @@ export function SeatMapSvg({
                   type="button"
                   disabled={soldOut}
                   aria-pressed={zone.id === activeZoneId}
-                  onClick={() => setActiveZoneId(zone.id)}
+                  onClick={() => openZone(zone)}
                   className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
                     zone.id === activeZoneId
                       ? "border-brand-500 bg-brand-500/15 text-fg"
@@ -375,12 +686,20 @@ export function SeatMapSvg({
                 >
                   <span
                     className="inline-block size-2.5 shrink-0 rounded-sm"
-                    style={{ backgroundColor: soldOut ? SOLD_OUT_COLOR : zone.color }}
+                    style={{
+                      backgroundColor: soldOut ? SOLD_OUT_COLOR : zone.color,
+                    }}
                     aria-hidden
                   />
-                  <span className="font-display font-semibold">{zone.name}</span>
-                  <span className="text-led text-spot-400">{formatTHB(zone.price)}</span>
-                  <span className="text-fg-faint">{soldOut ? "เต็ม" : `ว่าง ${available}`}</span>
+                  <span className="font-display font-semibold">
+                    {zone.name}
+                  </span>
+                  <span className="text-led text-spot-400">
+                    {formatTHB(zone.price)}
+                  </span>
+                  <span className="text-fg-faint">
+                    {soldOut ? "เต็ม" : `ว่าง ${available}`}
+                  </span>
                 </button>
               );
             })}
@@ -393,14 +712,26 @@ export function SeatMapSvg({
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span
                 className="size-3 rounded-full"
-                style={{ backgroundColor: activeZone.color, boxShadow: `0 0 10px ${activeZone.color}90` }}
+                style={{
+                  backgroundColor: activeZone.color,
+                  boxShadow: `0 0 10px ${activeZone.color}90`,
+                }}
                 aria-hidden
               />
-              <h3 className="font-display font-semibold text-fg">โซน {activeZone.name}</h3>
-              {activeZone.tier && <span className="text-xs text-fg-faint">({activeZone.tier})</span>}
-              <span className="text-led text-sm text-spot-400">{formatTHB(activeZone.price)}</span>
+              <h3 className="font-display font-semibold text-fg">
+                โซน {activeZone.name}
+              </h3>
+              {activeZone.tier && (
+                <span className="text-xs text-fg-faint">
+                  ({activeZone.tier})
+                </span>
+              )}
+              <span className="text-led text-sm text-spot-400">
+                {formatTHB(activeZone.price)}
+              </span>
               <span className="text-xs text-fg-faint">
-                ว่าง {availableByZone.get(activeZone.id) ?? 0} / {activeZone.seats.length} ที่
+                ว่าง {availableByZone.get(activeZone.id) ?? 0} /{" "}
+                {zoneTotal(activeZone)} {activeZone.isStanding ? "ใบ" : "ที่"}
               </span>
               <button
                 type="button"
@@ -411,33 +742,256 @@ export function SeatMapSvg({
               </button>
             </div>
 
-            {/* เลื่อนดูได้ในกล่องตัวเอง — โซนใหญ่มีหลายสิบแถว ไม่ควรดันหน้าเว็บยาวจนหาปุ่มจ่ายเงินไม่เจอ */}
-            <div className="max-h-96 space-y-1.5 overflow-auto pr-1">
-              {activeRows.map((row) => (
-                <div key={row.label} className="flex items-start gap-1.5">
-                  <span className="w-6 shrink-0 pt-1.5 font-display text-xs text-fg-faint">
-                    {row.label}
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {row.seats.map((seat) => (
-                      <button
-                        key={seat.id}
-                        type="button"
-                        onClick={() => toggleSeat(seat, activeZone.price, activeZone.name)}
-                        disabled={seat.status !== "AVAILABLE"}
-                        title={`${activeZone.name} ${seat.rowLabel}${seat.seatNumber}`}
-                        aria-label={`ที่นั่ง ${activeZone.name} แถว ${seat.rowLabel} เลข ${seat.seatNumber}`}
-                        aria-pressed={selected.has(seat.id)}
-                        data-seat-number={seat.seatNumber}
-                        className={seatClass(seat.status, selected.has(seat.id))}
-                      >
-                        {seat.seatNumber}
-                      </button>
-                    ))}
+            {!activeZone.isStanding && (
+              <div
+                className="mb-4 grid gap-2 sm:grid-cols-2"
+                role="group"
+                aria-label="โหมดเลือกที่นั่ง"
+              >
+                <button
+                  type="button"
+                  aria-pressed={seatedMode === "best"}
+                  onClick={() => chooseBestAvailableMode(activeZone)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                    seatedMode === "best"
+                      ? "border-brand-500 bg-brand-500/15 text-brand-200"
+                      : "border-fg/15 bg-ink-950 text-fg-dim hover:border-brand-400 hover:text-fg"
+                  }`}
+                >
+                  ⚡ ให้ระบบเลือกที่ดีที่สุดให้
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={seatedMode === "manual"}
+                  onClick={() =>
+                    chooseManualMode(
+                      activeZone,
+                      seatLoadError?.zoneId === activeZone.id,
+                    )
+                  }
+                  className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                    seatedMode === "manual"
+                      ? "border-brand-500 bg-brand-500/15 text-brand-200"
+                      : "border-fg/15 bg-ink-950 text-fg-dim hover:border-brand-400 hover:text-fg"
+                  }`}
+                >
+                  🪑 เลือกที่นั่งเอง
+                </button>
+              </div>
+            )}
+
+            {activeZone.isStanding ? (
+              <div className="rounded-xl border border-brand-500/20 bg-brand-500/10 p-4">
+                <p className="text-sm text-fg-dim">เลือกจำนวนบัตรโซนยืน</p>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center rounded-lg border border-fg/15 bg-ink-950">
+                    <button
+                      type="button"
+                      aria-label="ลดจำนวนบัตรโซนยืน"
+                      disabled={(standingSelection?.quantity ?? 1) <= 1}
+                      onClick={() =>
+                        setStandingSelection((current) =>
+                          current
+                            ? {
+                                ...current,
+                                quantity: Math.max(1, current.quantity - 1),
+                              }
+                            : current,
+                        )
+                      }
+                      className="grid size-10 place-items-center rounded-l-lg text-lg text-fg transition-colors hover:bg-fg/10 disabled:cursor-not-allowed disabled:text-fg/20"
+                    >
+                      −
+                    </button>
+                    <span className="text-led min-w-12 px-3 text-center text-lg font-bold text-fg">
+                      {standingSelection?.quantity ?? 1}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="เพิ่มจำนวนบัตรโซนยืน"
+                      disabled={
+                        (standingSelection?.quantity ?? 1) >=
+                        activeStandingLimit
+                      }
+                      onClick={() =>
+                        setStandingSelection((current) =>
+                          current
+                            ? {
+                                ...current,
+                                quantity: Math.min(
+                                  activeStandingLimit,
+                                  current.quantity + 1,
+                                ),
+                              }
+                            : current,
+                        )
+                      }
+                      className="grid size-10 place-items-center rounded-r-lg text-lg text-fg transition-colors hover:bg-fg/10 disabled:cursor-not-allowed disabled:text-fg/20"
+                    >
+                      +
+                    </button>
                   </div>
+                  <span className="text-sm text-fg-faint">
+                    ว่าง {activeZone.availability.available.toLocaleString()} ใบ
+                  </span>
+                  <span className="text-led ml-auto text-sm font-semibold text-spot-300">
+                    {formatTHB(activeZone.price)} ×{" "}
+                    {standingSelection?.quantity ?? 1} ={" "}
+                    {formatTHB(
+                      activeZone.price * (standingSelection?.quantity ?? 1),
+                    )}
+                  </span>
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : seatedMode === "best" ? (
+              <div className="rounded-xl border border-brand-500/20 bg-brand-500/10 p-4">
+                <p className="text-sm text-fg-dim">
+                  เลือกจำนวนที่นั่งให้ระบบจัดที่ดีที่สุดให้
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <div className="inline-flex items-center rounded-lg border border-fg/15 bg-ink-950">
+                    <button
+                      type="button"
+                      aria-label="ลดจำนวนที่นั่งที่ระบบเลือกให้"
+                      disabled={(bestAvailableSelection?.quantity ?? 1) <= 1}
+                      onClick={() =>
+                        setBestAvailableSelection((current) =>
+                          current
+                            ? {
+                                ...current,
+                                quantity: Math.max(1, current.quantity - 1),
+                              }
+                            : current,
+                        )
+                      }
+                      className="grid size-10 place-items-center rounded-l-lg text-lg text-fg transition-colors hover:bg-fg/10 disabled:cursor-not-allowed disabled:text-fg/20"
+                    >
+                      −
+                    </button>
+                    <span className="text-led min-w-12 px-3 text-center text-lg font-bold text-fg">
+                      {bestAvailableSelection?.quantity ?? 1}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="เพิ่มจำนวนที่นั่งที่ระบบเลือกให้"
+                      disabled={
+                        (bestAvailableSelection?.quantity ?? 1) >=
+                        activeSeatedLimit
+                      }
+                      onClick={() =>
+                        setBestAvailableSelection((current) =>
+                          current
+                            ? {
+                                ...current,
+                                quantity: Math.min(
+                                  activeSeatedLimit,
+                                  current.quantity + 1,
+                                ),
+                              }
+                            : current,
+                        )
+                      }
+                      className="grid size-10 place-items-center rounded-r-lg text-lg text-fg transition-colors hover:bg-fg/10 disabled:cursor-not-allowed disabled:text-fg/20"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <span className="text-sm text-fg-faint">
+                    ว่าง {activeZone.availability.available.toLocaleString()}{" "}
+                    ที่
+                  </span>
+                  <span className="text-led ml-auto text-sm font-semibold text-spot-300">
+                    {formatTHB(activeZone.price)} ×{" "}
+                    {bestAvailableSelection?.quantity ?? 1} ={" "}
+                    {formatTHB(
+                      activeZone.price *
+                        (bestAvailableSelection?.quantity ?? 1),
+                    )}
+                  </span>
+                </div>
+              </div>
+            ) : loadingZoneId === activeZone.id ? (
+              <div className="rounded-xl border border-fg/10 bg-ink-950 p-6 text-center text-sm text-fg-faint">
+                กำลังโหลดที่นั่งของโซนนี้…
+              </div>
+            ) : seatLoadError?.zoneId === activeZone.id ? (
+              <div className="rounded-xl border border-danger/25 bg-danger/10 p-4 text-sm text-danger">
+                <p>{seatLoadError.message}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => chooseManualMode(activeZone, true)}
+                >
+                  ลองใหม่
+                </Button>
+              </div>
+            ) : seatsByZone.has(activeZone.id) ? (
+              <div className="flex items-stretch gap-2">
+                {gridHints.stageSide === "left" && <StageMarker side="left" />}
+                <div className="min-w-0 flex-1">
+                  {gridHints.stageSide === "top" && <StageMarker side="top" />}
+                  {/* กล่องเดียวเลื่อนได้ทั้งสองแกน แต่แต่ละแถวข้อมูลต้องอยู่บรรทัดเดียวเสมอ */}
+                  <div className="max-h-96 overflow-auto overflow-x-auto rounded-lg bg-ink-900 pr-1">
+                    <div className="w-max min-w-full space-y-1.5 py-1">
+                      {displayedRows.map((row) => (
+                        <div
+                          key={row.label}
+                          className="flex flex-nowrap items-start"
+                        >
+                          <span className="sticky left-0 z-10 w-8 shrink-0 bg-ink-900 py-1.5 pl-1 font-display text-xs text-fg-faint">
+                            {row.label}
+                          </span>
+                          <div className="flex shrink-0 flex-nowrap gap-1.5">
+                            {/* aria-label ใช้รูปยาว "แถว A เลข 1" (ไม่ผ่าน formatSeatLabel) — โปรแกรมอ่านหน้าจออ่านเข้าใจกว่ารูปย่อ "A1" */}
+                            {row.seats.map((seat) => (
+                              <button
+                                key={seat.id}
+                                type="button"
+                                onClick={() =>
+                                  toggleSeat(
+                                    seat,
+                                    activeZone.price,
+                                    activeZone.name,
+                                  )
+                                }
+                                disabled={seat.status !== "AVAILABLE"}
+                                title={formatSeatLabel({
+                                  zoneName: activeZone.name,
+                                  isStanding: false,
+                                  rowLabel: seat.rowLabel,
+                                  seatNumber: seat.seatNumber,
+                                })}
+                                aria-label={`ที่นั่ง ${activeZone.name} แถว ${seat.rowLabel} เลข ${seat.seatNumber}`}
+                                aria-pressed={selected.has(seat.id)}
+                                data-seat-number={seat.seatNumber}
+                                className={seatClass(
+                                  seat.status,
+                                  selected.has(seat.id),
+                                )}
+                              >
+                                {seat.seatNumber}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {gridHints.stageSide === "bottom" && (
+                    <StageMarker side="bottom" />
+                  )}
+                </div>
+                {gridHints.stageSide === "right" && (
+                  <StageMarker side="right" />
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-fg/10 bg-ink-950 p-6 text-center text-sm text-fg-faint">
+                กด “เลือกที่นั่งเอง” เพื่อโหลดกริดของโซนนี้
+              </div>
+            )}
           </div>
         ) : (
           <p className="rounded-xl border border-dashed border-fg/15 p-4 text-center text-sm text-fg-faint">
@@ -447,23 +1001,61 @@ export function SeatMapSvg({
 
         <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-fg/10 pt-3 text-xs text-fg-faint">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block size-4 rounded-md border border-fg/20 bg-ink-800" /> ว่าง
+            <span className="inline-block size-4 rounded-md border border-fg/20 bg-ink-800" />{" "}
+            ว่าง
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="shadow-glow-brand inline-block size-4 rounded-md bg-brand-600" /> เลือกอยู่
+            <span className="shadow-glow-brand inline-block size-4 rounded-md bg-brand-600" />{" "}
+            เลือกอยู่
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block size-4 rounded-md bg-ink-900" /> ขายแล้ว / มีคนกำลังจอง
+            <span className="inline-block size-4 rounded-md bg-ink-900" />{" "}
+            ขายแล้ว / มีคนกำลังจอง
           </span>
         </div>
       </div>
 
       {/* ---------- ฝั่งขวา: สรุป (พฤติกรรมเดียวกับผังแบบเดิม) ---------- */}
       <div className="h-fit rounded-xl border border-fg/10 bg-ink-850 p-4 shadow-md lg:sticky lg:top-24">
-        <h3 className="mb-3 font-display font-semibold text-fg">ที่นั่งที่เลือก</h3>
+        <h3 className="mb-3 font-display font-semibold text-fg">
+          รายการที่เลือก
+        </h3>
 
-        {selected.size === 0 ? (
-          <p className="text-sm text-fg-faint">ยังไม่ได้เลือกที่นั่ง — เลือกโซนแล้วแตะที่นั่งว่าง</p>
+        {!hasSelection ? (
+          <p className="text-sm text-fg-faint">
+            ยังไม่ได้เลือกบัตร — เลือกโซนเพื่อเริ่ม
+          </p>
+        ) : standingSelection ? (
+          <span className="text-led inline-flex items-center gap-1 rounded-md border border-brand-500/30 bg-brand-500/15 py-1 pl-2.5 pr-1.5 text-xs font-semibold text-brand-300">
+            โซนยืน × {standingSelection.quantity} ใบ
+            <button
+              type="button"
+              aria-label="เอาบัตรโซนยืนออก"
+              onClick={() => {
+                setStandingSelection(null);
+                setActiveZoneId(null);
+              }}
+              className="rounded p-0.5 transition-colors hover:bg-brand-500/25 hover:text-fg"
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        ) : bestAvailableSelection ? (
+          <span className="text-led inline-flex items-center gap-1 rounded-md border border-brand-500/30 bg-brand-500/15 py-1 pl-2.5 pr-1.5 text-xs font-semibold text-brand-300">
+            {bestAvailableSelection.zoneName} ×{" "}
+            {bestAvailableSelection.quantity} ที่ (ระบบเลือกให้)
+            <button
+              type="button"
+              aria-label="เอาที่นั่งที่ระบบเลือกให้ออก"
+              onClick={() => {
+                setBestAvailableSelection(null);
+                setActiveZoneId(null);
+              }}
+              className="rounded p-0.5 transition-colors hover:bg-brand-500/25 hover:text-fg"
+            >
+              <X className="size-3" />
+            </button>
+          </span>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {Array.from(selected.entries()).map(([id, item]) => (
@@ -493,9 +1085,14 @@ export function SeatMapSvg({
 
         <div className="mt-4 flex items-end justify-between border-t border-fg/10 pt-3">
           <span className="font-medium text-fg-dim">
-            รวม{selected.size > 0 ? ` ${selected.size} ที่นั่ง` : ""}
+            รวม
+            {selectedCount > 0
+              ? ` ${selectedCount} ${standingSelection ? "ใบ" : "ที่นั่ง"}`
+              : ""}
           </span>
-          <span className="text-led text-xl font-bold text-spot-300">{formatTHB(total)}</span>
+          <span className="text-led text-xl font-bold text-spot-300">
+            {formatTHB(total)}
+          </span>
         </div>
 
         {error && (
@@ -503,17 +1100,22 @@ export function SeatMapSvg({
             {error}
           </div>
         )}
+        {notice && (
+          <div className="mt-3 rounded-md border border-brand-400/25 bg-brand-500/10 p-2.5 text-sm text-brand-200">
+            {notice}
+          </div>
+        )}
 
         <Button
           className="mt-4 w-full"
-          disabled={selected.size === 0 || submitting}
+          disabled={!hasSelection || submitting}
           loading={submitting}
           onClick={handleSubmit}
         >
-          {submitting ? "กำลังจองที่นั่ง…" : "ดำเนินการชำระเงิน →"}
+          {submitting ? "กำลังจองบัตร…" : "ดำเนินการชำระเงิน →"}
         </Button>
         <p className="mt-2.5 text-center text-xs text-fg-faint">
-          ที่นั่งจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน
+          บัตรจะถูกล็อกให้คุณ 5 นาทีเพื่อชำระเงิน
         </p>
       </div>
     </div>
@@ -523,7 +1125,7 @@ export function SeatMapSvg({
 // className ของปุ่มที่นั่ง — ชุดเดียวกับผังแบบเดิม (components/seat-map.tsx) ให้หน้าตาเหมือนกันทั้งระบบ
 function seatClass(status: string, isSelected: boolean): string {
   const base =
-    "flex h-7 w-7 items-center justify-center rounded-md border font-display text-xs transition-all duration-150";
+    "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border font-display text-xs transition-all duration-150";
   if (status === "SOLD" || status === "HELD")
     return `${base} cursor-not-allowed border-transparent bg-ink-900 text-fg/20`;
   if (status === "BLOCKED")

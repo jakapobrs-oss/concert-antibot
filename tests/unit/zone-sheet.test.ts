@@ -52,6 +52,8 @@ describe("matchColumn", () => {
     expect(matchColumn("  Zone Name ")).toBe("name");
     expect(matchColumn("SEATS")).toBe("seatCount");
     expect(matchColumn("จำนวนที่นั่ง")).toBe("seatCount");
+    expect(matchColumn("ประเภทโซน")).toBe("kind");
+    expect(matchColumn(" Seats Per Row ")).toBe("rowSpec");
   });
 
   it("คืน null สำหรับคอลัมน์ที่ระบบไม่รู้จัก", () => {
@@ -61,6 +63,92 @@ describe("matchColumn", () => {
 });
 
 describe("parseZoneRows", () => {
+  it("อ่านที่นั่งต่อแถวแบบคั่นจุลภาคและอนุญาตช่องว่างรอบตัวเลข", () => {
+    const result = parseZoneRows([
+      row({ rowNumber: 2, seatCount: 42, rowSpec: " 12, 14 ,16 " }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.zones[0].rowSpec).toEqual([12, 14, 16]);
+  });
+
+  it("ไม่มีคอลัมน์ที่นั่งต่อแถวหรือค่าว่าง = จัดแถวอัตโนมัติ", () => {
+    const result = parseZoneRows([
+      row({ rowNumber: 2 }),
+      row({ rowNumber: 3, name: "V2", rowSpec: "" }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.zones.map((zone) => zone.rowSpec)).toEqual([null, null]);
+  });
+
+  it.each(["12,x,16", "12,0,16", "12,-1,16", "12,1.5,16"])(
+    "ปฏิเสธที่นั่งต่อแถวรูปแบบ %s พร้อมบอกเลขแถว",
+    (rowSpec) => {
+      const result = parseZoneRows([row({ rowNumber: 7, seatCount: 40, rowSpec })]);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors[0]).toContain("แถว 7");
+      expect(result.errors[0]).toContain("ที่นั่งต่อแถว");
+    },
+  );
+
+  it("ปฏิเสธเมื่อผลรวมที่นั่งต่อแถวไม่เท่าจำนวนที่นั่ง", () => {
+    const result = parseZoneRows([
+      row({ rowNumber: 3, seatCount: 42, rowSpec: "12,12,16" }),
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toContain(
+      "แถว 3: ที่นั่งต่อแถวรวม 40 ไม่เท่ากับจำนวนที่นั่ง 42",
+    );
+  });
+
+  it("ปฏิเสธโซนยืนที่กำหนดที่นั่งต่อแถว", () => {
+    const result = parseZoneRows([
+      row({ rowNumber: 4, kind: "ยืน", seatCount: 42, rowSpec: "12,14,16" }),
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toContain("แถว 4: โซนยืนกำหนดที่นั่งต่อแถวไม่ได้");
+  });
+
+  it("ไม่มีคอลัมน์ประเภทโซนหรือค่าว่าง = โซนนั่งทั้งหมด", () => {
+    const result = parseZoneRows([
+      row({ rowNumber: 2 }),
+      row({ rowNumber: 3, name: "V2", kind: "" }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.zones.map((zone) => zone.isStanding)).toEqual([false, false]);
+  });
+
+  it("อ่านค่าประเภทโซนยืนทั้งไทยและอังกฤษแบบไม่สนตัวพิมพ์", () => {
+    const result = parseZoneRows([
+      row({ rowNumber: 2, kind: " ยืน " }),
+      row({ rowNumber: 3, name: "V2", kind: "Standing" }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.zones.map((zone) => zone.isStanding)).toEqual([true, true]);
+  });
+
+  it("ปฏิเสธประเภทโซนที่ไม่รู้จักพร้อมบอกแถวและค่าที่ผิด", () => {
+    const result = parseZoneRows([row({ rowNumber: 7, kind: "half" })]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]).toContain("แถว 7");
+    expect(result.errors[0]).toContain("half");
+  });
+
   it("ยุบโซนเป็นเรทราคา เรียงจากแพงไปถูก", () => {
     const result = parseZoneRows([
       row({ rowNumber: 2, name: "B1", tier: "เรท 3", price: 4500, color: "#22c55e" }),
@@ -168,6 +256,9 @@ describe("readZoneSheet (ไฟล์ .xlsx จริง)", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.zones.map((zone) => zone.name)).toEqual(["V1", "V2", "A1", "A2", "B1", "B2"]);
+    expect(result.zones.filter((zone) => zone.isStanding).map((zone) => zone.name)).toEqual(["B2"]);
+    expect(result.zones[0]).toMatchObject({ seatCount: 42, rowSpec: [12, 14, 16] });
+    expect(result.zones.slice(1).every((zone) => zone.rowSpec === null)).toBe(true);
     expect(result.tiers).toHaveLength(3);
     expect(result.tiers[0]).toMatchObject({ tier: "เรท 1", price: 7300, color: "#e11d48" });
   });

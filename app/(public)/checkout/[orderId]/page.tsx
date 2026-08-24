@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { generatePromptPayQR } from "@/lib/promptpay";
 import { SiteHeader } from "@/components/site-header";
 import { CheckoutClient } from "@/components/checkout-client";
+import { formatSeatLabel } from "@/lib/seatmap/seat-rows";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function CheckoutPage({
       concert: { select: { title: true, slug: true } },
       items: {
         include: {
-          seat: { include: { zone: { select: { name: true } } } },
+          seat: { include: { zone: { select: { name: true, isStanding: true } } } },
           // named ticket: ผู้ถือที่ระบุไว้แล้ว (null = ผู้ซื้อถือเอง)
           holder: { select: { name: true, email: true } },
         },
@@ -47,14 +48,24 @@ export default async function CheckoutPage({
   const amount = Number(order.totalAmount.toString());
   const { dataUrl } = await generatePromptPayQR(amount);
 
-  const seatLabels = order.items.map(
-    (i) => `${i.seat.zone.name} ${i.seat.rowLabel}${i.seat.seatNumber}`
+  const seatLabels = order.items.map((item) =>
+    formatSeatLabel({
+      zoneName: item.seat.zone.name,
+      isStanding: item.seat.zone.isStanding,
+      rowLabel: item.seat.rowLabel,
+      seatNumber: item.seat.seatNumber,
+    }),
   );
 
   // named ticket: รายการที่นั่ง + ผู้ถือปัจจุบัน สำหรับฟอร์มระบุผู้ถือ (แก้ได้จนกว่าจะจ่าย)
   const holderItems = order.items.map((i) => ({
     itemId: i.id.toString(),
-    seatLabel: `${i.seat.zone.name} ${i.seat.rowLabel}${i.seat.seatNumber}`,
+    seatLabel: formatSeatLabel({
+      zoneName: i.seat.zone.name,
+      isStanding: i.seat.zone.isStanding,
+      rowLabel: i.seat.rowLabel,
+      seatNumber: i.seat.seatNumber,
+    }),
     holderName: i.holder ? (i.holder.name?.trim() || i.holder.email) : null,
   }));
 

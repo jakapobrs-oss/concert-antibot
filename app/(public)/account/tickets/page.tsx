@@ -12,6 +12,7 @@ import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { TicketEntryQr } from "@/components/ticket-entry-qr";
 import { TicketReturnButton } from "@/components/ticket-return-button";
+import { formatSeatLabel } from "@/lib/seatmap/seat-rows";
 
 export const dynamic = "force-dynamic";
 
@@ -50,8 +51,12 @@ export default async function TicketsPage({
     concertTitle: t.seat.zone.concert.title,
     venue: t.seat.zone.concert.venue,
     eventAt: t.seat.zone.concert.eventAt,
-    zoneName: t.seat.zone.name,
-    seat: `${t.seat.rowLabel}${t.seat.seatNumber}`,
+    seatLabel: formatSeatLabel({
+      zoneName: t.seat.zone.name,
+      isStanding: t.seat.zone.isStanding,
+      rowLabel: t.seat.rowLabel,
+      seatNumber: t.seat.seatNumber,
+    }),
     price: t.price.toString(),
     // คืนได้เฉพาะ: ฉันเป็นผู้ซื้อ + ยังไม่เช็คอิน + ยังไม่พ้นเส้นตายคืน
     canReturn:
@@ -95,7 +100,7 @@ export default async function TicketsPage({
                 <div className="grid shrink-0 place-items-center bg-white p-4">
                   <TicketEntryQr
                     ticketId={t.id}
-                    alt={`QR ตั๋ว ${t.concertTitle} ที่นั่ง ${t.seat}`}
+                    alt={`QR ตั๋ว ${t.concertTitle} ${t.seatLabel}`}
                   />
                 </div>
 
@@ -130,7 +135,7 @@ export default async function TicketsPage({
                   </p>
                   <p className="pt-0.5">
                     <span className="text-led mr-2 rounded-md border border-brand-500/25 bg-brand-500/12 px-2 py-0.5 text-xs font-semibold text-brand-300">
-                      โซน {t.zoneName} · {t.seat}
+                      {t.seatLabel}
                     </span>
                     <span className="text-led font-bold text-spot-300">{formatTHB(t.price)}</span>
                   </p>
