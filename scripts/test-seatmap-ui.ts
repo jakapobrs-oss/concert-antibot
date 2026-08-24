@@ -4,16 +4,18 @@
 // รัน: npx tsx scripts/test-seatmap-ui.ts   (ต้อง pnpm dev + pnpm db:up อยู่)
 //
 // ทำไมต้องมีไฟล์นี้ทั้งที่มี unit test แล้ว:
-//   tests/unit/seatmap-generate.test.ts พิสูจน์ "อัลกอริทึม" (pure function, mock ล้วน)
+//   tests/unit/{seat-rows,zone-sheet}.test.ts พิสูจน์ตรรกะล้วน (pure function, mock ล้วน)
 //   แต่ไม่ได้พิสูจน์ว่า หน้าแอดมิน -> server action -> DB -> Redis ต่อกันติดจริง
 //   โดยเฉพาะ "ด่านกันเจนทับ" ที่ต้องอ่าน hold จาก Redis ซึ่ง mock ไม่ได้ให้ความมั่นใจ
 //
 // flow: สร้างคอนเสิร์ตทดสอบ -> login แอดมิน -> อัปโหลดรูปผัง -> คลิกวาดกรอบ 4 จุด
-//       -> เจนที่นั่ง -> ตรวจ DB -> ลองเจนทับตอนมีที่นั่ง SOLD (ต้องถูกปฏิเสธ)
+//       -> เจนที่นั่ง -> ตรวจ DB -> วาดกรอบเวที -> นำเข้าข้อมูลโซนจากไฟล์ Excel
+//       -> ลองเจนทับตอนมีที่นั่ง SOLD (ต้องถูกปฏิเสธ)
 //       -> ลองเจนทับตอนมี hold ค้างใน Redis (ต้องถูกปฏิเสธ)
 //       -> เคลียร์ทั้งสองแล้วเจนทับใหม่ (ต้องผ่าน)
 // ทำความสะอาด: ลบคอนเสิร์ตทดสอบ (cascade โซน/ที่นั่ง) + ลบ key Redis ที่สร้างเอง
 import { chromium, type Page } from "playwright-core";
+import ExcelJS from "exceljs";
 import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { tmpdir } from "node:os";
@@ -39,8 +41,11 @@ const SEAT_COUNT_SECOND = 30;
 const FRAME = { left: 0.15, right: 0.85, top: 0.2, bottom: 0.8 };
 
 // กรอบที่ 2 — เล็กลงและเยื้องไปมุมล่างขวา ใช้ตอนทดสอบ "ตั้งกรอบใหม่โดยคงที่นั่งเดิม"
-// ต้องไม่ทับกับ FRAME เลยสักส่วน เพื่อพิสูจน์ได้ชัดว่าที่นั่ง "ย้ายจริง" ไม่ใช่บังเอิญค่าเดิม
+// ต้องไม่ทับกับ FRAME เลยสักส่วน เพื่อพิสูจน์ได้ชัดว่ากรอบ "เปลี่ยนจริง" ไม่ใช่บังเอิญค่าเดิม
 const FRAME_SHIFTED = { left: 0.55, right: 0.95, top: 0.55, bottom: 0.95 };
+
+// กรอบเวที — แถบบนสุดของรูป (คนละที่กับกรอบโซนทั้งสองอัน)
+const STAGE_FRAME = { left: 0.2, right: 0.8, top: 0.03, bottom: 0.13 };
 
 let pass = 0;
 let fail = 0;
@@ -161,8 +166,53 @@ async function fillZoneForm(page: Page, name: string, price: string, seats: stri
   await page.fill("#zone-seats", seats);
 }
 
+/** สลับโหมดวาด (กรอบโซน / กรอบเวที) — กรอบเดียวกัน คนละความหมาย */
+async function setDrawMode(page: Page, mode: "zone" | "stage") {
+  await page.click(`button:has-text("${mode === "stage" ? "วาดกรอบเวที" : "วาดกรอบโซน"}")`);
+}
+
+/**
+ * สร้างไฟล์ Excel ข้อมูลโซนแล้วอัปโหลดผ่าน "ปุ่มจริง"
+ * (input ถูกซ่อนไว้เหมือนปุ่มอัปโหลดรูป — เหตุผลเดียวกับ uploadLayout)
+ */
+async function importZoneSheet(
+  page: Page,
+  filePath: string,
+  rows: Array<[string, string, number, number, string]>
+) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("โซน");
+  ws.addRow(["ชื่อโซน", "เรทราคา", "ราคา", "จำนวนที่นั่ง", "สี"]);
+  for (const [name, tier, price, seats, color] of rows) {
+    ws.addRow([name, tier, price, seats, ""]);
+    // สีอ่านจาก "สีพื้นของช่อง" ไม่ใช่ข้อความ — เป็นวิธีที่คนทำผังใช้จริงใน Excel
+    ws.lastRow!.getCell(5).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: `FF${color.replace("#", "").toUpperCase()}` },
+    };
+  }
+  writeFileSync(filePath, Buffer.from(await wb.xlsx.writeBuffer()));
+
+  const button = page.locator('button:has-text("นำเข้าไฟล์ Excel")');
+  await button.waitFor({ timeout: 15_000 });
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      const [chooser] = await Promise.all([
+        page.waitForEvent("filechooser", { timeout: 5_000 }),
+        button.click(),
+      ]);
+      await chooser.setFiles(filePath);
+      return;
+    } catch {
+      if (attempt === 5) throw new Error("กดปุ่มนำเข้า Excel แล้วไม่เปิด file chooser");
+    }
+  }
+}
+
 async function main() {
   const pngPath = join(tmpdir(), `seatmap-layout-${process.pid}.png`);
+  const xlsxPath = join(tmpdir(), `seatmap-zones-${process.pid}.xlsx`);
   writeFileSync(pngPath, makeVenuePng(IMAGE_W, IMAGE_H));
   try {
     mkdirSync(".shots", { recursive: true });
@@ -255,34 +305,91 @@ async function main() {
 
     const zone = await prisma.zone.findFirstOrThrow({
       where: { concertId: concert.id },
-      select: { id: true, totalSeats: true, polygon: true, seats: { select: { id: true, x: true, y: true, rowLabel: true, seatNumber: true } } },
+      select: {
+        id: true,
+        totalSeats: true,
+        polygon: true,
+        seats: { select: { id: true, rowLabel: true, seatNumber: true } },
+      },
     });
     check("DB มีที่นั่งครบตามจำนวน", zone.seats.length === SEAT_COUNT_FIRST, `got ${zone.seats.length}`);
     check("totalSeats ตรงกับจำนวนที่นั่งจริง", zone.totalSeats === zone.seats.length);
     check("polygon ถูกเก็บลง DB", Array.isArray(zone.polygon) && (zone.polygon as unknown[]).length === 4);
-    check(
-      "ทุกที่นั่งมีพิกัด x,y (ไม่ null)",
-      zone.seats.every((s) => s.x !== null && s.y !== null)
-    );
 
-    // ⚠️ ตรวจ "อยู่ในกรอบ" ด้วยการเทียบขอบตรง ๆ ไม่เรียก point-in-polygon ของระบบเอง
-    //    (ใช้ฟังก์ชันเดียวกับที่ implement = เทสอ้างอิงตัวเอง พิสูจน์อะไรไม่ได้)
-    //    เผื่อ tolerance 1.5% เพราะการคลิกจริงลงพิกเซลไม่ได้ตรงเป๊ะกับสัดส่วนที่ตั้งใจ
-    const tol = 0.015;
-    const outside = zone.seats.filter(
-      (s) =>
-        s.x! < FRAME.left - tol ||
-        s.x! > FRAME.right + tol ||
-        s.y! < FRAME.top - tol ||
-        s.y! > FRAME.bottom + tol
-    );
-    check("ไม่มีที่นั่งหลุดออกนอกกรอบที่วาด", outside.length === 0, `หลุด ${outside.length} ที่`);
-
+    // 📌 จำนวนที่นั่งต้องไม่ผูกกับ "ขนาดกรอบ" — สั่งเท่าไรได้เท่านั้นเป๊ะเสมอ
+    //    (ของเดิมคำนวณจากพื้นที่กรอบ จึงได้จำนวนไม่ตรงเป้าเมื่อกรอบเล็ก)
     const labels = new Set(zone.seats.map((s) => `${s.rowLabel}-${s.seatNumber}`));
     check("ไม่มีแถว/เลขที่นั่งซ้ำกัน", labels.size === zone.seats.length);
+    check(
+      "แถวแรกคือ A และเรียงต่อเนื่อง ไม่ขาดช่วง",
+      new Set(zone.seats.map((s) => s.rowLabel)).has("A")
+    );
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.screenshot({ path: ".shots/seatmap-2-generated.png" });
+
+    // ---------- 5.5) วาดกรอบเวที ----------
+    // เวทีคือคำถามหลักที่ผังนี้ต้องตอบ ("โซนนี้อยู่ตรงไหนของเวที") จึงเก็บลงฐานข้อมูลของคอนเสิร์ต
+    await setDrawMode(page, "stage");
+    await drawFrame(page, STAGE_FRAME);
+    await page.click(`button:has-text("บันทึกกรอบเวที")`);
+    const stageMsg = await readFeedback(page);
+    check("บันทึกกรอบเวทีได้", stageMsg.includes("เวที"), stageMsg);
+
+    const withStage = await prisma.concert.findUniqueOrThrow({
+      where: { id: concert.id },
+      select: { stagePolygon: true },
+    });
+    check(
+      "กรอบเวทีถูกเก็บลง DB เป็นสัดส่วน 0-1 ครบ 4 มุม",
+      Array.isArray(withStage.stagePolygon) &&
+        (withStage.stagePolygon as number[][]).length === 4 &&
+        (withStage.stagePolygon as number[][]).every(
+          ([x, y]) => x >= 0 && x <= 1 && y >= 0 && y <= 1
+        ),
+      JSON.stringify(withStage.stagePolygon)
+    );
+    await page.screenshot({ path: ".shots/seatmap-2b-stage.png" });
+
+    // ---------- 5.6) นำเข้าข้อมูลโซนจากไฟล์ Excel ----------
+    // จุดสำคัญ: โซนเดิมที่มีอยู่แล้วต้องถูก "อัปเดต" ไม่ใช่สร้างซ้ำ (จับคู่ด้วยชื่อโซน)
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await importZoneSheet(page, xlsxPath, [
+      ["VIP ทดสอบ", "เรท 1", 3500, SEAT_COUNT_FIRST, "#ef4444"],
+      ["โซน B ทดสอบ", "เรท 2", 2000, 24, "#3b82f6"],
+    ]);
+    const importMsg = await readFeedback(page);
+    check("นำเข้าข้อมูลโซนจาก Excel สำเร็จ", importMsg.includes("นำเข้า"), importMsg);
+
+    const importedZones = await prisma.zone.findMany({
+      where: { concertId: concert.id },
+      select: { name: true, tier: true, price: true, color: true, totalSeats: true, polygon: true },
+      orderBy: { name: "asc" },
+    });
+    check("ได้โซนครบตามไฟล์ ไม่สร้างโซนซ้ำชื่อเดิม", importedZones.length === 2, `got ${importedZones.length}`);
+
+    const vip = importedZones.find((z) => z.name === "VIP ทดสอบ");
+    check("โซนเดิมถูกอัปเดตราคา/เรท/สีตามไฟล์", Number(vip?.price) === 3500 && vip?.tier === "เรท 1");
+    check("โซนเดิมยังเก็บกรอบที่วาดไว้ (ไฟล์ไม่ล้างกรอบทิ้ง)", Array.isArray(vip?.polygon));
+
+    const zoneB = importedZones.find((z) => z.name === "โซน B ทดสอบ");
+    check(
+      "โซนใหม่จากไฟล์ถูกสร้าง + เจนที่นั่งให้ครบ",
+      zoneB?.totalSeats === 24 && zoneB?.tier === "เรท 2" && zoneB?.color === "#3b82f6",
+      JSON.stringify(zoneB)
+    );
+    check(
+      "โซนใหม่จากไฟล์ยังไม่มีกรอบ (รอแอดมินมาวาด)",
+      zoneB?.polygon === null,
+      JSON.stringify(zoneB?.polygon)
+    );
+    const zoneBSeats = await prisma.seat.count({ where: { zone: { name: "โซน B ทดสอบ", concertId: concert.id } } });
+    check("ที่นั่งของโซนใหม่ถูกเจนครบตามไฟล์", zoneBSeats === 24, `got ${zoneBSeats}`);
+    await page.screenshot({ path: ".shots/seatmap-2c-imported.png" });
+
+    // เอาโซนที่ 2 ออก ไม่ให้ไปกวนการทดสอบด่านกันเจนทับข้างล่าง
+    await prisma.zone.deleteMany({ where: { concertId: concert.id, name: "โซน B ทดสอบ" } });
+    await setDrawMode(page, "zone");
 
     // ---------- 6) 🔴 ด่านกันเจนทับ: มีที่นั่ง SOLD ----------
     const victimSeat = zone.seats[0];
@@ -352,13 +459,13 @@ async function main() {
     check("DB อัปเดตเป็นจำนวนใหม่", finalSeats === SEAT_COUNT_SECOND, `got ${finalSeats}`);
     await page.screenshot({ path: ".shots/seatmap-4-regenerated.png" });
 
-    // ---------- 9) 🔴 "ตั้งกรอบ (คงที่นั่งเดิม)" บนโซนที่ขายบัตรไปแล้ว ----------
+    // ---------- 9) 🔴 "ตั้งกรอบให้โซนนี้" บนโซนที่ขายบัตรไปแล้ว ----------
     // ทำไมต้องมีทางนี้: ด่านข้อ 6-7 ปฏิเสธการเจนทับตลอดไปเมื่อมีที่นั่งขายแล้ว (ถูกต้อง เพราะเจน = ลบ+สร้างใหม่)
-    // แต่แปลว่าคอนเสิร์ตที่กำลังขายอยู่จะไม่มีวันได้ผังบนรูปจริง -> เพิ่ม assignZoneFrame ที่ย้าย "แค่พิกัด"
-    // จุดเสี่ยง: ทางนี้ยิง UPDATE ดิบใส่ตาราง seats ทั้งโซนทีเดียว ถ้าพลาดคือตั๋วลูกค้าชี้ผิดที่
+    // แต่แปลว่าคอนเสิร์ตที่กำลังขายอยู่จะไม่มีวันได้ผังบนรูปจริง -> assignZoneFrame แตะ "แค่กรอบโซน"
+    // ที่นั่งทั้งโซนต้องไม่ถูกแตะเลยแม้แต่แถวเดียว (ผังรุ่นนี้ที่นั่งไม่มีพิกัดบนรูปแล้ว)
     const beforeFrame = await prisma.seat.findMany({
       where: { zoneId: zone.id },
-      select: { id: true, x: true, y: true, rowLabel: true, seatNumber: true, status: true },
+      select: { id: true, rowLabel: true, seatNumber: true, status: true },
       orderBy: { id: "asc" },
     });
     const soldSeat = beforeFrame[0];
@@ -376,7 +483,7 @@ async function main() {
 
     const afterFrame = await prisma.seat.findMany({
       where: { zoneId: zone.id },
-      select: { id: true, x: true, y: true, rowLabel: true, seatNumber: true, status: true },
+      select: { id: true, rowLabel: true, seatNumber: true, status: true },
       orderBy: { id: "asc" },
     });
 
@@ -396,19 +503,6 @@ async function main() {
       afterFrame.find((s) => s.id === soldSeat.id)?.status === "SOLD"
     );
 
-    // พิกัดต้อง "ย้ายจริง" และย้ายเข้ากรอบใหม่ทั้งหมด
-    const moved = afterFrame.filter((s, i) => s.x !== beforeFrame[i].x || s.y !== beforeFrame[i].y);
-    check("พิกัดถูกย้ายจริงทุกที่นั่ง", moved.length === afterFrame.length, `ย้าย ${moved.length}/${afterFrame.length}`);
-    const tolFrame = 0.015;
-    const outsideNew = afterFrame.filter(
-      (s) =>
-        s.x! < FRAME_SHIFTED.left - tolFrame ||
-        s.x! > FRAME_SHIFTED.right + tolFrame ||
-        s.y! < FRAME_SHIFTED.top - tolFrame ||
-        s.y! > FRAME_SHIFTED.bottom + tolFrame
-    );
-    check("ทุกที่นั่งย้ายเข้ามาอยู่ในกรอบใหม่", outsideNew.length === 0, `หลุด ${outsideNew.length} ที่`);
-
     const zoneAfterFrame = await prisma.zone.findUniqueOrThrow({
       where: { id: zone.id },
       select: { polygon: true, totalSeats: true },
@@ -418,6 +512,11 @@ async function main() {
       Array.isArray(zoneAfterFrame.polygon) &&
         (zoneAfterFrame.polygon as number[][])[0][0] > FRAME.left + 0.1,
       JSON.stringify(zoneAfterFrame.polygon)
+    );
+    check(
+      "จำนวนที่นั่งไม่เปลี่ยนตามขนาดกรอบที่เล็กลง",
+      afterFrame.length === beforeFrame.length,
+      `${beforeFrame.length} -> ${afterFrame.length}`
     );
     check(
       "totalSeats ไม่ถูกแตะ",
@@ -432,10 +531,12 @@ async function main() {
     // ---------- cleanup ----------
     for (const key of createdRedisKeys) await redis.del(key);
     await prisma.concert.delete({ where: { id: concert.id } }); // cascade -> zones -> seats
-    try {
-      unlinkSync(pngPath);
-    } catch {
-      /* ลบไม่ได้ก็ปล่อย — เป็นไฟล์ใน temp */
+    for (const tmp of [pngPath, xlsxPath]) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* ลบไม่ได้ก็ปล่อย — เป็นไฟล์ใน temp */
+      }
     }
     await prisma.$disconnect();
     redis.disconnect();

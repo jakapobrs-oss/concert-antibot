@@ -85,6 +85,7 @@ const shape = envSchema.shape as Record<string, z.ZodTypeAny>;
 
 const GROUP: Record<string, string> = {
   DATABASE_URL: "Infra",
+  DIRECT_URL: "Infra",
   REDIS_URL: "Infra",
   NEXTAUTH_SECRET: "Auth",
   NEXTAUTH_URL: "Auth",
@@ -112,6 +113,7 @@ const GROUP: Record<string, string> = {
 // secret keys — ห้ามพิมพ์ค่าจริง
 const SECRET = new Set([
   "DATABASE_URL",
+  "DIRECT_URL",
   "NEXTAUTH_SECRET",
   "GOOGLE_CLIENT_SECRET",
   "TURNSTILE_SECRET_KEY",
@@ -327,6 +329,10 @@ async function runProbes() {
     tasks.push(p.then((r) => void (probes[k] = r)));
 
   if (fileVars.DATABASE_URL) set("DATABASE_URL", probeDb(fileVars.DATABASE_URL));
+  // DIRECT_URL — probe เฉพาะตอนที่ "ต่างจาก DATABASE_URL" จริง (เช่น Neon ที่ pooler/direct คนละ host)
+  //   ถ้าตั้งเท่ากัน (local docker ไม่มี pooler) ผลย่อมเหมือน DATABASE_URL — ไม่ต้องเปลือง connection ซ้ำ
+  if (fileVars.DIRECT_URL && fileVars.DIRECT_URL !== fileVars.DATABASE_URL)
+    set("DIRECT_URL", probeDb(fileVars.DIRECT_URL));
   set("REDIS_URL", probeRedis(fileVars.REDIS_URL || "redis://localhost:6379"));
   if (fileVars.TURNSTILE_SECRET_KEY)
     set("TURNSTILE_SECRET_KEY", probeTurnstile(fileVars.TURNSTILE_SECRET_KEY));
@@ -369,6 +375,17 @@ function classifySchemaKey(key: string): Check {
       return isProd
         ? mk("WARN", "presence", `ขาด → ${PROD_WARN_MISSING[key]}`)
         : mk("PASS", "presence", "ไม่ตั้ง (optional)");
+    // DIRECT_URL ขาด = แอป/next build ยังรันได้ปกติ (runtime ไม่ได้อ่าน) แต่ `prisma migrate` ตาย P1012
+    //   จึงเป็น WARN ไม่ใช่ FAIL — ไม่บล็อก exit code ของ env ที่ไม่ต้อง migrate (เช่น runtime-only container)
+    //   เหตุที่ต้องมีบรรทัดนี้: เคยเกิดจริง 2026-08-18 — check:env ผ่านสะอาด แล้วไปโผล่เป็น P1012
+    //   ตอน migrate ซึ่งอ่านไม่ออกว่าคือ "ลืมตั้ง env" (schema รู้จัก env นี้ผ่าน .optional() ก็จริง
+    //   แต่ optional = ไม่มีใครทวง → ต้องทวงตรงนี้แทน)
+    if (key === "DIRECT_URL")
+      return mk(
+        "WARN",
+        "presence",
+        "ไม่ตั้ง → `prisma migrate dev|deploy` จะพัง P1012 (schema ประกาศ directUrl) — runtime/next build ไม่กระทบ"
+      );
     if (key === "REDIS_URL" && isProd)
       return mk("WARN", "presence", "ไม่ตั้ง → ใช้ default localhost (prod แน่ใจว่า redis อยู่ที่ localhost?)");
     return mk(

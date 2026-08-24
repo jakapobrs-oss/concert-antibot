@@ -7,6 +7,14 @@ import { z } from "zod";
 export const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().url(),
+  // DIRECT_URL = connection ตรง ไม่ผ่าน pooler — prisma/schema.prisma ประกาศ `directUrl = env("DIRECT_URL")`
+  //   Prisma อ่านตัวนี้เฉพาะตอน `prisma migrate dev|deploy` เท่านั้น — runtime ของแอปไม่ได้ใช้เลย
+  //   ทำไมถึงเป็น .optional() ทั้งที่ Prisma "ต้องมี": lib/env.ts ทำ envSchema.parse(process.env) ตอน import
+  //     แล้ว throw ถ้าขาด → ถ้าตั้ง required จะพังทุก environment ที่ไม่ได้ตั้ง (รวม Vercel build ที่รัน
+  //     "prisma migrate deploy && next build") ทั้งที่ตัวแอปรันได้ปกติ = แลก crash จริงกับปัญหาที่ยังไม่เกิด
+  //   ตัวที่ "ทวง" จริงคือ scripts/check-env.ts (WARN ไม่บล็อก) — ที่นี่มีไว้เพื่อ (ก) document ว่ารู้จักตัวแปรนี้
+  //     (ข) validate รูปแบบถ้าตั้งมา (ค) กัน check-env รายงานผิดว่าเป็น "ตัวแปรที่ไม่รู้จัก"
+  DIRECT_URL: z.string().url().optional(),
 
   // Redis (queue + lock + rate limit) — default docker-compose
   REDIS_URL: z.string().default("redis://localhost:6379"),

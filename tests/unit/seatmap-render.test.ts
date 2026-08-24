@@ -4,11 +4,11 @@
 //   parsePolygon()     = ด่านตัดสินว่าจะวาดผังบนรูปจริง หรือถอยไปผังตารางแบบเดิม
 //                        ถ้าปล่อยข้อมูลผิดรูปผ่าน หน้าเลือกที่นั่งจะพังตอน render
 //                        (ทั้งที่ระบบยังขายบัตรได้ปกติถ้าถอยไปผังตาราง)
-//   compareSeatOrder() = ลำดับจับคู่ที่นั่งเดิมกับตำแหน่งใหม่ตอนแอดมินตั้งกรอบทับโซนที่ขายไปแล้ว
-//                        ถ้าลำดับเพี้ยน ตั๋วที่ลูกค้าถืออยู่จะชี้จุดผิดบนผัง
+//   compareSeatOrder() = ลำดับเรียงที่นั่งในแผงเลือกที่นั่งของแต่ละโซน
+//                        ถ้าลำดับเพี้ยน แถวจะสลับกัน (A, AA, B) คนซื้อหาที่นั่งของตัวเองไม่เจอ
 import { describe, it, expect } from "vitest";
-import { parsePolygon } from "@/lib/seatmap/polygon";
-import { compareSeatOrder, polygonArea, rowLabelFor } from "@/lib/seatmap/generate";
+import { parsePolygon, polygonArea } from "@/lib/seatmap/polygon";
+import { compareSeatOrder, rowLabelFor } from "@/lib/seatmap/seat-rows";
 import {
   isSeatLabelLegible,
   MIN_LABEL_FONT_PX,
@@ -122,31 +122,30 @@ describe("compareSeatOrder — ลำดับอ่านผัง (แถว�
     expect(sorted).toEqual(labels);
   });
 
-  it("จับคู่ที่นั่งเดิมกับตำแหน่งใหม่แบบ 1:1 ตามลำดับเดียวกัน (แบบที่ assignZoneFrame ใช้)", () => {
+  it("เรียงที่นั่งที่มาแบบสุ่มให้ตรงกับลำดับที่เจนออกมา 1:1", () => {
     // ที่นั่งเดิมในโซน 27 แถว แถวละ 2 ที่ — มาแบบไม่เรียง (Prisma ไม่การันตีลำดับ)
     const existing = [
       seat("AA", 2), seat("A", 1), seat("Z", 2), seat("A", 2), seat("Z", 1), seat("AA", 1),
     ];
-    // ตำแหน่งใหม่ที่เจนจากกรอบ — ตัวเลข y เรียงตามแถวจริง
+    // ลำดับที่ buildSeatRows เจนออกมา (A -> Z -> AA)
     const spots = [
-      { rowLabel: "A", seatNumber: 1, y: 0.1 },
-      { rowLabel: "A", seatNumber: 2, y: 0.1 },
-      { rowLabel: "Z", seatNumber: 1, y: 0.8 },
-      { rowLabel: "Z", seatNumber: 2, y: 0.8 },
-      { rowLabel: "AA", seatNumber: 1, y: 0.9 },
-      { rowLabel: "AA", seatNumber: 2, y: 0.9 },
+      { rowLabel: "A", seatNumber: 1 },
+      { rowLabel: "A", seatNumber: 2 },
+      { rowLabel: "Z", seatNumber: 1 },
+      { rowLabel: "Z", seatNumber: 2 },
+      { rowLabel: "AA", seatNumber: 1 },
+      { rowLabel: "AA", seatNumber: 2 },
     ];
 
     const seatsInOrder = [...existing].sort(compareSeatOrder);
     const spotsInOrder = [...spots].sort(compareSeatOrder);
 
-    // ที่นั่งเดิมชื่อไหน ต้องได้ตำแหน่งของชื่อนั้น (โซนนี้รูปทรงไม่เปลี่ยน จำนวนแถวเท่าเดิม)
     seatsInOrder.forEach((s, i) => {
       expect(spotsInOrder[i].rowLabel).toBe(s.rowLabel);
       expect(spotsInOrder[i].seatNumber).toBe(s.seatNumber);
     });
-    // และแถว AA ต้องได้ y ของแถวล่างสุดจริง ๆ ไม่ใช่ y ของแถวบน
-    expect(spotsInOrder[spotsInOrder.length - 1].y).toBe(0.9);
+    // แถว AA ต้องอยู่ท้ายสุด ไม่ใช่ตามหลัง A เพราะเรียงแบบพจนานุกรม
+    expect(spotsInOrder[spotsInOrder.length - 1].rowLabel).toBe("AA");
   });
 });
 
@@ -226,7 +225,8 @@ describe("isSeatLabelLegible — ตัดสินจากขนาดตั�
   });
 });
 
-describe("polygonArea — ฐานของการประมาณความหนาแน่นที่นั่งฝั่งแอดมิน", () => {
+// polygonArea เป็นฐานของ polygonCentroid ซึ่งเป็นตัวกำหนดว่าป้ายชื่อโซน/ป้ายเวทีไปปักตรงไหน
+describe("polygonArea — ฐานของจุดปักป้ายชื่อโซนและป้ายเวที", () => {
   it("กรอบสี่เหลี่ยมเต็มรูป = พื้นที่ 1", () => {
     expect(polygonArea([[0, 0], [1, 0], [1, 1], [0, 1]])).toBeCloseTo(1, 9);
   });

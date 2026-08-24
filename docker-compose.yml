@@ -3,12 +3,17 @@
 # Service: Postgres 16 + Redis 7.4 + MinIO
 # Volume mount = persistent local data (ไม่หาย restart)
 
+# ชื่อ compose project ต้องเป็น project-end (ชื่อโฟลเดอร์เดิมก่อนเปลี่ยนเป็น concert-antibot)
+# ห้ามลบบรรทัดนี้: ข้อมูลจริงทั้งหมดอยู่ใน volume project-end_postgres-data (70 MB)
+# ถ้าไม่มี compose จะไปสร้าง volume concert-antibot_* ที่ว่างเปล่า = ฐานข้อมูลหายทั้งก้อน
+name: project-end
+
 services:
   # ฐานข้อมูลหลัก — ใช้ Postgres 16 + BIGSERIAL id (ตามที่ user ขอ id เป็นตัวเลข)
   postgres:
     image: postgres:16.6-alpine
     container_name: concert-postgres
-    restart: unless-stopped
+    restart: "no"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-concert}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_change_me}
@@ -16,7 +21,7 @@ services:
       # ตั้ง timezone เป็นไทยเพื่อให้ created_at สื่อความหมาย
       TZ: Asia/Bangkok
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -29,10 +34,10 @@ services:
   redis:
     image: redis:7.4-alpine
     container_name: concert-redis
-    restart: unless-stopped
+    restart: "no"
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -46,14 +51,14 @@ services:
   minio:
     image: minio/minio:latest
     container_name: concert-minio
-    restart: unless-stopped
+    restart: "no"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
     ports:
-      - "9000:9000"  # S3 API
-      - "9001:9001"  # Web Console
+      - "127.0.0.1:9000:9000"  # S3 API
+      - "127.0.0.1:9001:9001"  # Web Console
     volumes:
       - minio-data:/data
     healthcheck:

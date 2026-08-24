@@ -1,5 +1,8 @@
 // Admin — จัดผังที่นั่งจากรูปสถานที่จริง (Phase 2)
-// อัปโหลดรูปผัง -> คลิกวาดกรอบทับโซน -> ระบบเจนที่นั่งให้เต็มกรอบตามจำนวนที่สั่ง
+// อัปโหลดรูปผัง -> นำเข้าข้อมูลโซนจาก Excel -> คลิกวาดกรอบทับโซนและกรอบเวที
+//
+// 📌 ผังนี้เป็น "ผังบอกตำแหน่ง" ระดับโซน ไม่ใช่ผังที่นั่งรายตัว
+//    จำนวนที่นั่งมาจากตัวเลขที่กรอก/นำเข้า ไม่ได้คำนวณจากขนาดกรอบ
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -12,9 +15,10 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminSeatmapPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const concertId = BigInt(id);
 
   const concert = await prisma.concert.findUnique({
-    where: { id: BigInt(id) },
+    where: { id: concertId },
     select: {
       id: true,
       title: true,
@@ -22,19 +26,17 @@ export default async function AdminSeatmapPage({ params }: { params: Promise<{ i
       layoutImageBase64: true,
       layoutImageWidth: true,
       layoutImageHeight: true,
+      stagePolygon: true,
       zones: {
         orderBy: { price: "desc" },
         select: {
           id: true,
           name: true,
+          tier: true,
           price: true,
           color: true,
           totalSeats: true,
           polygon: true,
-          seats: {
-            select: { x: true, y: true, status: true },
-            orderBy: [{ rowLabel: "asc" }, { seatNumber: "asc" }],
-          },
         },
       },
     },
@@ -42,19 +44,28 @@ export default async function AdminSeatmapPage({ params }: { params: Promise<{ i
 
   if (!concert) notFound();
 
+  // นับที่นั่งที่ขายแล้ว/จองค้างแบบ aggregate — ไม่ดึงแถวที่นั่งจริงมาทั้งหมด
+  // ผังจริงมีได้ถึงหลักหมื่นที่นั่ง (BABYMONSTER = 11,000) ถ้าดึงรายตัวหน้านี้จะอืดโดยไม่ได้ใช้อะไรเลย
+  const seatCounts = await prisma.seat.groupBy({
+    by: ["zoneId", "status"],
+    where: { zone: { concertId }, status: { in: ["SOLD", "HELD"] } },
+    _count: { _all: true },
+  });
+
+  const countOf = (zoneId: bigint, status: "SOLD" | "HELD") =>
+    seatCounts.find((row) => row.zoneId === zoneId && row.status === status)?._count._all ?? 0;
+
   // BigInt/Decimal ส่งข้าม server->client ตรง ๆ ไม่ได้ ต้องแปลงเป็น string ก่อน
   const zones = concert.zones.map((zone) => ({
     id: zone.id.toString(),
     name: zone.name,
+    tier: zone.tier,
     price: zone.price.toString(),
     color: zone.color,
     totalSeats: zone.totalSeats,
     polygon: parsePolygon(zone.polygon),
-    seats: zone.seats.map((seat) => ({
-      x: seat.x,
-      y: seat.y,
-      status: seat.status as string,
-    })),
+    soldCount: countOf(zone.id, "SOLD"),
+    heldCount: countOf(zone.id, "HELD"),
   }));
 
   return (
@@ -71,8 +82,8 @@ export default async function AdminSeatmapPage({ params }: { params: Promise<{ i
         <div className="mb-6 mt-2">
           <h1 className="font-display text-2xl font-bold text-fg">ผังที่นั่ง — {concert.title}</h1>
           <p className="mt-1 text-sm text-fg-faint">
-            {concert.venue} · อัปโหลดรูปผังของสถานที่นี้ แล้วคลิกวาดกรอบทับแต่ละโซน
-            ระบบจะโปรยที่นั่งให้เต็มกรอบตามจำนวนที่สั่ง
+            {concert.venue} · นำเข้าข้อมูลโซนจากไฟล์ Excel แล้ววาดกรอบทับรูปผังให้ตรงกับแต่ละโซน
+            ผังนี้บอกว่าโซนไหนอยู่ตรงไหนของเวที ไม่ได้คิดจำนวนบัตรจากขนาดกรอบ
           </p>
         </div>
 
@@ -83,6 +94,7 @@ export default async function AdminSeatmapPage({ params }: { params: Promise<{ i
             width: concert.layoutImageWidth,
             height: concert.layoutImageHeight,
           }}
+          stagePolygon={parsePolygon(concert.stagePolygon)}
           zones={zones}
         />
       </main>

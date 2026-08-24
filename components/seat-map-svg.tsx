@@ -1,39 +1,47 @@
 "use client";
 
 // ============================================================
-// Seat Map (SVG) — ผังที่นั่งวางทับรูปสถานที่จริง (Phase 2 / D4)
+// Seat Map (SVG) — ผังระดับ "โซน" วางทับรูปสถานที่จริง
 // ============================================================
 // ⚠️ ตั้งใจ "ไม่แก้" components/seat-map.tsx ตัวเดิม แต่สร้างไฟล์ใหม่แยก
 //    เพราะตัวเดิมคือทางเดินเงินที่ผ่านเทสมาแล้ว คอนเสิร์ตเก่าที่ยังไม่มีกรอบโซน
 //    จะใช้ตัวเดิมต่อไปเหมือนเดิมเป๊ะ -> ไม่มีทางพังจากงานนี้
-//    แลกมาด้วยโค้ดแผงสรุป/ปุ่มจ่ายเงินที่ซ้ำกันสองที่ — ยอมรับได้เมื่อเทียบกับความเสี่ยง
 //
-// 🔑 พิกัดที่นั่งเก็บเป็นสัดส่วน 0-1 ของรูป ไม่ใช่พิกเซล
-//    เปิดจอไหน ขนาดเท่าไร ตำแหน่งบนรูปก็ตรงเดิมเสมอ
-import { useEffect, useMemo, useRef, useState } from "react";
+// 📌 หน้าที่ของผังนี้คือตอบ 2 คำถามเท่านั้น: "เวทีอยู่ตรงไหน" และ "โซนนี้อยู่ตรงไหนของเวที"
+//    ไม่ได้ทำหน้าที่โชว์ที่นั่งรายตัวบนรูป (รุ่นก่อนโปรยจุดหลายพันจุดทับรูป ซึ่งเกินความจำเป็น
+//    และทำให้ต้องคำนวณพื้นที่กรอบเพื่อหาระยะห่างจุด) -> การเลือกที่นั่งย้ายไปแผงย่อยข้างล่าง
+//
+// ♿ ผลพลอยได้ที่ตั้งใจ: แผงเลือกที่นั่งเป็น <button> จริงใน HTML ไม่ใช่วงกลมใน SVG
+//    ผู้ใช้คีย์บอร์ด/โปรแกรมอ่านหน้าจอจึงเลือกที่นั่งได้ (ของเดิมกดด้วยคีย์บอร์ดไม่ได้ทั้งผัง)
+//    และรายการโซนด้านขวาของรูปคือทางเลือกโซนที่ไม่ต้องพึ่งการคลิกบนรูป
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, ZoomIn, ZoomOut } from "lucide-react";
 
 import { formatTHB } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { holdAndCreateOrder } from "@/app/actions/booking";
-import { isSeatLabelLegible, seatOutline } from "@/lib/seatmap/render-hints";
+import {
+  distanceFromStage,
+  polygonPoleOfInaccessibility,
+  type Polygon,
+} from "@/lib/seatmap/polygon";
 
 export interface SvgSeat {
   id: string;
   rowLabel: string;
   seatNumber: number;
   status: string; // AVAILABLE | HELD | SOLD | BLOCKED
-  x: number; // 0-1
-  y: number; // 0-1
 }
 
 export interface SvgZone {
   id: string;
   name: string;
+  /** ชื่อเรทราคาที่โซนนี้สังกัด — null = โซนเก่าที่ยังไม่ได้นำเข้าจาก Excel */
+  tier: string | null;
   price: number;
   color: string;
-  polygon: [number, number][] | null;
+  polygon: Polygon | null;
   seats: SvgSeat[];
 }
 
@@ -42,165 +50,117 @@ interface Selected {
   label: string;
 }
 
-// ระดับซูม — ผังจริงมีที่นั่งหลายร้อยจุด ดูบนมือถือ/โน้ตบุ๊กจอเล็กแล้วจิ้มไม่โดน
+// ระดับซูม — ผังสนามจริงมีโซนเล็ก ๆ ริมขอบที่ชื่อโซนอ่านไม่ออกถ้าไม่ขยาย
 const ZOOM_STEPS = [1, 1.75, 2.5] as const;
-// รัศมีจุดที่นั่ง = สัดส่วนของระยะห่างระหว่างที่นั่ง (ไม่ fix ค่าตายตัว เพราะแต่ละโซนความหนาแน่นไม่เท่ากัน)
-//   0.2 = เส้นผ่านศูนย์กลาง 40% ของระยะห่าง -> ยังเห็นช่องไฟระหว่างที่นั่งชัด เหมือนผังโรงมหรสพจริง
-//   เคยตั้ง 0.34 แล้วจุดโป่งจนแทบชนกัน อ่านเป็น "ผัง" ไม่ออก (เห็นตอนดูภาพจริง เทสจับไม่ได้)
-const SEAT_RADIUS_RATIO = 0.2;
-// พื้นที่กดต้องใหญ่กว่าจุดที่มองเห็นมาก ไม่งั้นนิ้วจิ้มไม่โดน (จุดเล็กลงแล้วยิ่งต้องเผื่อ)
-const HIT_RADIUS_RATIO = 0.48;
-// ความหนาเส้นขอบจุด = สัดส่วนของรัศมีจุด — ขอบคือสิ่งที่ทำให้จุดไม่กลืนกับรูปผังข้างล่าง
-const SEAT_OUTLINE_RATIO = 0.5;
-// ขนาดตัวอักษรเลขที่นั่ง = สัดส่วนของรัศมีจุด (ค่านี้ใช้ทั้งตอนตัดสินใจว่าจะวาดไหม และตอนวาดจริง)
-const SEAT_LABEL_FONT_RATIO = 1.25;
-// ต้องซูมก่อนถึงจะขึ้นเลขที่นั่ง — ที่ระดับ 1× ตั้งใจให้เห็นภาพรวมผังโล่ง ๆ ไม่รกด้วยตัวเลข
-const LABEL_MIN_ZOOM = 1.75;
-// เพดานจำนวนตัวอักษรที่ยอมวาด — กันหน่วงบนผังหลายพันที่ (เหตุผลเดิมของเพดานที่เคยผูกกับที่นั่งรวม)
-const LABEL_MAX_NODES = 1_200;
-
-/**
- * หาระยะห่างระหว่างที่นั่งที่ใกล้ที่สุดในโซน (หน่วยเดียวกับ viewBox)
- *
- * ไม่ไล่เทียบทุกคู่ (O(n²) — โซนใหญ่ ๆ หลายพันที่จะหน่วง) แต่ใช้โครงสร้างของผัง:
- * ที่นั่งถูกเจนเป็นกริด -> ดูระยะในแถวเดียวกัน (แกน X) กับระยะระหว่างแถว (แกน Y) พอ
- */
-function seatSpacing(seats: SvgSeat[], viewW: number, viewH: number): number {
-  if (seats.length < 2) return Math.min(viewW, viewH) / 40;
-
-  const rows = new Map<string, number[]>();
-  const rowY = new Map<string, number>();
-  for (const seat of seats) {
-    if (!rows.has(seat.rowLabel)) rows.set(seat.rowLabel, []);
-    rows.get(seat.rowLabel)!.push(seat.x * viewW);
-    rowY.set(seat.rowLabel, seat.y * viewH);
-  }
-
-  let smallest = Infinity;
-  for (const xs of rows.values()) {
-    xs.sort((a, b) => a - b);
-    for (let i = 1; i < xs.length; i++) {
-      const gap = xs[i] - xs[i - 1];
-      if (gap > 0 && gap < smallest) smallest = gap;
-    }
-  }
-  const ys = [...rowY.values()].sort((a, b) => a - b);
-  for (let i = 1; i < ys.length; i++) {
-    const gap = ys[i] - ys[i - 1];
-    if (gap > 0 && gap < smallest) smallest = gap;
-  }
-
-  // โซนที่มีที่นั่งแถวเดียวหรือคอลัมน์เดียว จะหาไม่เจอ -> ใช้ค่าประมาณจากขนาดรูป
-  return Number.isFinite(smallest) ? smallest : Math.min(viewW, viewH) / 40;
-}
-
-// สีจุดที่นั่งตามสถานะ — ที่ขายแล้ว/ถูกจองอยู่ต้องดูจืดจนรู้ว่ากดไม่ได้
-function seatFill(status: string, isSelected: boolean, zoneColor: string): string {
-  if (isSelected) return "#ffffff";
-  if (status === "SOLD" || status === "HELD") return "#3f3f46";
-  if (status === "BLOCKED") return "#27272a";
-  return zoneColor;
-}
+// ขนาดตัวอักษรชื่อโซนบนผัง = สัดส่วนของความกว้างรูป (ไม่ fix พิกเซล เพราะรูปคนละขนาดกัน)
+const ZONE_LABEL_RATIO = 1 / 46;
+// ความทึบของแผ่นสีทับโซน (เลขฐาน 16 ต่อท้ายรหัสสี) — ต้องเห็นสีชัดแต่ยังเห็นรูปผังข้างใต้
+const ZONE_FILL_ALPHA = "59"; // ~35%
+const ZONE_FILL_ALPHA_ACTIVE = "b3"; // ~70% สำหรับโซนที่กำลังเลือก
+// โซนที่ขายหมดแล้ววาดเป็นสีเทา ไม่ใช่สีเรท — กันคนเสียเวลากดเข้าไปแล้วพบว่าไม่เหลือที่
+const SOLD_OUT_COLOR = "#52525b";
 
 export function SeatMapSvg({
   zones,
   layout,
+  stagePolygon,
   maxSeats,
   concertId,
   queueToken,
 }: {
   zones: SvgZone[];
   layout: { base64: string; width: number; height: number };
+  stagePolygon: Polygon | null;
   maxSeats: number;
   concertId: string;
   queueToken: string;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Map<string, Selected>>(new Map());
+  const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [zoomIndex, setZoomIndex] = useState(0);
-  // ที่นั่งที่เมาส์ชี้อยู่ — ใช้บอกว่ากำลังจะกดที่ไหน ตอนที่ผังแน่นจนใส่เลขบนจุดไม่ลง
-  const [hoveredSeat, setHoveredSeat] = useState<string | null>(null);
 
   const viewW = layout.width;
   const viewH = layout.height;
   const zoom = ZOOM_STEPS[zoomIndex];
 
-  // วัดความกว้างจริงของผังบนจอ (รวมผลของระดับซูมแล้ว)
-  // จำเป็นเพราะจะตัดสินว่า "เลขที่นั่งอ่านออกไหม" ได้ ต้องรู้ขนาดตัวอักษรเป็นพิกเซลจริง
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [renderedWidth, setRenderedWidth] = useState(0);
-  useEffect(() => {
-    const element = mapRef.current;
-    if (!element) return;
-    const measure = () => setRenderedWidth(element.clientWidth);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
+  /**
+   * เรียงโซน "ใกล้เวทีก่อน" — นี่คือส่วนที่ตอบคำถาม "โซนนี้อยู่ตรงไหนของเวที" เป็นตัวหนังสือ
+   * คนที่ไม่อยากกวาดสายตาหาบนรูป (หรือใช้โปรแกรมอ่านหน้าจอ) ก็เลือกโซนจากรายการนี้ได้เลย
+   * ไม่มีกรอบเวที -> เรียงตามราคาแพงไปถูกแทน ซึ่งเป็นลำดับที่ผังขายบัตรจริงใช้กัน
+   */
+  const orderedZones = useMemo(() => {
+    return [...zones]
+      .map((zone) => ({
+        zone,
+        available: zone.seats.filter((seat) => seat.status === "AVAILABLE").length,
+        distance: zone.polygon ? distanceFromStage(zone.polygon, stagePolygon) : Infinity,
+      }))
+      .sort((a, b) =>
+        stagePolygon
+          ? a.distance - b.distance || b.zone.price - a.zone.price
+          : b.zone.price - a.zone.price || a.zone.name.localeCompare(b.zone.name),
+      );
+  }, [zones, stagePolygon]);
 
-  // ขนาดจุดคำนวณครั้งเดียวต่อโซน — ไม่ต้องคิดใหม่ทุกครั้งที่เลือกที่นั่ง
-  const zoneRadius = useMemo(() => {
-    const map = new Map<string, { dot: number; hit: number }>();
-    for (const zone of zones) {
-      const spacing = seatSpacing(zone.seats, viewW, viewH);
-      map.set(zone.id, {
-        dot: spacing * SEAT_RADIUS_RATIO,
-        hit: spacing * HIT_RADIUS_RATIO,
-      });
-    }
-    return map;
-  }, [zones, viewW, viewH]);
+  const availableByZone = useMemo(
+    () => new Map(orderedZones.map((item) => [item.zone.id, item.available])),
+    [orderedZones],
+  );
 
   /**
-   * ตัดสินรายโซนว่าจะวาดเลขที่นั่งไหม (หลังจากผู้ใช้ซูมแล้วเท่านั้น)
+   * คำอธิบายสี (legend) — ยุบโซนที่อยู่เรทเดียวกันเหลือบรรทัดเดียว
    *
-   * เดิมตัดสินทั้งผังพร้อมกันจาก "ที่นั่งรวมทั้งผัง ≤ 400" ซึ่งผังสนามจริงไม่มีวันผ่าน
-   * -> ซูมสุดแล้วก็ยังไม่เห็นเลขสักตัว ทั้งที่จุดใหญ่พอจะใส่เลขได้
-   * ตอนนี้ดูขนาดตัวอักษรจริงบนจอเป็นรายโซนแทน -> โซนที่จุดใหญ่พอก็ได้เลข
-   * ส่วนโซนยืนที่อัดกันแน่นก็ไม่ต้องวาด (อ่านไม่ออกอยู่ดี) แล้วยังมีเพดานกันหน่วงกำกับอีกชั้น
+   * ที่มา: ผังสนามจริง (อิมแพ็ค อารีน่า) มี 69 โซน แต่มีแค่ 7 เรทราคา
+   * ถ้าไล่โชว์ทีละโซนจะได้ป้ายสีซ้ำ ๆ 69 อัน อ่านไม่ออกว่าตกลงมีกี่ราคา
+   * จัดกลุ่มด้วย "ชื่อเรท" ถ้ามี (มาจากไฟล์ Excel) ไม่งั้นถอยไปใช้ สี+ราคา เหมือนเดิม
    */
-  const labelledZones = useMemo(() => {
-    const allowed = new Set<string>();
-    if (renderedWidth <= 0 || zoom < LABEL_MIN_ZOOM) return allowed;
-
-    const pxPerUnit = renderedWidth / viewW;
-    let budget = LABEL_MAX_NODES;
+  const priceTiers = useMemo(() => {
+    const map = new Map<
+      string,
+      { key: string; label: string; price: number; color: string; zoneCount: number; seats: number }
+    >();
     for (const zone of zones) {
-      const radius = zoneRadius.get(zone.id);
-      if (!radius) continue;
-      if (!isSeatLabelLegible(radius.dot * SEAT_LABEL_FONT_RATIO * pxPerUnit)) continue;
-      if (zone.seats.length > budget) continue;
-      budget -= zone.seats.length;
-      allowed.add(zone.id);
-    }
-    return allowed;
-  }, [zones, zoneRadius, renderedWidth, viewW, zoom]);
-
-  // ตำแหน่งวางตัวอักษรแถว (A, B, C) ไว้ซ้ายสุดของแต่ละแถว
-  // จำเป็นเพราะบนจุดโชว์ได้แค่ "เลขที่นั่ง" ซึ่งซ้ำกันทุกแถว (ทุกแถวมี 1) ถ้าไม่มีตัวอักษรแถว
-  // ผู้ซื้อจะไม่รู้ว่ากำลังจะกดแถวไหน ทั้งที่ในใบเสร็จ/แผงสรุปเรียกว่า A1 B1
-  const zoneRowAnchors = useMemo(() => {
-    const map = new Map<string, { label: string; x: number; y: number }[]>();
-    for (const zone of zones) {
-      const leftmost = new Map<string, { x: number; y: number }>();
-      for (const seat of zone.seats) {
-        const current = leftmost.get(seat.rowLabel);
-        if (!current || seat.x < current.x) leftmost.set(seat.rowLabel, { x: seat.x, y: seat.y });
+      const key = zone.tier ?? `${zone.color}|${zone.price}`;
+      const tier = map.get(key);
+      if (tier) {
+        tier.zoneCount += 1;
+        tier.seats += zone.seats.length;
+      } else {
+        map.set(key, {
+          key,
+          label: zone.tier ?? formatTHB(zone.price),
+          price: zone.price,
+          color: zone.color,
+          zoneCount: 1,
+          seats: zone.seats.length,
+        });
       }
-      map.set(
-        zone.id,
-        [...leftmost.entries()].map(([label, pos]) => ({
-          label,
-          x: pos.x * viewW,
-          y: pos.y * viewH,
-        }))
-      );
     }
-    return map;
-  }, [zones, viewW, viewH]);
+    return [...map.values()].sort((a, b) => b.price - a.price || a.label.localeCompare(b.label));
+  }, [zones]);
+
+  const activeZone = useMemo(
+    () => zones.find((zone) => zone.id === activeZoneId) ?? null,
+    [zones, activeZoneId],
+  );
+
+  /** ที่นั่งของโซนที่เปิดอยู่ จัดกลุ่มตามแถว (A, B, C…) ตามลำดับที่เจนมา */
+  const activeRows = useMemo(() => {
+    if (!activeZone) return [];
+    const rows = new Map<string, SvgSeat[]>();
+    for (const seat of activeZone.seats) {
+      const bucket = rows.get(seat.rowLabel);
+      if (bucket) bucket.push(seat);
+      else rows.set(seat.rowLabel, [seat]);
+    }
+    return [...rows.entries()].map(([label, seats]) => ({
+      label,
+      seats: [...seats].sort((a, b) => a.seatNumber - b.seatNumber),
+    }));
+  }, [activeZone]);
 
   function toggleSeat(seat: SvgSeat, zonePrice: number, zoneName: string) {
     if (seat.status !== "AVAILABLE") return; // กดได้เฉพาะที่ว่าง
@@ -217,7 +177,7 @@ export function SeatMapSvg({
         }
         setError(null);
         // ต้องมีชื่อโซนนำหน้าเสมอ — ผังสนามจริงมีหลายสิบโซน และทุกโซนมีแถว A เลข 1 เหมือนกันหมด
-        // ถ้าโชว์แค่ "I7" ผู้ซื้อจะแยกไม่ออกว่าที่นั่งในตะกร้าอยู่โซนไหน ราคาเท่าไร
+        // ถ้าโชว์แค่ "A1" ผู้ซื้อจะแยกไม่ออกว่าที่นั่งในตะกร้าอยู่โซนไหน ราคาเท่าไร
         next.set(seat.id, {
           price: zonePrice,
           label: `${zoneName} ${seat.rowLabel}${seat.seatNumber}`,
@@ -228,28 +188,9 @@ export function SeatMapSvg({
   }
 
   const total = useMemo(
-    () => Array.from(selected.values()).reduce((a, b) => a + b.price, 0),
-    [selected]
+    () => Array.from(selected.values()).reduce((sum, item) => sum + item.price, 0),
+    [selected],
   );
-
-  /**
-   * รวมโซนที่ "สีเดียวกัน + ราคาเดียวกัน" เข้าเป็นเรทเดียว
-   *
-   * ที่มา: ผังสนามจริง (อิมแพ็ค อารีน่า) มี 69 โซน แต่มีแค่ 7 เรทราคา
-   * ถ้าไล่โชว์ทีละโซน จะได้ป้ายสีซ้ำ ๆ 69 อันยาว 13 บรรทัด อ่านไม่ออกว่ามีกี่เรท
-   * แยกด้วยสีด้วย ไม่ใช่ราคาอย่างเดียว — เผื่อแอดมินตั้งคนละสีทั้งที่ราคาเท่ากัน
-   * จะได้ไม่โชว์สีเดียวแทนหลายสี (ผู้ซื้อจะเทียบสีบนผังไม่ตรง)
-   */
-  const priceTiers = useMemo(() => {
-    const map = new Map<string, { key: string; price: number; color: string; names: string[] }>();
-    for (const zone of zones) {
-      const key = `${zone.color}|${zone.price}`;
-      const tier = map.get(key);
-      if (tier) tier.names.push(zone.name);
-      else map.set(key, { key, price: zone.price, color: zone.color, names: [zone.name] });
-    }
-    return [...map.values()].sort((a, b) => b.price - a.price || a.color.localeCompare(b.color));
-  }, [zones]);
 
   // hold ที่นั่ง + สร้าง order → ไป checkout (ทางเดินเดียวกับผังแบบเดิมทุกประการ)
   async function handleSubmit() {
@@ -273,15 +214,19 @@ export function SeatMapSvg({
     }
   }
 
+  const labelSize = viewW * ZONE_LABEL_RATIO;
+  const stageLabelPoint =
+    stagePolygon && stagePolygon.length >= 3
+      ? polygonPoleOfInaccessibility(stagePolygon)
+      : null;
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
-      {/* ---------- ฝั่งซ้าย: ผังบนรูปจริง ---------- */}
+      {/* ---------- ฝั่งซ้าย: ผังโซนบนรูปจริง + แผงเลือกที่นั่ง ---------- */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* ผังแน่น ๆ ใส่เลขบนจุดไม่ลง — บรรทัดนี้เลยทำหน้าที่บอกว่ากำลังชี้ที่นั่งไหนอยู่ */}
           <p className="min-w-0 text-sm text-fg-faint">
-            แตะที่นั่งว่างบนผังเพื่อเลือก
-            {hoveredSeat && <span className="ml-2 text-fg">· {hoveredSeat}</span>}
+            เลือกโซนบนผัง แล้วเลือกที่นั่งด้านล่าง
           </p>
           <div className="flex items-center gap-1.5">
             <Button
@@ -310,90 +255,76 @@ export function SeatMapSvg({
 
         {/* ซูมแล้วเลื่อนดูได้ — ไม่ให้ผังล้นออกนอกหน้าจอ */}
         <div className="overflow-auto rounded-xl border border-fg/10 bg-ink-950">
-          <div ref={mapRef} className="relative" style={{ width: `${zoom * 100}%` }}>
+          <div className="relative" style={{ width: `${zoom * 100}%` }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={layout.base64} alt="ผังที่นั่งของสถานที่จัดงาน" className="block w-full" />
+            <img src={layout.base64} alt="ผังสถานที่จัดงาน" className="block w-full" />
             <svg
               viewBox={`0 0 ${viewW} ${viewH}`}
               className="absolute inset-0 h-full w-full"
               role="group"
-              aria-label="ผังที่นั่ง"
+              aria-label="ผังโซนที่นั่ง"
             >
-              {zones.map((zone) => {
-                const radius = zoneRadius.get(zone.id) ?? { dot: 6, hit: 10 };
-                const showLabels = labelledZones.has(zone.id);
+              {/* ---- เวที ---- */}
+              {stagePolygon && stageLabelPoint && (
+                <g data-stage="true">
+                  <polygon
+                    points={stagePolygon.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
+                    fill="#e4e4e7cc"
+                    stroke="#fafafa"
+                    strokeWidth={viewW / 400}
+                  />
+                  <text
+                    x={stageLabelPoint[0] * viewW}
+                    y={stageLabelPoint[1] * viewH}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={labelSize}
+                    fill="#18181b"
+                    className="pointer-events-none select-none font-display font-semibold"
+                    style={{ letterSpacing: "0.2em" }}
+                  >
+                    เวที · STAGE
+                  </text>
+                </g>
+              )}
+
+              {/* ---- โซน ---- */}
+              {orderedZones.map(({ zone, available }) => {
+                if (!zone.polygon || zone.polygon.length < 3) return null;
+                const isActive = zone.id === activeZoneId;
+                const soldOut = available === 0;
+                const baseColor = soldOut ? SOLD_OUT_COLOR : zone.color;
+                const labelPoint = polygonPoleOfInaccessibility(zone.polygon);
                 return (
-                  <g key={zone.id}>
-                    {zone.polygon && zone.polygon.length >= 3 && (
-                      <polygon
-                        points={zone.polygon.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
-                        fill={`${zone.color}14`}
-                        stroke={`${zone.color}66`}
-                        strokeWidth={viewW / 600}
-                      />
-                    )}
-                    {showLabels &&
-                      (zoneRowAnchors.get(zone.id) ?? []).map((row) => (
-                        <text
-                          key={`row-${zone.id}-${row.label}`}
-                          data-row-label={row.label}
-                          x={row.x - radius.hit * 1.9}
-                          y={row.y}
-                          textAnchor="end"
-                          dominantBaseline="central"
-                          fontSize={radius.dot * 1.4}
-                          fill={zone.color}
-                          className="pointer-events-none select-none font-display"
-                        >
-                          {row.label}
-                        </text>
-                      ))}
-                    {zone.seats.map((seat) => {
-                      const isSelected = selected.has(seat.id);
-                      const clickable = seat.status === "AVAILABLE";
-                      const cx = seat.x * viewW;
-                      const cy = seat.y * viewH;
-                      const fill = seatFill(seat.status, isSelected, zone.color);
-                      const caption = `${zone.name} ${seat.rowLabel}${seat.seatNumber} · ${formatTHB(zone.price)}${clickable ? "" : " (ไม่ว่าง)"}`;
-                      return (
-                        <g
-                          key={seat.id}
-                          onClick={() => toggleSeat(seat, zone.price, zone.name)}
-                          onMouseEnter={() => setHoveredSeat(caption)}
-                          onMouseLeave={() => setHoveredSeat((prev) => (prev === caption ? null : prev))}
-                          className={clickable ? "cursor-pointer" : "cursor-not-allowed"}
-                        >
-                          <title>{caption}</title>
-                          <circle
-                            cx={cx}
-                            cy={cy}
-                            r={radius.dot}
-                            fill={fill}
-                            // เส้นขอบตัดกับสีจุดเสมอ — กันจุดกลืนหายเมื่อสีโซนตรงกับสีในรูปผัง
-                            stroke={seatOutline(fill)}
-                            strokeWidth={radius.dot * SEAT_OUTLINE_RATIO}
-                            opacity={clickable || isSelected ? 1 : 0.55}
-                          />
-                          {showLabels && (
-                            <text
-                              data-seat-number={seat.seatNumber}
-                              x={cx}
-                              y={cy}
-                              textAnchor="middle"
-                              dominantBaseline="central"
-                              fontSize={radius.dot * SEAT_LABEL_FONT_RATIO}
-                              fill={isSelected ? "#18181b" : "#ffffff"}
-                              opacity={clickable || isSelected ? 0.9 : 0.4}
-                              className="pointer-events-none select-none font-display"
-                            >
-                              {seat.seatNumber}
-                            </text>
-                          )}
-                          {/* วงใสทับไว้ให้พื้นที่กดใหญ่กว่าจุดที่เห็น — นิ้วจิ้มโดนง่ายขึ้น */}
-                          <circle cx={cx} cy={cy} r={radius.hit} fill="transparent" />
-                        </g>
-                      );
-                    })}
+                  <g
+                    key={zone.id}
+                    data-zone-name={zone.name}
+                    onClick={() => setActiveZoneId(soldOut ? null : zone.id)}
+                    className={soldOut ? "cursor-not-allowed" : "cursor-pointer"}
+                  >
+                    <title>
+                      {`${zone.name} · ${formatTHB(zone.price)} · ${soldOut ? "เต็มแล้ว" : `ว่าง ${available} ที่`}`}
+                    </title>
+                    <polygon
+                      points={zone.polygon.map(([x, y]) => `${x * viewW},${y * viewH}`).join(" ")}
+                      fill={`${baseColor}${isActive ? ZONE_FILL_ALPHA_ACTIVE : ZONE_FILL_ALPHA}`}
+                      stroke={isActive ? "#ffffff" : baseColor}
+                      strokeWidth={(viewW / 500) * (isActive ? 2.5 : 1)}
+                    />
+                    <text
+                      x={labelPoint[0] * viewW}
+                      y={labelPoint[1] * viewH}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={labelSize}
+                      fill="#ffffff"
+                      opacity={soldOut ? 0.5 : 1}
+                      className="pointer-events-none select-none font-display font-semibold"
+                      // ขอบดำจาง ๆ รอบตัวอักษร — กันชื่อโซนกลืนกับสีพื้นที่แอดมินตั้งให้ตรงกับรูป
+                      style={{ paintOrder: "stroke", stroke: "#00000099", strokeWidth: labelSize / 6 }}
+                    >
+                      {zone.name}
+                    </text>
                   </g>
                 );
               })}
@@ -401,28 +332,128 @@ export function SeatMapSvg({
           </div>
         </div>
 
-        {/* ---------- คำอธิบายสี + ราคา (จัดกลุ่มตามเรทราคาเหมือนผังขายบัตรจริง) ---------- */}
+        {/* ---------- คำอธิบายสี = เรทราคา ---------- */}
         <div className="flex flex-col gap-2 text-xs text-fg-faint">
           {priceTiers.map((tier) => (
-            <div key={tier.key} className="flex items-start gap-2">
+            <div key={tier.key} className="flex items-center gap-2">
               <span
-                className="mt-0.5 inline-block size-3 shrink-0 rounded-full"
+                className="inline-block size-3 shrink-0 rounded-sm"
                 style={{ backgroundColor: tier.color, boxShadow: `0 0 8px ${tier.color}90` }}
                 aria-hidden
               />
+              <span className="w-24 shrink-0 font-display text-fg-dim">{tier.label}</span>
               <span className="text-led w-20 shrink-0 text-spot-400">{formatTHB(tier.price)}</span>
-              <span className="min-w-0 break-words">{tier.names.join(" · ")}</span>
+              <span className="min-w-0">
+                {tier.zoneCount} โซน · {tier.seats.toLocaleString()} ที่นั่ง
+              </span>
             </div>
           ))}
         </div>
+
+        {/* ---------- รายการโซน (เรียงตามระยะจากเวที) ---------- */}
+        <div>
+          <h3 className="mb-2 font-display text-sm font-semibold text-fg">
+            {stagePolygon ? "โซนทั้งหมด — เรียงจากใกล้เวทีที่สุด" : "โซนทั้งหมด"}
+          </h3>
+          <div className="flex flex-wrap gap-1.5">
+            {orderedZones.map(({ zone, available }) => {
+              const soldOut = available === 0;
+              return (
+                <button
+                  key={zone.id}
+                  type="button"
+                  disabled={soldOut}
+                  aria-pressed={zone.id === activeZoneId}
+                  onClick={() => setActiveZoneId(zone.id)}
+                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
+                    zone.id === activeZoneId
+                      ? "border-brand-500 bg-brand-500/15 text-fg"
+                      : soldOut
+                        ? "cursor-not-allowed border-transparent bg-ink-900 text-fg/25"
+                        : "border-fg/15 bg-ink-800 text-fg-dim hover:border-brand-400 hover:text-fg"
+                  }`}
+                >
+                  <span
+                    className="inline-block size-2.5 shrink-0 rounded-sm"
+                    style={{ backgroundColor: soldOut ? SOLD_OUT_COLOR : zone.color }}
+                    aria-hidden
+                  />
+                  <span className="font-display font-semibold">{zone.name}</span>
+                  <span className="text-led text-spot-400">{formatTHB(zone.price)}</span>
+                  <span className="text-fg-faint">{soldOut ? "เต็ม" : `ว่าง ${available}`}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ---------- แผงเลือกที่นั่งของโซนที่เปิดอยู่ ---------- */}
+        {activeZone ? (
+          <div className="rounded-xl border border-fg/10 bg-ink-900/60 p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span
+                className="size-3 rounded-full"
+                style={{ backgroundColor: activeZone.color, boxShadow: `0 0 10px ${activeZone.color}90` }}
+                aria-hidden
+              />
+              <h3 className="font-display font-semibold text-fg">โซน {activeZone.name}</h3>
+              {activeZone.tier && <span className="text-xs text-fg-faint">({activeZone.tier})</span>}
+              <span className="text-led text-sm text-spot-400">{formatTHB(activeZone.price)}</span>
+              <span className="text-xs text-fg-faint">
+                ว่าง {availableByZone.get(activeZone.id) ?? 0} / {activeZone.seats.length} ที่
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveZoneId(null)}
+                className="ml-auto rounded-md px-2 py-1 text-xs text-fg-faint transition-colors hover:bg-fg/10 hover:text-fg"
+              >
+                ปิดโซนนี้
+              </button>
+            </div>
+
+            {/* เลื่อนดูได้ในกล่องตัวเอง — โซนใหญ่มีหลายสิบแถว ไม่ควรดันหน้าเว็บยาวจนหาปุ่มจ่ายเงินไม่เจอ */}
+            <div className="max-h-96 space-y-1.5 overflow-auto pr-1">
+              {activeRows.map((row) => (
+                <div key={row.label} className="flex items-start gap-1.5">
+                  <span className="w-6 shrink-0 pt-1.5 font-display text-xs text-fg-faint">
+                    {row.label}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {row.seats.map((seat) => (
+                      <button
+                        key={seat.id}
+                        type="button"
+                        onClick={() => toggleSeat(seat, activeZone.price, activeZone.name)}
+                        disabled={seat.status !== "AVAILABLE"}
+                        title={`${activeZone.name} ${seat.rowLabel}${seat.seatNumber}`}
+                        aria-label={`ที่นั่ง ${activeZone.name} แถว ${seat.rowLabel} เลข ${seat.seatNumber}`}
+                        aria-pressed={selected.has(seat.id)}
+                        data-seat-number={seat.seatNumber}
+                        className={seatClass(seat.status, selected.has(seat.id))}
+                      >
+                        {seat.seatNumber}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="rounded-xl border border-dashed border-fg/15 p-4 text-center text-sm text-fg-faint">
+            ยังไม่ได้เลือกโซน — แตะโซนบนผัง หรือเลือกจากรายการโซนด้านบน
+          </p>
+        )}
+
         <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-fg/10 pt-3 text-xs text-fg-faint">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block size-3 rounded-full bg-white ring-2 ring-brand-500" />
-            เลือกอยู่
+            <span className="inline-block size-4 rounded-md border border-fg/20 bg-ink-800" /> ว่าง
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block size-3 rounded-full bg-ink-700" />
-            ขายแล้ว / มีคนกำลังจอง
+            <span className="shadow-glow-brand inline-block size-4 rounded-md bg-brand-600" /> เลือกอยู่
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block size-4 rounded-md bg-ink-900" /> ขายแล้ว / มีคนกำลังจอง
           </span>
         </div>
       </div>
@@ -432,18 +463,18 @@ export function SeatMapSvg({
         <h3 className="mb-3 font-display font-semibold text-fg">ที่นั่งที่เลือก</h3>
 
         {selected.size === 0 ? (
-          <p className="text-sm text-fg-faint">ยังไม่ได้เลือกที่นั่ง — แตะที่นั่งว่างบนผังได้เลย</p>
+          <p className="text-sm text-fg-faint">ยังไม่ได้เลือกที่นั่ง — เลือกโซนแล้วแตะที่นั่งว่าง</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
-            {Array.from(selected.entries()).map(([id, s]) => (
+            {Array.from(selected.entries()).map(([id, item]) => (
               <span
                 key={id}
                 className="text-led inline-flex items-center gap-1 rounded-md border border-brand-500/30 bg-brand-500/15 py-1 pl-2.5 pr-1.5 text-xs font-semibold text-brand-300"
               >
-                {s.label}
+                {item.label}
                 <button
                   type="button"
-                  aria-label={`เอาที่นั่ง ${s.label} ออก`}
+                  aria-label={`เอาที่นั่ง ${item.label} ออก`}
                   onClick={() =>
                     setSelected((prev) => {
                       const next = new Map(prev);
@@ -487,4 +518,17 @@ export function SeatMapSvg({
       </div>
     </div>
   );
+}
+
+// className ของปุ่มที่นั่ง — ชุดเดียวกับผังแบบเดิม (components/seat-map.tsx) ให้หน้าตาเหมือนกันทั้งระบบ
+function seatClass(status: string, isSelected: boolean): string {
+  const base =
+    "flex h-7 w-7 items-center justify-center rounded-md border font-display text-xs transition-all duration-150";
+  if (status === "SOLD" || status === "HELD")
+    return `${base} cursor-not-allowed border-transparent bg-ink-900 text-fg/20`;
+  if (status === "BLOCKED")
+    return `${base} cursor-not-allowed border-transparent bg-ink-900/50 text-fg/10`;
+  if (isSelected)
+    return `${base} animate-glow-pulse border-brand-500 bg-brand-600 font-semibold text-white`;
+  return `${base} border-fg/15 bg-ink-800 text-fg-dim hover:-translate-y-0.5 hover:border-brand-400 hover:text-fg hover:shadow-glow-brand`;
 }

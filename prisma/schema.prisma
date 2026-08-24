@@ -134,6 +134,11 @@ model Concert {
   // ต้องรู้ w/h ไว้ตั้ง viewBox ของ SVG ให้อัตราส่วนตรงรูป ไม่งั้นผังยืด/บี้ตอน render
   layoutImageWidth    Int?
   layoutImageHeight   Int?
+  // กรอบเวทีที่แอดมินวาดทับรูป: [[x,y],[x,y],...] พิกัดสัดส่วน 0-1 เหมือน Zone.polygon
+  // ต้องเก็บเป็นข้อมูล ไม่ใช่ปล่อยให้เวทีเป็นแค่ส่วนหนึ่งของรูป เพราะระบบต้องใช้ตอบว่า
+  // "โซนนี้อยู่ตรงไหนเทียบกับเวที" (เรียงโซนตามระยะห่างจากเวที + ปักป้ายเวทีบนผัง)
+  // null = คอนเสิร์ตที่ยังไม่ได้ระบุเวที -> ผังยังใช้ได้ แค่ไม่มีป้ายเวที
+  stagePolygon        Json?
   status              ConcertStatus @default(DRAFT)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
@@ -164,6 +169,10 @@ model Zone {
   price       Decimal @db.Decimal(10, 2) // THB
   totalSeats  Int
   color       String  @default("#ef4444") @db.VarChar(7) // สีบน seat map
+  // ชื่อเรทราคาที่โซนนี้สังกัด (มาจากไฟล์ Excel ที่แอดมินนำเข้า) เช่น "เรท 1", "VIP"
+  // ใช้ทำคำอธิบายสี (legend) ฝั่งคนซื้อ: หลายโซนที่เรทเดียวกันยุบเหลือบรรทัดเดียว
+  // null = โซนที่สร้างมือก่อนมีระบบนำเข้า -> legend จะใช้ราคาเป็นชื่อแทน
+  tier        String? @db.VarChar(50)
   // ---- Phase 2 (ผังจากรูป) ----
   // กรอบโซนที่แอดมินคลิกวาดทับรูป: [[x,y],[x,y],...] พิกัดเป็นสัดส่วน 0-1 ของขนาดรูป
   // null = โซนแบบเดิม (ไม่มีผังเชิงพื้นที่) -> ฝั่งคนซื้อ fallback ไป seat-map ปุ่มแบบเก่า

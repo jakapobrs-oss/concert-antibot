@@ -4,16 +4,20 @@
 // รัน: npx tsx scripts/test-seatmap-buyer.ts   (ต้อง pnpm dev + pnpm db:up อยู่)
 //
 // สิ่งที่ต้องพิสูจน์ (D4-D5 คือขั้นที่เสี่ยงสุดของสายนี้ เพราะแตะทางเดินเงินที่เทสผ่านแล้ว):
-//   1. คอนเสิร์ตที่ทำผังแล้ว -> เห็นผัง SVG บนรูปจริง ไม่ใช่ผังตารางแบบเดิม
-//   2. กดที่นั่งบนผัง -> hold + สร้าง order ได้จริง (ทางเดินเงินเดิมไม่พัง)
+//   1. คอนเสิร์ตที่ทำผังแล้ว -> เห็นผัง SVG บนรูปจริง (เวที + กรอบโซน) ไม่ใช่ผังตารางแบบเดิม
+//   2. กดโซนบนผัง -> เปิดแผงเลือกที่นั่ง -> hold + สร้าง order ได้จริง (ทางเดินเงินเดิมไม่พัง)
 //   3. คอนเสิร์ตที่ยังไม่มีกรอบโซน -> ถอยไปใช้ผังตารางเดิมอัตโนมัติ (ของเก่าไม่พัง)
+//
+// 📌 ผังรุ่นนี้เป็นผัง "ระดับโซน" ที่นั่งไม่มีพิกัดบนรูปแล้ว -> เทสจึงเช็คกรอบโซน/เวที
+//    และแผงเลือกที่นั่ง (ปุ่ม HTML จริง) แทนการนับจุดที่นั่งบนรูปแบบรุ่นก่อน
 //
 // ทำความสะอาด: ลบ order/ticket/payment ที่เกิดในรอบนี้ -> ลบคอนเสิร์ตทดสอบ -> เคลียร์ key Redis
 import { chromium, type Page } from "playwright-core";
 import { deflateSync } from "node:zlib";
 import { prisma } from "../lib/prisma";
 import { redis } from "../lib/redis";
-import { fillPolygonWithSeats, type Polygon } from "../lib/seatmap/generate";
+import { buildSeatRows } from "../lib/seatmap/seat-rows";
+import type { Polygon } from "../lib/seatmap/polygon";
 import { joinQueue, admitNext, leaveQueue } from "../lib/queue";
 
 const BASE = process.env.E2E_BASE ?? "http://localhost:3000";
@@ -32,6 +36,13 @@ const FRAME: Polygon = [
   [0.85, 0.25],
   [0.85, 0.85],
   [0.15, 0.85],
+];
+// กรอบเวทีวางไว้เหนือกรอบโซน — ใช้เช็คว่าป้ายเวทีขึ้นจริงและโซนเรียงตามระยะจากเวทีได้
+const STAGE: Polygon = [
+  [0.25, 0.05],
+  [0.75, 0.05],
+  [0.75, 0.18],
+  [0.25, 0.18],
 ];
 
 let pass = 0;
@@ -99,16 +110,16 @@ function makeVenuePngDataUrl(width: number, height: number): string {
 }
 
 /**
- * กดที่นั่งบนผังจนกว่าจะ "ถูกเลือกจริง"
+ * กดที่นั่งในแผงของโซนที่เปิดอยู่ จนกว่าจะ "ถูกเลือกจริง"
  *
  * ต้องวนลองเพราะหน้าเพิ่งโหลด React อาจยัง hydrate ไม่เสร็จ -> คลิกโดนแต่ไม่มี handler รับ
  * (เจอมาแล้วตอนเขียนเทสหน้าแอดมิน คลิกแล้วเงียบสนิทโดยไม่มี error)
  */
 async function pickSeat(page: Page, seatIndex: number, expectedCount: number) {
-  const seats = page.locator('svg[aria-label="ผังที่นั่ง"] g.cursor-pointer');
+  const seats = page.locator("button[data-seat-number]:not([disabled])");
   const chips = page.locator('[aria-label^="เอาที่นั่ง"]');
   for (let attempt = 1; attempt <= 10; attempt++) {
-    await seats.nth(seatIndex).click({ force: true });
+    await seats.nth(seatIndex).click();
     try {
       await chips.nth(expectedCount - 1).waitFor({ timeout: 1_500 });
       return;
@@ -123,10 +134,7 @@ async function main() {
   const slug = `test-buyer-seatmap-${stamp}`;
 
   // ---------- fixture: คอนเสิร์ตที่ "ทำผังแล้ว" ครบทุกชิ้น ----------
-  const generated = fillPolygonWithSeats(FRAME, {
-    targetCount: SEAT_COUNT,
-    aspectRatio: IMAGE_W / IMAGE_H,
-  });
+  const generated = buildSeatRows(SEAT_COUNT);
   if (generated.length !== SEAT_COUNT) {
     throw new Error(`เจนที่นั่ง fixture ไม่ครบ (${generated.length}/${SEAT_COUNT})`);
   }
@@ -144,9 +152,11 @@ async function main() {
       layoutImageBase64: makeVenuePngDataUrl(IMAGE_W, IMAGE_H),
       layoutImageWidth: IMAGE_W,
       layoutImageHeight: IMAGE_H,
+      stagePolygon: STAGE,
       zones: {
         create: {
           name: "VIP ทดสอบ",
+          tier: "เรททดสอบ",
           price: 1500,
           color: "#ef4444",
           totalSeats: SEAT_COUNT,
@@ -155,8 +165,6 @@ async function main() {
             create: generated.map((s) => ({
               rowLabel: s.rowLabel,
               seatNumber: s.seatNumber,
-              x: s.x,
-              y: s.y,
             })),
           },
         },
@@ -207,53 +215,73 @@ async function main() {
     });
     check("เข้าหน้าเลือกที่นั่งได้ (ไม่ถูกเด้งกลับห้องรอ)", page.url().includes("/seats"), page.url());
 
-    // ---------- 2) ต้องเป็นผัง SVG บนรูปจริง ไม่ใช่ผังตารางเดิม ----------
-    await page.locator('img[alt="ผังที่นั่งของสถานที่จัดงาน"]').waitFor({ timeout: 20_000 });
-    const dots = await page.locator('svg[aria-label="ผังที่นั่ง"] circle').count();
-    check("แสดงผัง SVG ทับรูปสถานที่จริง", dots > 0, `circles=${dots}`);
+    // ---------- 2) ต้องเป็นผัง SVG ระดับโซนบนรูปจริง ไม่ใช่ผังตารางเดิม ----------
+    await page.locator('img[alt="ผังสถานที่จัดงาน"]').waitFor({ timeout: 20_000 });
+    const zoneShapes = await page.locator("svg[aria-label=\"ผังโซนที่นั่ง\"] g[data-zone-name]").count();
+    check("แสดงกรอบโซนทับรูปสถานที่จริง", zoneShapes === 1, `zones=${zoneShapes}`);
 
-    // ผังเดิมเรนเดอร์ที่นั่งเป็น <button title="A1"> — ต้องไม่มีเลย ไม่งั้นแปลว่าเรนเดอร์ทั้งสองแบบซ้อนกัน
-    const legacyButtons = await page.locator("main button[title]").count();
-    check("ไม่เรนเดอร์ผังตารางแบบเดิมซ้อนมาด้วย", legacyButtons === 0, `legacy=${legacyButtons}`);
+    // เวทีคือคำถามหลักที่ผังนี้ต้องตอบ ("โซนนี้อยู่ตรงไหนของเวที") -> ต้องขึ้นจริง
+    check(
+      "แสดงกรอบเวทีบนผัง",
+      (await page.locator('svg[aria-label="ผังโซนที่นั่ง"] g[data-stage]').count()) === 1
+    );
+    check(
+      "โซนเรียงจากใกล้เวทีที่สุดเมื่อระบุเวทีแล้ว",
+      (await page.locator("main").innerText()).includes("เรียงจากใกล้เวทีที่สุด")
+    );
 
-    const clickableSeats = await page.locator('svg[aria-label="ผังที่นั่ง"] g.cursor-pointer').count();
-    check("ที่นั่งว่างกดได้ครบทุกที่", clickableSeats === SEAT_COUNT, `clickable=${clickableSeats}`);
+    // ผังรุ่นนี้ไม่โปรยจุดที่นั่งบนรูปแล้ว — ถ้ายังมี circle แปลว่าโค้ดเก่าหลุดกลับมา
+    check(
+      "ไม่มีจุดที่นั่งรายตัวบนรูปแล้ว",
+      (await page.locator('svg[aria-label="ผังโซนที่นั่ง"] circle').count()) === 0
+    );
+
+    // ยังไม่เลือกโซน -> ต้องยังไม่มีปุ่มที่นั่งให้กด (กันแผงเปิดค้างทุกโซนพร้อมกัน)
+    check(
+      "ยังไม่เลือกโซน → ยังไม่มีแผงเลือกที่นั่ง",
+      (await page.locator("button[data-seat-number]").count()) === 0
+    );
     await page.screenshot({ path: ".shots/seatmap-buyer-1-map.png" });
 
-    // เลขที่นั่งต้องโผล่เมื่อซูมเท่านั้น (บนมือถือไม่มี hover จะพึ่ง tooltip ไม่ได้)
+    // ---------- 2.5) กดโซนบนรูป -> เปิดแผงเลือกที่นั่ง ----------
+    await page.locator('svg[aria-label="ผังโซนที่นั่ง"] g[data-zone-name]').first().click();
+    const seatButtons = page.locator("button[data-seat-number]");
+    await seatButtons.first().waitFor({ timeout: 10_000 });
     check(
-      "ยังไม่ซูม → ไม่โชว์เลขที่นั่ง (ไม่รกผัง)",
-      (await page.locator('svg[aria-label="ผังที่นั่ง"] text').count()) === 0
+      "กดโซนบนผัง → เปิดแผงเลือกที่นั่งครบทุกที่",
+      (await seatButtons.count()) === SEAT_COUNT,
+      `seats=${await seatButtons.count()}`
     );
-    await page.getByRole("button", { name: "ขยายผัง" }).click();
-    const seatNumbers = page.locator("svg text[data-seat-number]");
-    await seatNumbers.first().waitFor({ timeout: 5_000 });
-    check("ซูมแล้ว → โชว์เลขที่นั่งครบทุกจุด", (await seatNumbers.count()) === SEAT_COUNT, `labels=${await seatNumbers.count()}`);
-    // เลขที่นั่งซ้ำกันทุกแถว (ทุกแถวมี 1) -> ต้องมีตัวอักษรแถวกำกับ ไม่งั้นไม่รู้ว่ากดแถวไหน
-    const rowLetters = await page.locator("svg text[data-row-label]").count();
-    check("ซูมแล้ว → มีตัวอักษรแถว (A, B, C) กำกับหัวแถว", rowLetters > 0, `rows=${rowLetters}`);
-    await page.screenshot({ path: ".shots/seatmap-buyer-1b-zoomed.png" });
-    await page.getByRole("button", { name: "ย่อผัง" }).click();
+    // ♿ ที่นั่งต้องเป็นปุ่มจริงที่คีย์บอร์ด/โปรแกรมอ่านหน้าจอเข้าถึงได้ (ของเดิมเป็นวงกลมใน SVG กดไม่ได้)
+    check(
+      "ที่นั่งเป็นปุ่มจริงที่มีชื่อให้โปรแกรมอ่านหน้าจอ",
+      (await page.getByRole("button", { name: /^ที่นั่ง VIP ทดสอบ แถว A เลข 1$/ }).count()) === 1
+    );
+    await page.screenshot({ path: ".shots/seatmap-buyer-1b-zone-open.png" });
 
     // ---------- 3) คอนเสิร์ตที่ยังไม่มีกรอบโซน ต้องถอยไปใช้ผังตารางเดิม ----------
     // เช็คก่อนซื้อ เพราะหลังสร้าง order แล้ว token คิวอาจใช้ไม่ได้อีก (จะกลายเป็นเทสที่เด้งไปหน้าคิวแทน)
     await prisma.$executeRaw`UPDATE zones SET polygon = NULL WHERE id = ${zoneId}`;
     await page.reload({ waitUntil: "domcontentloaded" });
-    const fallbackButtons = await page.locator("main button[title]").count();
+    // ผังตารางเดิมเรนเดอร์ที่นั่งเป็น <button title="A1"> ที่ "ไม่มี" data-seat-number
+    const fallbackButtons = await page.locator("main button[title]:not([data-seat-number])").count();
     check("โซนไม่มีกรอบ → ถอยไปใช้ผังตารางแบบเดิมอัตโนมัติ", fallbackButtons > 0, `buttons=${fallbackButtons}`);
     check(
       "ไม่แสดงผัง SVG แล้วเมื่อข้อมูลไม่ครบ",
-      (await page.locator('img[alt="ผังที่นั่งของสถานที่จัดงาน"]').count()) === 0
+      (await page.locator('img[alt="ผังสถานที่จัดงาน"]').count()) === 0
     );
     await page.screenshot({ path: ".shots/seatmap-buyer-3-fallback.png" });
 
     // คืนกรอบกลับ แล้วต้องกลับมาเป็นผัง SVG เหมือนเดิม
     await prisma.zone.update({ where: { id: zoneId }, data: { polygon: FRAME } });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.locator('img[alt="ผังที่นั่งของสถานที่จัดงาน"]').waitFor({ timeout: 20_000 });
+    await page.locator('img[alt="ผังสถานที่จัดงาน"]').waitFor({ timeout: 20_000 });
     check("ใส่กรอบคืน → กลับมาเป็นผัง SVG", true);
 
     // ---------- 4) เลือกที่นั่ง -> ต้องขึ้นในแผงสรุป ----------
+    // เลือกโซนจากรายการโซน (ทางที่ไม่ต้องคลิกบนรูป — ทางเดียวกับผู้ใช้คีย์บอร์ด)
+    await page.getByRole("button", { name: /VIP ทดสอบ/ }).first().click();
+    await page.locator("button[data-seat-number]").first().waitFor({ timeout: 10_000 });
     for (let i = 0; i < SEATS_TO_PICK; i++) await pickSeat(page, i, i + 1);
     const chipCount = await page.locator('[aria-label^="เอาที่นั่ง"]').count();
     check(`เลือกที่นั่งได้ ${SEATS_TO_PICK} ที่ และขึ้นในแผงสรุป`, chipCount === SEATS_TO_PICK, `chips=${chipCount}`);

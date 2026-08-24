@@ -97,6 +97,7 @@ export default async function SeatsPage({
   const zonesData = concert.zones.map((z) => ({
     id: z.id.toString(),
     name: z.name,
+    tier: z.tier,
     price: Number(z.price.toString()),
     color: z.color,
     seats: z.seats.map((s) => {
@@ -108,28 +109,25 @@ export default async function SeatsPage({
         rowLabel: s.rowLabel,
         seatNumber: s.seatNumber,
         status,
-        x: s.x,
-        y: s.y,
       };
     }),
   }));
 
   // ---------- เลือกว่าจะแสดงผังแบบไหน ----------
-  // ผังบนรูปจริง (SVG) ใช้ได้ต่อเมื่อ "ครบทุกชิ้น" เท่านั้น: มีรูป + ทุกโซนมีกรอบ + ทุกที่นั่งมีพิกัด
+  // ผังบนรูปจริง (SVG) ใช้ได้ต่อเมื่อ "ครบทุกชิ้น" เท่านั้น: มีรูปสถานที่ + ทุกโซนมีกรอบ + ทุกโซนมีที่นั่ง
   // ขาดชิ้นใดชิ้นหนึ่ง (เช่นแอดมินวาดกรอบไปแค่ 2 จาก 3 โซน) ให้ถอยไปใช้ผังตารางแบบเดิมทั้งหน้า
   // -> คอนเสิร์ตเก่าที่ยังไม่ได้ทำผัง ทำงานเหมือนเดิมเป๊ะ ไม่มีทางพังจากฟีเจอร์นี้
+  //
+  // 📌 ไม่เช็ค "ที่นั่งมีพิกัด x/y" อีกแล้ว — ผังรุ่นนี้วาดแค่ระดับโซน ที่นั่งไม่มีตำแหน่งบนรูป
+  //    (กรอบเวทีไม่อยู่ในเงื่อนไข เพราะผังยังอ่านออกแม้ยังไม่ได้ระบุเวที แค่ไม่มีป้ายเวที)
   const polygons = new Map(concert.zones.map((z) => [z.id.toString(), parsePolygon(z.polygon)]));
+  const stagePolygon = parsePolygon(concert.stagePolygon);
   const canUseSvgMap =
     !!concert.layoutImageBase64 &&
     !!concert.layoutImageWidth &&
     !!concert.layoutImageHeight &&
     zonesData.length > 0 &&
-    zonesData.every(
-      (z) =>
-        polygons.get(z.id) !== null &&
-        z.seats.length > 0 &&
-        z.seats.every((s) => s.x !== null && s.y !== null)
-    );
+    zonesData.every((z) => polygons.get(z.id) !== null && z.seats.length > 0);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -156,16 +154,13 @@ export default async function SeatsPage({
 
         {canUseSvgMap ? (
           <SeatMapSvg
-            zones={zonesData.map((z) => ({
-              ...z,
-              polygon: polygons.get(z.id)!,
-              seats: z.seats.map((s) => ({ ...s, x: s.x!, y: s.y! })),
-            }))}
+            zones={zonesData.map((z) => ({ ...z, polygon: polygons.get(z.id)! }))}
             layout={{
               base64: concert.layoutImageBase64!,
               width: concert.layoutImageWidth!,
               height: concert.layoutImageHeight!,
             }}
+            stagePolygon={stagePolygon}
             maxSeats={concert.maxTicketsPerUser}
             concertId={concert.id.toString()}
             queueToken={qt!}

@@ -37,7 +37,7 @@
 | **6. AI-Chat** | `lib/gemini.ts` · `app/api/chat/`, `app/api/admin/chat/` · `components/{chat-widget,chat-context,admin-chat-panel}.tsx` — client ส่ง `history[]` กลับมาเองทุกครั้ง (zod-bounded), server ไม่ persist อะไรเลย |
 | **7. Infra** | `lib/{env,env-schema,prisma,redis,json,format,get-ip,email}.ts` · `next.config.ts` · `docker-compose.yml` · `.github/workflows/ci.yml` |
 | **(cross-cutting) Named-ticket / anti-scalper** | `lib/{holder-policy,entry-code}.ts` · `components/{holder-assign,ticket-entry-qr,ticket-return-button,checkin-client,refund-actions}.tsx` · `app/actions/tickets.ts` · Prisma `TicketReturn`+`Ticket.holderName/qrSecret/returnedAt` — งานล่าสุด (2026-07-04), **ไม่อยู่ในกรอบ 7-subsystem เดิม** |
-| **(cross-cutting) ผังที่นั่งจากรูปจริง** | `lib/seatmap/{generate,guard,polygon}.ts` · `app/actions/seatmap.ts` · `app/(admin)/admin/concerts/[id]/seatmap/` · `components/{seatmap-editor,seat-map-svg}.tsx` · Prisma `Concert.layoutImage*`+`Zone.polygon`+`Seat.x/y` · tests `tests/unit/seatmap-{generate,render}.test.ts` (39) + `scripts/test-seatmap-{ui,buyer}.ts` (27+18) · doc `docs/20_SEATMAP.md` — งานล่าสุด (2026-08-19, branch `feat/seatmap`). **`components/seat-map.tsx` ตัวเดิมไม่ถูกแก้เลย** เป็นทางถอยเมื่อคอนเสิร์ตยังไม่มีผังรูป |
+| **(cross-cutting) ผังที่นั่งจากรูปจริง** | `lib/seatmap/{seat-rows,zone-sheet,zone-sheet-xlsx,guard,polygon,render-hints}.ts` · `app/actions/seatmap.ts` · `app/api/admin/seatmap/template/` · `app/(admin)/admin/concerts/[id]/seatmap/` · `components/{seatmap-editor,seat-map-svg}.tsx` · Prisma `Concert.layoutImage*`+`Concert.stagePolygon`+`Zone.polygon`+`Zone.tier` · tests `tests/unit/{zone-sheet,seat-rows,seatmap-render}.test.ts` (17+12+34) + `scripts/test-seatmap-{ui,buyer}.ts` (34+19) · doc `docs/20_SEATMAP.md` — ปรับใหญ่ 2026-08-21 (branch `feat/seatmap`). **เป็นผัง "ระดับโซน" แล้ว ไม่ใช่ผังที่นั่งรายตัว** — `lib/seatmap/generate.ts` (โปรยจุด + หมุนกริด) **ถูกลบทั้งไฟล์ อย่าเสนอให้ทำกลับมา**; ข้อมูลโซนนำเข้าจากไฟล์ Excel (`exceljs`); `Seat.x/y` ยังอยู่ใน schema แต่ **ไม่มีโค้ดไหนใช้แล้ว**. **`components/seat-map.tsx` ตัวเดิมไม่ถูกแก้เลย** เป็นทางถอยเมื่อคอนเสิร์ตยังไม่มีผังรูป |
 | **(cross-cutting) สมาชิก + รอบกดบัตร** | `lib/{membership,sale-round,sale-round-guard}.ts` · `app/actions/{membership,sale-round}.ts` · `app/(admin)/admin/{members,concerts/[id]/rounds}/` · `app/(public)/account/membership/` · `components/{sale-round-editor,sale-round-timeline,membership-admin-actions,membership-signup-button}.tsx` · Prisma `Membership`+`SaleRound`+`Order.saleRoundId` · tests `tests/unit/{membership,sale-round}.test.ts` (16+18) + `scripts/test-sale-round.ts` (22) · doc `docs/21_MEMBERSHIP_ROUNDS.md` — งานล่าสุด (2026-08-19). **"สมาชิกกดก่อน" = รอบเวลาแยก ไม่ใช่แซงคิว** (คิวในรอบยัง FIFO → สถิติ fairness ในเล่มไม่ต้องวัดใหม่) · **หมดอายุคำนวณสด ไม่มี cron → `status=ACTIVE` ไม่ได้แปลว่ายังเป็นสมาชิก ห้ามอ่าน field ตรง ๆ** · บังคับใช้ 3 จุด (queue join / หน้าที่นั่ง / booking action) ผ่าน `checkSaleAccess()` ตัวเดียว |
 | **(cosmetic) UI kit + design tooling** | `components/ui/*` (shadcn-style primitives) · `app/prototype/` (demo/simulation, **ไม่ต่อ Redis จริง อย่าเข้าใจผิดว่าเป็น admission code จริง** — ของจริงคือ `lib/admit-policy.ts`+`lib/queue.ts`) · `.impeccable/`, `.shots/`, `scripts/shoot-design.ts` |
 
@@ -61,7 +61,7 @@
 | `09_LOCAL_PRESENTATION.md` | คู่มือรันสาธิต — ต้องแก้ payment เป็น PromptPay |
 | `10_PAYMENT_PROVIDERS.md` | ทำไมเลือก PromptPay+EasySlip — ยังแม่นยำ |
 | `11_REQUIREMENTS.md` | source of truth ของ requirement ทั้งหมด (rev 3) |
-| `12_CHANGELOG.md` | ประวัติ session — ล่าสุดที่เห็นคือ Revision 17 (2026-06-04), **ไม่รวมงาน named-ticket + 7-part Codex review** (commit ถึง 2026-07-10) |
+| `12_CHANGELOG.md` | ประวัติ session — ล่าสุดคือ Revision 19 (2026-08-21). **มีช่องว่าง rev 17→18** ไม่รวมงาน named-ticket + 7-part Codex review (commit ถึง 2026-07-10) |
 | `13_THESIS_EVALUATION.md` | ⚠️⚠️ flag สำคัญสุด — สถิติ "inversion 96.8%" มาจาก test script self-referential |
 | `14_SCREENSHOTS_GUIDE.md` | ต้องแก้ "9/9"→"101"+ route param |
 | `15_PAYMENT_SECURITY.md` | threat model T1-T10 + fix F1-F8/H1-H4/N1-N5 — rated current |
@@ -69,7 +69,7 @@
 | `17_GO_LIVE_CHECKLIST.md` | runbook ก่อนขึ้น production |
 | `18_SECURITY_AUDIT.md` | 10 vuln + fix — **น่าจะถูกแก้แล้วผ่าน Codex review series ทีหลัง แต่ยังไม่ verify ซ้ำ** |
 | `19_NAMED_TICKET_PLAN.md` | anti-scalper design — implement ครบ 3 phase แล้ว (2026-07-04) |
-| `20_SEATMAP.md` | ผังที่นั่งจากรูปสถานที่จริง — **เอกสารใหม่สุด (2026-08-19) ตัวเลขทดสอบมาจากการรันจริง** |
+| `20_SEATMAP.md` | ผังที่นั่งจากรูปสถานที่จริง — **เขียนใหม่ 2026-08-21 ตัวเลขทดสอบมาจากการรันจริง** (§2.1 บอกว่าอะไรถูกถอดออกและทำไม) |
 | `21_MEMBERSHIP_ROUNDS.md` | สิทธิ์สมาชิก + รอบกดบัตร — **เอกสารใหม่สุด (2026-08-19) ตัวเลขทดสอบมาจากการรันจริง** |
 | `SECURITY_TODO.md` | backlog ที่ยังไม่ทำ (bot-score ไม่เช็กตอนซื้อ, Turnstile hostname/action ไม่เช็ก ฯลฯ) |
 | `HANDOFF-security-chapter-for-thesis.md` | **ตัวเลขล่าสุดที่เชื่อได้สุด** (untracked, ยังไม่ commit) |
@@ -108,5 +108,10 @@ Root `README.md` (ไม่ใช่ `docs/00_README.md`) **ยังเขี�
 - `ระบบบริหารจัดการร้านอาหาร_เดชธนา-ศักดา_Edit.pdf` (2.3MB) — **เป็นฟอร์แมตอ้างอิงของ ม.รังสิต ไม่ใช่เนื้อหาโปรเจกต์นี้**
 - `วิจัยระบบแอนติบอท finish.docx` (904KB) — งานวิจัยเดิมที่ต่อยอด (อ่านได้อย่างเดียว ห้ามแก้ ตาม `docs/00_README.md`)
 - `ปริญญานิพนธ์-ระบบจองบัตรคอนเสิร์ต.docx` (24KB) — ร่างวิทยานิพนธ์ของโปรเจกต์นี้เอง (early draft)
+
+## ⚠️ กับดักที่เคยเสียเวลาไล่ (2026-08-21)
+
+**เขียน path ของ Windows ในไฟล์ `.md` ด้วย `/` เสมอ** — Tailwind v4 สแกนไฟล์ `.md` ในโปรเจกต์ด้วย และตีความ backslash ตามด้วยเลขฐาน 16 หกหลัก (เช่นส่วนหนึ่งของ UUID ใน path) เป็น CSS escape → `String.fromCodePoint` เกินช่วง → `app/globals.css` คอมไพล์ไม่ผ่าน → **ทั้งเว็บขึ้น 500 โดย error ไม่ได้ชี้ไปที่ไฟล์ `.md` เลย**
+วิธีเช็คเร็ว: `node -e "const postcss=require('postcss'),tw=require('@tailwindcss/postcss'),fs=require('fs');postcss([tw({base:process.cwd()})]).process(fs.readFileSync('app/globals.css','utf8'),{from:'app/globals.css'}).then(r=>console.log('OK',r.css.length)).catch(e=>console.error('ERR',e.message))"`
 
 โค้ด comment/doc ส่วนใหญ่เป็นภาษาไทย แต่ identifier (ชื่อ function/variable) เป็นอังกฤษปกติ — ไม่มี vendored third-party source code ที่ไหนเลย (deps ผ่าน npm ทั้งหมด)
