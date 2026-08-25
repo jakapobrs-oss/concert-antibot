@@ -1,8 +1,13 @@
 # 04 — ER Diagram
 
-> ✅ **ฉบับนี้ regenerate จาก `prisma/schema.prisma` จริง (17 models) — อัปเดต 2026-08-24**
-> 🆕 รอบ 2026-08-24 เพิ่ม 3 ตารางที่ลงโค้ดไปแล้วแต่เอกสารยังไม่มี: `TicketReturn` (คืนบัตร),
-> `Membership` (สมาชิก), `SaleRound` (รอบกดบัตร) + ฟิลด์ผังที่นั่งของ `Concert`/`Zone`/`Seat`
+> ✅ **ฉบับนี้ regenerate จาก `prisma/schema.prisma` จริง (21 models) — อัปเดต 2026-08-20 (รอบ 3)**
+>
+> รอบนี้เพิ่ม 6 ตารางที่ยังไม่เคยอยู่ในเอกสาร: `TicketReturn` (คืนบัตร, 2026-07),
+> `Membership` + `SaleRound` (สมาชิก + รอบกดบัตร, Phase 2),
+> `PreRegistration` + `AccessCode` + `AccessCodeRedemption` (รอบพรีเซลหลายชั้น, Phase 2.1 — ดู [21](21_PRESALE_ROUNDS.md))
+> และคอลัมน์ผังที่นั่งจากรูปใน `Concert`/`Zone`/`Seat`
+>
+> 🔀 **2026-08-25 merge สาย seatmap + presale**: เพิ่มคอลัมน์ผังรายโซนของสาย seatmap (`Concert.stagePolygon`, `Zone.tier/stageSide/isStanding/rowSpec`) เข้ากับตาราง Phase 2.1–2.2 ของสาย presale — ตรวจกับ `prisma migrate diff` แล้วตรง migration ทั้ง 15 ตัว
 > ตรงกับ canonical ใน [THESIS_GUIDE.md §3](THESIS_GUIDE.md) — ใช้รูปในไฟล์นี้เข้าเล่มได้เลย
 >
 > **Database:** PostgreSQL 16 · ทุก primary key เป็น `BigInt @default(autoincrement())` (= `BIGSERIAL`) · เงินเป็น `DECIMAL(10,2)` THB
@@ -20,6 +25,18 @@ erDiagram
     USER ||--o{ ORDER : places
     USER ||--o{ TICKET : owns
     USER ||--o{ QUEUE_TOKEN : holds
+    USER ||--o| MEMBERSHIP : "เป็นสมาชิก"
+    USER ||--o{ MEMBERSHIP : "แอดมินให้สิทธิ์ (grantedBy)"
+    USER ||--o{ TICKET_RETURN : "รับเงินคืน"
+    CONCERT ||--o{ SALE_ROUND : "เปิดรอบขาย"
+    SALE_ROUND ||--o{ PRE_REGISTRATION : "ลงทะเบียนล่วงหน้า"
+    SALE_ROUND ||--o{ ACCESS_CODE : "โค้ดสิทธิ์"
+    ACCESS_CODE ||--o{ ACCESS_CODE_REDEMPTION : "ถูกใช้โดย"
+    USER ||--o{ PRE_REGISTRATION : "ลงทะเบียน"
+    USER ||--o{ ACCESS_CODE_REDEMPTION : "ใช้โค้ด"
+    USER ||--o{ SUBSCRIPTION : "สมัครแพ็กเกจ"
+    SALE_ROUND ||--o{ ORDER : "order เกิดในรอบ"
+    TICKET ||--o| TICKET_RETURN : "ถูกคืนเป็น"
     CONCERT ||--o{ ZONE : has
     CONCERT ||--o{ ORDER : for
     CONCERT ||--o{ QUEUE_TOKEN : "queue for"
@@ -100,13 +117,14 @@ erDiagram
         decimal totalAmount "DECIMAL(10,2)"
         enum status "PENDING|PAID|CANCELLED|REFUNDED"
         datetime expiresAt "now + 5 min → auto-cancel"
-        bigint saleRoundId FK "รอบที่กดซื้อ (nullable)"
+        bigint saleRoundId FK "รอบที่ order เกิด (audit/สถิติ)"
     }
     ORDER_ITEM {
         bigint id PK
         bigint orderId FK
         bigint seatId FK "UNIQUE = 1 seat/1 order"
         decimal price "snapshot ราคา ณ ตอนจอง"
+        bigint holderUserId FK "ผู้ถือบัตร (named ticket)"
     }
     PAYMENT {
         bigint id PK
@@ -121,37 +139,13 @@ erDiagram
     TICKET {
         bigint id PK
         bigint orderId FK
-        bigint seatId FK "UNIQUE เฉพาะใบที่ยังไม่คืน"
-        bigint userId FK
+        bigint seatId FK "UNIQUE = 1 ตั๋ว/ที่นั่ง"
+        bigint userId FK "= ผู้ถือบัตร (holder)"
         string qrCode UK "legacy static QR"
-        string holderName "ชื่อผู้ถือ - เทียบบัตรหน้างาน"
-        string qrSecret "HMAC - QR หมุนตามเวลา"
-        datetime checkedInAt "เช็คอินแล้ว"
+        string holderName "ชื่อบนบัตร (snapshot)"
+        string qrSecret "HMAC dynamic QR — ห้ามส่ง client"
+        datetime checkedInAt "เช็คอินแล้ว (ครั้งเดียว)"
         datetime returnedAt "คืนบัตรแล้ว"
-    }
-    TICKET_RETURN {
-        bigint id PK
-        bigint ticketId FK "UNIQUE = คืนได้ครั้งเดียว"
-        bigint payerUserId FK "เงินคืนไปหาคนนี้"
-        decimal amount "ราคาหน้าบัตร"
-        string seatLabel "snapshot ข้อความ"
-        enum status "PENDING|REFUNDED"
-    }
-    MEMBERSHIP {
-        bigint id PK
-        bigint userId FK "UNIQUE = 1 สิทธิ์/คน"
-        enum status "ACTIVE|REVOKED"
-        enum source "SELF_SIGNUP|ADMIN_GRANT"
-        datetime expiresAt "null = ไม่มีวันหมด"
-        bigint grantedByUserId FK "แอดมินที่ให้สิทธิ์"
-    }
-    SALE_ROUND {
-        bigint id PK
-        bigint concertId FK
-        string name "รอบสมาชิก / รอบทั่วไป"
-        enum audience "MEMBER_ONLY|PUBLIC"
-        datetime startAt "server enforce"
-        datetime endAt
     }
     QUEUE_TOKEN {
         bigint id PK
@@ -178,6 +172,72 @@ erDiagram
         int behaviorScore "0-100"
         boolean isLikelyBot
     }
+    TICKET_RETURN {
+        bigint id PK
+        bigint ticketId FK "UNIQUE = 1 ใบ 1 คำขอ"
+        bigint payerUserId FK "ผู้ซื้อ — เงินคืนไปหาคนนี้"
+        decimal amount "ราคาหน้าบัตร"
+        string seatLabel "snapshot โซน/แถว/ที่นั่ง"
+        enum status "PENDING|REFUNDED"
+    }
+    MEMBERSHIP {
+        bigint id PK
+        bigint userId FK "UNIQUE = 1 user 1 แถว"
+        enum tier "STANDARD | PREMIUM"
+        enum status "ACTIVE | REVOKED"
+        enum source "SELF_SIGNUP | ADMIN_GRANT"
+        datetime startedAt
+        datetime expiresAt "null = ไม่มีวันหมดอายุ"
+        bigint grantedByUserId FK "แอดมินที่ให้สิทธิ์"
+        datetime revokedAt
+    }
+    SALE_ROUND {
+        bigint id PK
+        bigint concertId FK
+        string name "รอบแฟนคลับ / สมาชิก / ทั่วไป"
+        enum audience "FANCLUB|PARTNER|MEMBER_ONLY|PUBLIC"
+        datetime startAt
+        datetime endAt
+        boolean requiresPreRegistration
+        datetime preRegisterStartAt
+        datetime preRegisterEndAt
+        int maxTicketsPerUser "null = ใช้ค่าคอนเสิร์ต"
+        int seatQuota "โควต้าที่นั่งของรอบ"
+    }
+    PRE_REGISTRATION {
+        bigint id PK
+        bigint saleRoundId FK
+        bigint userId FK
+        string code UK "โค้ดปลดล็อก PR-XXXXXXXX"
+        datetime registeredAt
+    }
+    ACCESS_CODE {
+        bigint id PK
+        bigint saleRoundId FK
+        string code UK "เช่น MASTERCARD2026"
+        string label "ชื่อแคมเปญ"
+        int maxUses "null = ไม่จำกัด"
+        int usedCount
+        datetime expiresAt
+    }
+    ACCESS_CODE_REDEMPTION {
+        bigint id PK
+        bigint accessCodeId FK
+        bigint userId FK "UNIQUE คู่กับ accessCodeId"
+        datetime redeemedAt
+    }
+    SUBSCRIPTION {
+        bigint id PK
+        bigint userId FK
+        string planCode "PREMIUM_12M ฯลฯ"
+        enum tier "STANDARD | PREMIUM"
+        int months
+        decimal priceAmount "snapshot ราคา (ตอนนี้ 0)"
+        enum status "ACTIVE|ENDED|CANCELLED"
+        datetime startedAt
+        datetime expiresAt
+        datetime cancelledAt
+    }
 ```
 
 > **การอ่าน cardinality (crow's foot):** `||--o{` = one-to-many (ฝั่ง `o{` มีได้ 0..หลาย) · `||--o|` = one-to-(zero-or-one) · `||--||` = one-to-one บังคับ
@@ -185,7 +245,7 @@ erDiagram
 
 ---
 
-## 2. รายละเอียดแต่ละตาราง (17 models)
+## 2. รายละเอียดแต่ละตาราง (21 models)
 
 > ชื่อ column = ชื่อจริงใน DB (camelCase ตาม Prisma) · ชื่อตาราง = `@@map` ในวงเล็บ
 
@@ -400,52 +460,102 @@ Relations: `return?` (1:0..1 → `TicketReturn`)
 | isLikelyBot | Boolean | DEFAULT false | |
 | createdAt | DateTime | indexed | |
 
-#### 2.15 `TicketReturn` (`ticket_returns`) — 🆕 คืนบัตรเข้าระบบ (กลไกกันขายต่อ)
-> ผู้ซื้อคืนบัตร → ที่นั่งกลับ **pool กลาง** ขายต่อ **ที่ราคาหน้าบัตร** ผ่านคิว+anti-bot ปกติ
-> → **ผู้คืนเลือกผู้รับไม่ได้** = ไม่ใช่การโอนตั๋วอำพราง (โมเดลเดียวกับ Face Value Exchange)
+### 🪪 กลุ่ม Membership + Sale Round (Phase 2 — สมาชิก + รอบกดบัตร)
 
+> ออกแบบ/กติกาเต็มอยู่ที่ [`20_MEMBERSHIP.md`](20_MEMBERSHIP.md)
+
+#### 2.15 `Membership` (`memberships`) — สมาชิกชั้นเดียว (เป็น/ไม่เป็น)
 | Field | Type | Key/Constraint | Description |
 |---|---|---|---|
 | id | BigInt | **PK** | |
-| ticketId | BigInt | **FK** → Ticket, **UNIQUE** | 1 ตั๋วคืนได้ครั้งเดียว |
-| orderId | BigInt | | ออร์เดอร์ต้นทาง (audit) |
-| payerUserId | BigInt | **FK** → User (`ReturnPayer`) | **ผู้ซื้อ** — เงินคืนไปหาคนนี้ ไม่ใช่ผู้ถือ |
-| holderUserId | BigInt? | | ผู้ถือ ณ ตอนคืน (audit) |
-| amount | DECIMAL(10,2) | | ราคาหน้าบัตร (snapshot จาก `Ticket.price`) |
-| seatLabel | String | | snapshot ข้อความ "โซน/แถว/เลขที่นั่ง" — ดูย้อนหลังได้แม้ `OrderItem` ถูกลบ |
-| status | RefundStatus | DEFAULT `PENDING`, indexed | `PENDING` → ทีมงานโอนคืน → `REFUNDED` |
-| createdAt / refundedAt | DateTime / DateTime? | | |
-
-#### 2.16 `Membership` (`memberships`) — 🆕 สมาชิก (1 ชั้น: เป็น/ไม่เป็น)
-| Field | Type | Key/Constraint | Description |
-|---|---|---|---|
-| id | BigInt | **PK** | |
-| userId | BigInt | **FK** → User (cascade), **UNIQUE** | 1 สิทธิ์ต่อ 1 บัญชี |
-| status | MembershipStatus | DEFAULT `ACTIVE`, indexed `[status, expiresAt]` | `REVOKED` = แอดมินเพิกถอน (คนละเรื่องกับ "หมดอายุ") |
-| source | MembershipSource | DEFAULT `SELF_SIGNUP` | สมัครเอง (ฟรี) / แอดมินให้สิทธิ์ |
-| startedAt | DateTime | | |
-| expiresAt | DateTime? | | 🔑 **หมดอายุคำนวณสดจากเวลาปัจจุบัน ไม่มี cron มาพลิก status** — `null` = ไม่มีวันหมด (กันบั๊กคลาสสิก "หมดอายุแล้วแต่ status ยัง ACTIVE เพราะ cron ไม่วิ่ง") |
-| grantedByUserId | BigInt? | **FK** → User (SetNull) | แอดมินที่กดให้สิทธิ์ · `null` = สมัครเอง |
-| revokedAt | DateTime? | | |
-
-#### 2.17 `SaleRound` (`sale_rounds`) — 🆕 รอบกดบัตร ("สมาชิกกดก่อน")
-> 🔑 ออกแบบเป็น **รอบเวลาแยก** ไม่ใช่ให้สมาชิกแซงคิวในรอบเดียวกัน
-> → คิวในแต่ละรอบยัง FIFO เป็นธรรมเหมือนเดิม → **สถิติ fairness/inversion ในเล่มยังใช้ได้ ไม่ต้องวัดใหม่**
-
-| Field | Type | Key/Constraint | Description |
-|---|---|---|---|
-| id | BigInt | **PK** | |
-| concertId | BigInt | **FK** → Concert (cascade), indexed `[concertId, startAt]` | |
-| name | VARCHAR(100) | | "รอบสมาชิก", "รอบทั่วไป" |
-| audience | SaleRoundAudience | DEFAULT `PUBLIC` | `MEMBER_ONLY` = เฉพาะสมาชิกที่ยัง active |
-| startAt / endAt | DateTime | | **server enforce** (ไม่ใช่แค่ซ่อนปุ่มฝั่งหน้าเว็บ) |
+| userId | BigInt | **FK → users.id UNIQUE**, Cascade | 1 user 1 แถว — ต่ออายุ = อัปเดตแถวเดิม ไม่สร้างแถวใหม่ |
+| status | MembershipStatus | DEFAULT `ACTIVE` | มีแค่ `ACTIVE` / `REVOKED` — **ไม่มี `EXPIRED`** |
+| tier | MembershipTier | DEFAULT `STANDARD` | `PREMIUM` = เข้ารอบ `FANCLUB` ได้ · แอดมินให้เท่านั้น (Phase 2.1) |
+| source | MembershipSource | DEFAULT `SELF_SIGNUP` | สมัครเอง / แอดมินให้ |
+| startedAt | DateTime | DEFAULT now() | |
+| expiresAt | DateTime? | | **null = ไม่มีวันหมดอายุ** · หมดอายุคำนวณสดเทียบเวลาปัจจุบัน ไม่มี cron |
+| grantedByUserId | BigInt? | **FK → users.id**, SetNull | แอดมินคนที่กดให้สิทธิ์ (audit ว่าใครให้ใคร) |
+| revokedAt | DateTime? | | เวลาที่ถูกเพิกถอน (เก็บแถวไว้ ไม่ลบ) |
 | createdAt / updatedAt | DateTime | | |
+| **Index** | | `[status, expiresAt]` | รองรับ query "สมาชิกที่ยัง active ณ ตอนนี้" |
 
-Relations: `orders[]`
+#### 2.16 `SaleRound` (`sale_rounds`) — รอบกดบัตร ("สมาชิกกดก่อน")
+| Field | Type | Key/Constraint | Description |
+|---|---|---|---|
+| id | BigInt | **PK** | |
+| concertId | BigInt | **FK → concerts.id**, Cascade | |
+| name | VARCHAR(100) | | "รอบสมาชิก", "รอบทั่วไป" |
+| audience | SaleRoundAudience | DEFAULT `PUBLIC` | ลำดับสิทธิ์ 4 ชั้น (ดู §3) |
+| startAt / endAt | DateTime | | ช่วงเวลาของรอบ — **แยกช่วงเวลา ไม่ใช่ให้แซงคิว** |
+| requiresPreRegistration | Boolean | DEFAULT false | ต้องกดลงทะเบียนล่วงหน้าก่อนถึงจะเข้ารอบได้ (แบบ Weverse) |
+| preRegisterStartAt / EndAt | DateTime? | | หน้าต่างลงทะเบียน — ไม่ตั้ง = เปิดจนถึงเวลาที่รอบเริ่ม |
+| maxTicketsPerUser | Int? | | เพดานตั๋วเฉพาะรอบ — ระบบใช้ค่า **ที่น้อยกว่า** ระหว่างรอบกับคอนเสิร์ตเสมอ |
+| seatQuota | Int? | | โควต้าที่นั่งของรอบ (บังคับใน transaction เดียวกับที่จองที่นั่ง) |
+| **Index** | | `[concertId, startAt]` | หารอบที่กำลังเปิดของคอนเสิร์ต |
+
+#### 2.17 `PreRegistration` (`pre_registrations`) — ลงทะเบียนล่วงหน้า
+| Field | Type | Key/Constraint | Description |
+|---|---|---|---|
+| id | BigInt | **PK** | |
+| saleRoundId | BigInt | **FK → sale_rounds.id**, Cascade | |
+| userId | BigInt | **FK → users.id**, Cascade | |
+| code | VARCHAR(32) | **UNIQUE** | โค้ดปลดล็อกที่แสดงให้ผู้ใช้ (`PR-XXXXXXXX`) |
+| registeredAt | DateTime | DEFAULT now() | |
+| **Constraint** | | **UNIQUE `[saleRoundId, userId]`** | 1 คนลงได้ครั้งเดียวต่อรอบ — กันกินโควต้าหลายช่อง |
+
+#### 2.18 `AccessCode` (`access_codes`) — โค้ดสิทธิ์รอบพาร์ทเนอร์
+| Field | Type | Key/Constraint | Description |
+|---|---|---|---|
+| id | BigInt | **PK** | |
+| saleRoundId | BigInt | **FK → sale_rounds.id**, Cascade | โค้ดผูกกับรอบเดียว — กันเอาโค้ดงานอื่นมาใช้ข้ามงาน |
+| code | VARCHAR(64) | **UNIQUE ทั้งระบบ** | normalize เป็นตัวพิมพ์ใหญ่ไม่มีช่องว่างก่อนเก็บ |
+| label | VARCHAR(100)? | | "Mastercard presale", "ใบเสร็จ 7-11" |
+| maxUses / usedCount | Int? / Int | DEFAULT 0 | `maxUses` = null → ไม่จำกัดจำนวนคน |
+| expiresAt | DateTime? | | |
+
+#### 2.19 `AccessCodeRedemption` (`access_code_redemptions`) — ใครใช้โค้ดไปแล้วบ้าง
+| Field | Type | Key/Constraint | Description |
+|---|---|---|---|
+| id | BigInt | **PK** | |
+| accessCodeId | BigInt | **FK → access_codes.id**, Cascade | |
+| userId | BigInt | **FK → users.id**, Cascade | |
+| redeemedAt | DateTime | DEFAULT now() | |
+| **Constraint** | | **UNIQUE `[accessCodeId, userId]`** | คนเดิมใช้โค้ดเดิมซ้ำไม่ได้ → กดซ้ำไม่กินโควต้าคนอื่น |
+
+#### 2.20 `Subscription` (`subscriptions`) — ประวัติการสมัครแพ็กเกจสมาชิก (Phase 2.2)
+| Field | Type | Key/Constraint | Description |
+|---|---|---|---|
+| id | BigInt | **PK** | |
+| userId | BigInt | **FK → users.id**, Cascade | 1 user มีได้หลายรอบ (ต่างจาก `Membership` ที่มีแถวเดียว) |
+| planCode | VARCHAR(40) | | รหัสแพ็กเกจจาก `lib/subscription.ts` เช่น `PREMIUM_12M` |
+| tier / months | MembershipTier / Int | | snapshot ของแพ็กเกจ ณ ตอนสมัคร |
+| priceAmount | DECIMAL(10,2) | | ราคาป้าย ณ ตอนสมัคร — **ตอนนี้ 0 ทุกแถว (ยังไม่เปิดเก็บเงิน)** |
+| status | SubscriptionStatus | DEFAULT `ACTIVE` | `CANCELLED` = ยกเลิกต่ออายุ (สิทธิ์ยังใช้จนจบรอบ) |
+| startedAt / expiresAt | DateTime | | รอบใหม่ต่อท้ายรอบเดิม ไม่ทับกัน |
+| cancelledAt | DateTime? | | |
+| **Index** | | `[userId, startedAt]`, `[status, expiresAt]` | ดึงประวัติของผู้ใช้ + หารอบที่ยังไม่จบ |
+
+> 🔑 **ตารางนี้เป็น ledger ไม่ใช่แหล่งความจริงของสิทธิ์** — ด่านตรวจทุกจุดอ่าน `Membership` เท่านั้น (ดู [22](22_SUBSCRIPTION.md) §2)
+
+> 🔑 คอนเสิร์ตที่ไม่มีแถวใน `sale_rounds` เลย = พฤติกรรมเดิมทุกอย่าง (คอนเสิร์ตเก่าไม่พัง)
+
+#### 2.21 `TicketReturn` (`ticket_returns`) — คำขอคืนบัตร (docs/19)
+| Field | Type | Key/Constraint | Description |
+|---|---|---|---|
+| id | BigInt | **PK** | |
+| ticketId | BigInt | **FK → tickets.id UNIQUE** | 1 ใบ 1 คำขอ |
+| orderId | BigInt | (column) | order ต้นทาง |
+| payerUserId | BigInt | **FK → users.id** | ผู้ซื้อ — เงินคืนไปหาคนนี้ (ไม่ใช่ผู้ถือ) |
+| holderUserId | BigInt? | (column) | ผู้ถือ ณ ตอนคืน (audit) |
+| amount | DECIMAL(10,2) | | ราคาหน้าบัตร |
+| seatLabel | String | | snapshot "โซน/แถว/เลขที่นั่ง" ไว้ดูย้อนหลัง |
+| status | RefundStatus | DEFAULT `PENDING` | `PENDING` → `REFUNDED` (แอดมินกดหลังโอนคืนจริง) |
+| createdAt / refundedAt | DateTime | | |
+| **Index** | | `status` | หน้างานคืนเงินดึงเฉพาะ PENDING |
 
 ---
 
-## 3. Enums (ทั้งหมด 12 ตัว — ตรง schema)
+## 3. Enums (ทั้งหมด 14 ตัว — ตรง schema)
 
 | Enum | ค่า |
 |---|---|
@@ -455,12 +565,14 @@ Relations: `orders[]`
 | `OrderStatus` | `PENDING`, `PAID`, `CANCELLED`, `REFUNDED` |
 | `PaymentMethod` | `PROMPTPAY`, `OMISE` (future) |
 | `PaymentStatus` | `PENDING`, `VERIFYING`, `SUCCESS`, `FAILED`, `REFUND_REQUIRED`, `REFUNDED` |
-| `RefundStatus` | `PENDING`, `REFUNDED` |
 | `QueueTokenStatus` | `WAITING`, `ADMITTED`, `EXPIRED`, `CONVERTED`, `LEFT` |
 | `BotAction` | `ALLOW`, `CHALLENGE`, `BLOCK` |
-| `MembershipStatus` | `ACTIVE`, `REVOKED` |
+| `RefundStatus` | `PENDING`, `REFUNDED` |
+| `MembershipStatus` | `ACTIVE`, `REVOKED` (ไม่มี `EXPIRED` — คำนวณสดจาก `expiresAt`) |
 | `MembershipSource` | `SELF_SIGNUP`, `ADMIN_GRANT` |
-| `SaleRoundAudience` | `MEMBER_ONLY`, `PUBLIC` |
+| `MembershipTier` | `STANDARD`, `PREMIUM` (Phase 2.1) |
+| `SubscriptionStatus` | `ACTIVE`, `ENDED`, `CANCELLED` (Phase 2.2) |
+| `SaleRoundAudience` | `FANCLUB`, `PARTNER`, `MEMBER_ONLY`, `PUBLIC` (เรียงตามลำดับสิทธิ์) |
 
 ---
 
@@ -476,15 +588,19 @@ Relations: `orders[]`
 | Zone → Seat | 1 : 0..* | **Cascade** |
 | Order → OrderItem / Payment | 1 : 0..* / 1 : 0..1 | **Cascade** |
 | Order → Ticket | 1 : 0..* | Restrict |
-| Order → SaleRound | 0..* : 1 | **SetNull** (ลบรอบแล้วออร์เดอร์ไม่หาย) |
 | Seat ↔ OrderItem | 1 : 0..1 (UNIQUE seatId) | Restrict |
 | Seat → Ticket | 1 : 0..* (**partial UNIQUE** เฉพาะใบที่ `returnedAt IS NULL`) | Restrict |
-| OrderItem → User (holder) | 0..* : 0..1 | Restrict |
-| User → Membership | 1 : 0..1 (UNIQUE userId) | **Cascade** |
-| User → Membership (grantedBy) | 1 : 0..* | **SetNull** |
-| Concert → SaleRound | 1 : 0..* | **Cascade** |
 | Ticket → TicketReturn | 1 : 0..1 (UNIQUE ticketId) | Restrict |
+| OrderItem → User (holder) | 0..* : 0..1 | Restrict |
 | User → TicketReturn (payer) | 1 : 0..* | Restrict |
+| User → Membership (เป็นสมาชิก) | 1 : 0..1 (UNIQUE userId) | **Cascade** |
+| User → Membership (grantedBy) | 1 : 0..* | **SetNull** (ลบแอดมินแล้วสิทธิ์ไม่หาย) |
+| Concert → SaleRound | 1 : 0..* | **Cascade** |
+| SaleRound → Order | 1 : 0..* | **SetNull** (ลบรอบแล้ว order ยังอยู่) |
+| SaleRound → PreRegistration / AccessCode | 1 : 0..* | **Cascade** |
+| AccessCode → AccessCodeRedemption | 1 : 0..* | **Cascade** |
+| User → PreRegistration / AccessCodeRedemption | 1 : 0..* | **Cascade** |
+| User → Subscription | 1 : 0..* | **Cascade** |
 
 ---
 
@@ -506,6 +622,14 @@ Relations: `orders[]`
 | queue_tokens | `token` UNIQUE, `[concertId, status]` | |
 | bot_events | `createdAt`, `[action, createdAt]` | dashboard |
 | behavior_sessions | `sessionKey` UNIQUE, `createdAt` | |
+| ticket_returns | `ticketId` UNIQUE, `status` | หน้างานคืนเงินดึงเฉพาะ PENDING |
+| memberships | `userId` UNIQUE, `[status, expiresAt]` | 1 user 1 แถว + หา "สมาชิกที่ยัง active ตอนนี้" |
+| sale_rounds | `[concertId, startAt]` | หารอบที่กำลังเปิดของคอนเสิร์ต |
+| pre_registrations | `code` UNIQUE, `[saleRoundId, userId]` UNIQUE, `saleRoundId` | 1 คน 1 ครั้งต่อรอบ + นับยอดลงทะเบียน |
+| access_codes | `code` UNIQUE, `saleRoundId` | ค้นโค้ดตอนผู้ใช้กรอก |
+| access_code_redemptions | `[accessCodeId, userId]` UNIQUE, `userId` | กันใช้โค้ดซ้ำ + ดูรอบที่ปลดล็อกแล้วของ user |
+| subscriptions | `[userId, startedAt]`, `[status, expiresAt]` | ประวัติของผู้ใช้ + รอบที่ยังไม่จบ |
+| orders | `saleRoundId` | แยกยอดรอบสมาชิก vs รอบทั่วไป (สถิติในเล่ม) |
 
 ---
 
@@ -516,10 +640,14 @@ Relations: `orders[]`
 3. **`admin` ไม่ใช่ตารางแยก** — ใช้ `User.role = ADMIN` (RBAC) ครอบ `/admin/*`
 4. **per-payer cap (กัน account farming):** `Payment.payerKey` (มี index) นับตั๋วต่อ "บัญชีผู้จ่าย" ข้ามทุก app account — บังคับที่ชั้น payment ซึ่งบอทปลอมไม่ได้ (ต้องโอนเงินจริง + slipRef unique)
 5. **คิว fairness:** `QueueToken.timeBucket` + `randomScore` พิสูจน์ว่าจัดลำดับด้วยช่วงเวลา (bucket) + สุ่ม ไม่ใช่ "ใครเร็วระดับ ms ชนะ"
-6. 🆕 **ไม่มีตาราง `Venue` แยก** — ผังสถานที่เก็บเป็นรูป base64 + กรอบ polygon ไว้ใน `Concert`/`Zone` โดยตรง (สถานที่ 1 งาน = 1 ผัง ไม่ต้อง normalize)
-7. 🆕 **โซนยืนไม่ใช่ตารางใหม่** — ใช้ `Zone.isStanding` + เจน `Seat` "ที่นั่งผี" (`rowLabel = "S"`) ครบทุกใบ เพื่อให้กลไกเดิมทั้งหมด (ลิมิตตั๋ว/คิว capacity-aware/Redis hold/คืนบัตร/เช็คอิน QR) ทำงานต่อได้โดยไม่ต้องแก้ ต่างกันแค่ **ไม่ส่งรายที่นั่งไปฝั่งคนซื้อ**
-8. 🆕 **พิกัดที่นั่งเป็นสัดส่วน 0-1 ไม่ใช่พิกเซล** (`Seat.x/y`, `Zone.polygon`, `Concert.stagePolygon`) — จอคนละขนาด/รูปคนละความละเอียดก็วางตำแหน่งตรงเดิม
-9. 🆕 **`Ticket.seatId` ไม่ใช่ UNIQUE ธรรมดา** — เป็น partial unique index (`WHERE returnedAt IS NULL`) เพราะที่นั่งที่ถูกคืนต้องขายใหม่ได้ แต่ห้ามมีตั๋ว active ซ้อนกัน 2 ใบ (ถ้าอ่านจาก `schema.prisma` อย่างเดียวจะไม่เห็น index ตัวนี้ — มันอยู่ใน migration `20260703150000`)
+6. **สมาชิกไม่มีสถานะ `EXPIRED` ใน DB** — เก็บแค่ `expiresAt` แล้วเทียบเวลาปัจจุบันทุกครั้งที่ถาม เพื่อตัดความเสี่ยง "cron ไม่วิ่งแล้วคนหมดอายุยังเข้ารอบสมาชิกได้" (ดู `20_MEMBERSHIP.md` §2)
+7. **"สมาชิกกดก่อน" ทำเป็นรอบเวลาแยก ไม่ใช่สิทธิ์แซงคิว** — คิวในแต่ละรอบยังเป็น FIFO ตัวชี้วัด fairness/inversion ในเล่มจึงยังใช้ได้เหมือนเดิม
+8. **รอบพรีเซลหลายชั้นเป็นด่านก่อนเข้าคิว ไม่ใช่ลำดับในคิว** — `FANCLUB → PARTNER → MEMBER_ONLY → PUBLIC` คือลำดับของช่วงเวลา (ดู [21_PRESALE_ROUNDS.md](21_PRESALE_ROUNDS.md))
+9. **`Concert.status = SOLD_OUT` ถูกตั้งอัตโนมัติ** ตอนออกตั๋วใบสุดท้าย (ไม่เหลือทั้งที่นั่งว่างและที่ค้างจ่าย) — พลิกทิศทางเดียว `ON_SALE → SOLD_OUT` การเปิดขายใหม่เป็นการตัดสินใจของผู้จัด (ดู [23_SOLD_OUT.md](23_SOLD_OUT.md))
+10. 🆕 **ไม่มีตาราง `Venue` แยก** — ผังสถานที่เก็บเป็นรูป base64 + กรอบ polygon ไว้ใน `Concert`/`Zone` โดยตรง (สถานที่ 1 งาน = 1 ผัง ไม่ต้อง normalize)
+11. 🆕 **โซนยืนไม่ใช่ตารางใหม่** — ใช้ `Zone.isStanding` + เจน `Seat` "ที่นั่งผี" (`rowLabel = "S"`) ครบทุกใบ เพื่อให้กลไกเดิมทั้งหมด (ลิมิตตั๋ว/คิว capacity-aware/Redis hold/คืนบัตร/เช็คอิน QR) ทำงานต่อได้โดยไม่ต้องแก้ ต่างกันแค่ **ไม่ส่งรายที่นั่งไปฝั่งคนซื้อ**
+12. 🆕 **พิกัดที่นั่งเป็นสัดส่วน 0-1 ไม่ใช่พิกเซล** (`Seat.x/y`, `Zone.polygon`, `Concert.stagePolygon`) — จอคนละขนาด/รูปคนละความละเอียดก็วางตำแหน่งตรงเดิม
+13. 🆕 **`Ticket.seatId` ไม่ใช่ UNIQUE ธรรมดา** — เป็น partial unique index (`WHERE returnedAt IS NULL`) เพราะที่นั่งที่ถูกคืนต้องขายใหม่ได้ แต่ห้ามมีตั๋ว active ซ้อนกัน 2 ใบ (ถ้าอ่านจาก `schema.prisma` อย่างเดียวจะไม่เห็น index ตัวนี้ — มันอยู่ใน migration `20260703150000`)
 
 ---
 
@@ -537,8 +665,13 @@ Relations: `orders[]`
 | `Payment.provider_ref` | → `slipRef` (+ `senderName`, `senderAccount`, `payerKey`) |
 | `QueueToken.position` only | → เพิ่ม `timeBucket`, `randomScore`, `status` (fairness) |
 | ขาด `OrderItem`, `VerificationToken` | → มีจริงทั้งคู่ (เพิ่มแล้ว) |
+| ขาด `TicketReturn`, `Membership`, `SaleRound` | → มีจริงทั้ง 3 (เพิ่มเป็น §2.15–2.17 รอบ 2026-08-20) |
+| `PaymentStatus` มีแค่ 4 ค่า | → มี 6 ค่า (เพิ่ม `REFUND_REQUIRED`, `REFUNDED` ตอนทำระบบคืนเงิน) |
+| `Concert`/`Zone`/`Seat` ไม่มีข้อมูลผังจากรูป | → เพิ่ม `layoutImage*`, `polygon`, `x`/`y` (พิกัดเป็นสัดส่วน 0-1) |
+| ไม่มีระบบรอบพรีเซลหลายชั้น | → เพิ่ม `PreRegistration`, `AccessCode`, `AccessCodeRedemption` + `Membership.tier` (§2.18–2.20) |
+| ไม่มีประวัติการสมัครสมาชิก | → เพิ่ม `Subscription` เป็น ledger แยกจากสถานะสิทธิ์ (§2.21) |
 
-### เพิ่มรอบ 2026-08-24 (ของที่ลงโค้ดแล้วแต่เอกสารยังไม่ตาม)
+### เพิ่มรอบ 2026-08-24 → 2026-08-25 (ของที่ลงโค้ดแล้ว + merge สาย presale)
 
 | เพิ่ม | ที่มา |
 |---|---|
@@ -546,8 +679,10 @@ Relations: `orders[]`
 | `Membership`, `SaleRound` + 3 enums + `Order.saleRoundId` + `OrderItem.holderUserId` | migration `20260818093203_phase2_seatmap_membership_sale_round` |
 | `Concert.layoutImage*/stagePolygon` · `Zone.polygon/tier` · `Seat.x/y` | migration `20260818093203` + `20260820234008_add_stage_polygon_and_zone_tier` |
 | `Zone.stageSide` · `Zone.isStanding` · `Zone.rowSpec` | migration `20260824110336` / `20260824112310` / `20260824132751` (ผังที่นั่งรายโซน) |
+| `Membership.tier` · `SaleRound.requiresPreRegistration/preRegisterStartAt/preRegisterEndAt/maxTicketsPerUser/seatQuota` · `PreRegistration` · `AccessCode` · `AccessCodeRedemption` · enum `MembershipTier` + `SaleRoundAudience` เพิ่ม `FANCLUB`/`PARTNER` | migration `20260820011203_presale_rounds_membership_tier` (สาย presale) |
+| `Subscription` + enum `SubscriptionStatus` | migration `20260820022358_subscription_ledger` (สาย presale) |
 | `Ticket.seatId` UNIQUE → partial UNIQUE | ตั๋วที่คืนแล้วต้องขายที่นั่งเดิมซ้ำได้ |
 | `Payment.slipImageUrl` "เก็บใน MinIO" | ❌ ผิด — เก็บ base64 ลง Postgres ตรง ๆ |
 
-> รวม **17 models** · 12 enums · seat hold = Redis · ภาพ ER ส่งออกเป็นไฟล์ที่ [`docs/diagrams/`](diagrams/)
+> รวม **21 models** · 14 enums · seat hold = Redis · ภาพ ER ส่งออกเป็นไฟล์ที่ [`docs/diagrams/`](diagrams/)
 > ⚠️ `docs/diagrams/er-diagram.svg` เป็นรูปที่ export ไว้ **ก่อน** รอบนี้ — ถ้าจะเอาเข้าเล่ม ต้อง render Mermaid ใน §1 ใหม่

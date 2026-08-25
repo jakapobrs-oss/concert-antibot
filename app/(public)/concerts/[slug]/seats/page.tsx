@@ -11,10 +11,10 @@ import { SeatMapSvg } from "@/components/seat-map-svg";
 import { parsePolygon, parseStageSide } from "@/lib/seatmap/polygon";
 import { Badge } from "@/components/ui/badge";
 import { refreshAdmitted } from "@/lib/queue";
-import { checkSaleAccess } from "@/lib/sale-round-guard";
 import { getHeldSeats } from "@/lib/seat-hold";
 import { auth } from "@/lib/auth";
 import { getTurnstileSiteKey } from "@/lib/turnstile";
+import { resolveEntryForUser, effectiveTicketLimit, entryDenyMessage } from "@/lib/sale-round";
 
 export const dynamic = "force-dynamic"; // ที่นั่งเปลี่ยนตลอด ต้อง fresh
 
@@ -86,8 +86,8 @@ export default async function SeatsPage({
   // 🔒 ด่านรอบกดบัตร (Phase 2) — ซ้อนทับ ON_SALE
   // ต้องเช็คซ้ำที่นี่แม้ด่านตอนเข้าคิวจะเช็คไปแล้ว เพราะรอบอาจ "ปิดระหว่างที่ยังถือ token อยู่"
   // (เช่นรอบสมาชิกจบตอนคนยังค้างอยู่หน้านี้) — ถ้าเช็คแค่ตอนเข้าคิวจะซื้อข้ามรอบได้
-  const roundAccess = await checkSaleAccess(concert.id, BigInt(userId));
-  if (!roundAccess.allowed) {
+  const entry = await resolveEntryForUser(concert.id, userId);
+  if (!entry.ok) {
     return (
       <div className="flex min-h-screen flex-col">
         <SiteHeader />
@@ -95,7 +95,7 @@ export default async function SeatsPage({
           <h1 className="mb-2 font-display text-xl font-semibold text-fg">
             ยังไม่ถึงรอบของคุณ
           </h1>
-          <p className="mb-4 text-sm text-fg-faint">{roundAccess.message}</p>
+          <p className="mb-4 text-sm text-fg-faint">{entryDenyMessage(entry)}</p>
           <Link
             href={`/concerts/${slug}`}
             className="text-brand-300 underline hover:text-brand-200"
@@ -116,6 +116,15 @@ export default async function SeatsPage({
   if (!admitted) {
     redirect(`/concerts/${slug}/queue`);
   }
+
+  // 🎟️ Phase 2.1: เพดานตั๋วของ "รอบที่ผู้ใช้อยู่ตอนนี้" — รอบพรีเซลตึงกว่าเพดานคอนเสิร์ตได้
+  //   ให้หน้าจอบอกเลขเดียวกับที่ server บังคับใช้จริง (booking.ts ใช้ effectiveTicketLimit ตัวเดียวกัน)
+  const activeRound = entry.round;
+  const ticketMax = effectiveTicketLimit(
+    concert.maxTicketsPerUser,
+    activeRound?.maxTicketsPerUser ?? null,
+  );
+  const roundName = activeRound?.name ?? null;
 
   // 💳 order ค้างชำระของ user ในคอนเสิร์ตนี้ — โชว์แบนเนอร์ "ไปชำระเงินต่อ"
   // กันเข้าใจผิดว่าที่นั่งหลุดแล้ว แล้วไปไล่จองซ้ำจนชนโควตาตัวเอง
@@ -150,7 +159,7 @@ export default async function SeatsPage({
   });
   const remainingQuota = Math.max(
     0,
-    concert.maxTicketsPerUser - committedSeats,
+    ticketMax - committedSeats,
   );
 
   // ดึงที่นั่งที่ถูก hold อยู่ใน Redis (real-time — คนอื่นกำลังจอง) เพื่อแสดงเป็น HELD
@@ -248,7 +257,8 @@ export default async function SeatsPage({
           </Badge>
         </div>
         <p className="-mt-5 mb-6 text-sm text-fg-faint">
-          เลือกที่นั่ง — จำกัด {concert.maxTicketsPerUser} ใบต่อบัญชี
+          เลือกที่นั่ง — จำกัด {ticketMax} ใบต่อบัญชี
+          {roundName && ticketMax < concert.maxTicketsPerUser ? ` (เพดานของ${roundName})` : ""}
         </p>
 
         {pendingOrder && (
@@ -279,7 +289,7 @@ export default async function SeatsPage({
             }}
             stagePolygon={stagePolygon}
             slug={slug}
-            maxSeats={concert.maxTicketsPerUser}
+            maxSeats={ticketMax}
             remainingQuota={remainingQuota}
             concertId={concert.id.toString()}
             queueToken={qt!}
@@ -292,7 +302,7 @@ export default async function SeatsPage({
         ) : (
           <SeatMap
             zones={legacyZonesData}
-            maxSeats={concert.maxTicketsPerUser}
+            maxSeats={ticketMax}
             remainingQuota={remainingQuota}
             concertId={concert.id.toString()}
             queueToken={qt!}

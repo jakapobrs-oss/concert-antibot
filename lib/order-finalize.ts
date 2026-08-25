@@ -17,6 +17,8 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { exceedsPayerLimit } from "@/lib/payer-key";
 import { exceedsTicketLimit, remainingTicketAllowance } from "@/lib/ticket-limit";
+import { exceedsRoundQuota } from "@/lib/sale-round";
+import { syncSoldOutStatus } from "@/lib/sold-out";
 import crypto from "node:crypto";
 
 export type FinalizeReason =
@@ -147,6 +149,15 @@ export async function finalizePaidOrder(params: {
     }
     );
 
+    // 🎫 Phase 2.3: ที่นั่งชุดนี้เพิ่งกลายเป็น SOLD — ถ้าหมดทั้งงานให้ประกาศ SOLD OUT ทันที
+    //   (ผังคอนไทยประกาศ sold out ตั้งแต่รอบสมาชิกได้ ถ้าบัตรหมดก่อนถึงรอบทั่วไป — docs/23)
+    //   ห่อ try/catch เพราะการติดป้ายสถานะห้ามทำให้ "จ่ายเงินแล้วออกตั๋วสำเร็จ" กลายเป็นล้มเหลว
+    try {
+      await syncSoldOutStatus(params.concertId);
+    } catch (e) {
+      console.error("[sold-out sync]", e);
+    }
+
     return { ok: true, ticketCount: params.items.length };
   } catch (e) {
     if (e instanceof FinalizeError) return { ok: false, reason: e.reason };
@@ -265,9 +276,9 @@ export async function cancelPendingOrder(params: {
 // ============================================================
 // error ภายในสำหรับ rollback ออกมานอก transaction (LIMIT ต้องพก remaining กลับไปทำข้อความ)
 class ReserveError extends Error {
-  reason: "LIMIT" | "SEAT_TAKEN";
+  reason: "LIMIT" | "SEAT_TAKEN" | "ROUND_QUOTA";
   remaining: number;
-  constructor(reason: "LIMIT" | "SEAT_TAKEN", remaining = 0) {
+  constructor(reason: "LIMIT" | "SEAT_TAKEN" | "ROUND_QUOTA", remaining = 0) {
     super(reason);
     this.reason = reason;
     this.remaining = remaining;
@@ -277,7 +288,7 @@ class ReserveError extends Error {
 export type ReserveResult =
   | { ok: true; orderId: bigint }
   | { ok: false; reason: "LIMIT"; remaining: number }
-  | { ok: false; reason: "SEAT_TAKEN" | "ERROR" };
+  | { ok: false; reason: "SEAT_TAKEN" | "ROUND_QUOTA" | "ERROR" };
 
 // สร้าง order + จองที่นั่ง — caller (booking.ts) ต้อง verify มาก่อน:
 //   queue admit, concert ON_SALE, ownership, ที่นั่งเป็นของคอนเสิร์ตนี้ + AVAILABLE, และถือ Redis hold ไว้แล้ว
@@ -294,9 +305,9 @@ export async function reserveSeatsForOrder(params: {
   items: { seatId: bigint; price: Prisma.Decimal }[];
   maxTicketsPerUser: number;
   expiresAt: Date;
-  /** รอบกดบัตรที่คำสั่งซื้อนี้เกิดขึ้น (Phase 2) — null ถ้าคอนเสิร์ตไม่ได้ตั้งรอบ
-   *  เก็บไว้เพื่อดูภายหลังว่ายอดขายมาจากรอบสมาชิกหรือรอบทั่วไป ไม่ได้ใช้ตัดสินสิทธิ์ */
-  saleRoundId?: bigint | null;
+  // รอบพรีเซลที่ order นี้เกิด (Phase 2.1) — null/undefined = คอนเสิร์ตไม่มีระบบรอบ (พฤติกรรมเดิม)
+  //   seatQuota != null → เช็คโควต้าที่นั่งของรอบ "ภายใต้ lock ของรอบ" กันแย่งโควต้าพร้อมกัน
+  saleRound?: { id: bigint; seatQuota: number | null } | null;
   now?: Date; // เปิดให้ test ฉีดเวลาได้
 }): Promise<ReserveResult> {
   const now = params.now ?? new Date();
@@ -330,12 +341,36 @@ export async function reserveSeatsForOrder(params: {
         );
       }
 
+      // โควต้าที่นั่งของรอบพรีเซล (Phase 2.1) — ล็อกต่อ "รอบ" เพราะโควต้าเป็นทรัพยากรร่วมข้าม user
+      //   (lock ด้านบนเป็นของ (user, concert) จึงกันคนละคนแย่งโควต้าพร้อมกันไม่ได้)
+      //   ล็อกเฉพาะรอบที่ตั้งโควต้าไว้ → รอบปกติไม่เสียคอขวดตอนพีค
+      if (params.saleRound?.seatQuota != null && params.saleRound.seatQuota > 0) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`saleround:${params.saleRound.id}`}))`;
+        const soldInRound = await tx.orderItem.count({
+          where: {
+            order: {
+              saleRoundId: params.saleRound.id,
+              OR: [{ status: "PAID" }, { status: "PENDING", expiresAt: { gt: now } }],
+            },
+          },
+        });
+        if (
+          exceedsRoundQuota({
+            sold: soldInRound,
+            requested: params.items.length,
+            quota: params.saleRound.seatQuota,
+          })
+        ) {
+          throw new ReserveError("ROUND_QUOTA");
+        }
+      }
+
       // สร้าง Order + items + payment (PENDING) ใน tx เดียวกับที่ถือ lock
       const newOrder = await tx.order.create({
         data: {
           userId: params.userId,
           concertId: params.concertId,
-          saleRoundId: params.saleRoundId ?? null,
+          saleRoundId: params.saleRound?.id ?? null,
           totalAmount,
           status: "PENDING",
           expiresAt: params.expiresAt,
@@ -356,9 +391,8 @@ export async function reserveSeatsForOrder(params: {
     return { ok: true, orderId };
   } catch (e) {
     if (e instanceof ReserveError) {
-      return e.reason === "LIMIT"
-        ? { ok: false, reason: "LIMIT", remaining: e.remaining }
-        : { ok: false, reason: "SEAT_TAKEN" };
+      if (e.reason === "LIMIT") return { ok: false, reason: "LIMIT", remaining: e.remaining };
+      return { ok: false, reason: e.reason };
     }
     return { ok: false, reason: "ERROR" };
   }

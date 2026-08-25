@@ -1,153 +1,74 @@
 "use server";
 
 // ============================================================
-// Server Actions — รอบกดบัตร (Phase 2)
+// Sale round actions ฝั่งผู้ใช้ (Phase 2.1, docs/21)
 // ============================================================
-// แอดมินตั้งรอบให้คอนเสิร์ต เช่น "รอบสมาชิก 19:00-19:30" แล้ว "รอบทั่วไป 19:30-21:00"
-//
-// ตรรกะการตัดสินสิทธิ์อยู่ที่ lib/sale-round.ts (pure, มีเทสหน่วยคุม)
-// ไฟล์นี้รับผิดชอบแค่ สิทธิ์แอดมิน + ตรวจ input + เขียนฐานข้อมูล
-//
-// ⚠️ ไม่มีการลบรอบที่มีคำสั่งซื้อผูกอยู่แบบทำลายข้อมูล — Order.saleRoundId ตั้งเป็น SetNull
-//    ตอนลบรอบ (ดู schema) คำสั่งซื้อเดิมจึงไม่หาย แค่เสียข้อมูลว่ามาจากรอบไหน
-//    จึงเตือนแอดมินก่อนลบรอบที่มีคนซื้อไปแล้ว
+//   - preRegisterForRound: กด "ลงทะเบียนล่วงหน้า" ของรอบ (แบบ Weverse) → ได้โค้ดปลดล็อก
+//   - redeemRoundAccessCode: กรอกโค้ดสิทธิ์สปอนเซอร์/บัตรเครดิต → ปลดล็อกรอบพาร์ทเนอร์
+// กติกา/ด่านตรวจอยู่ใน lib/ (unit test คลุมแล้ว) — ที่นี่ทำแค่ auth + validate + revalidate
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
+import { auth } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { preRegister } from "@/lib/pre-registration";
+import { redeemAccessCode } from "@/lib/access-code";
 
-import { prisma } from "@/lib/prisma";
-import { assertVerifiedAdmin } from "@/lib/admin-guard";
-import { validateRoundWindow } from "@/lib/sale-round";
+const idSchema = z.string().regex(/^\d+$/, "ข้อมูลไม่ถูกต้อง");
 
-export type SaleRoundActionResult = { ok: true; message: string } | { ok: false; error: string };
-
-const idSchema = z.string().regex(/^\d+$/, "รหัสไม่ถูกต้อง");
-
-// เพดานจำนวนรอบต่อคอนเสิร์ต — กันตั้งรอบเป็นร้อยจนหน้าจอและด่านช้า
-const MAX_ROUNDS_PER_CONCERT = 20;
-
-const roundInputSchema = z.object({
-  concertId: idSchema,
-  name: z.string().trim().min(1, "ต้องตั้งชื่อรอบ").max(100, "ชื่อรอบยาวเกินไป"),
-  audience: z.enum(["MEMBER_ONLY", "PUBLIC"], { errorMap: () => ({ message: "ประเภทรอบไม่ถูกต้อง" }) }),
-  // รับเป็นสตริงจาก <input type="datetime-local"> แล้วแปลงเอง
-  startAt: z.string().min(1, "ต้องระบุเวลาเปิดรอบ"),
-  endAt: z.string().min(1, "ต้องระบุเวลาปิดรอบ"),
-});
-
-/** สร้างรอบใหม่ */
-export async function createSaleRound(input: {
-  concertId: string;
-  name: string;
-  audience: "MEMBER_ONLY" | "PUBLIC";
-  startAt: string;
-  endAt: string;
-}): Promise<SaleRoundActionResult> {
-  await assertVerifiedAdmin();
-
-  const parsed = roundInputSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
-  }
-  const { concertId, name, audience } = parsed.data;
-
-  const startAt = new Date(parsed.data.startAt);
-  const endAt = new Date(parsed.data.endAt);
-  const windowError = validateRoundWindow(startAt, endAt);
-  if (windowError) return { ok: false, error: windowError };
-
-  const concert = await prisma.concert.findUnique({
-    where: { id: BigInt(concertId) },
-    select: { id: true },
-  });
-  if (!concert) return { ok: false, error: "ไม่พบคอนเสิร์ตนี้" };
-
-  const existingCount = await prisma.saleRound.count({ where: { concertId: concert.id } });
-  if (existingCount >= MAX_ROUNDS_PER_CONCERT) {
-    return { ok: false, error: `ตั้งรอบได้สูงสุด ${MAX_ROUNDS_PER_CONCERT} รอบต่อคอนเสิร์ต` };
-  }
-
-  await prisma.saleRound.create({
-    data: { concertId: concert.id, name, audience, startAt, endAt },
-  });
-
-  revalidatePath(`/admin/concerts/${concertId}/rounds`);
-  revalidatePath(`/admin/concerts/${concertId}`);
-  return { ok: true, message: `เพิ่ม "${name}" แล้ว` };
+async function sessionUserId(): Promise<string | null> {
+  const session = await auth();
+  return (session?.user as { id?: string } | undefined)?.id ?? null;
 }
 
-/** แก้ไขรอบเดิม */
-export async function updateSaleRound(input: {
-  roundId: string;
-  concertId: string;
-  name: string;
-  audience: "MEMBER_ONLY" | "PUBLIC";
-  startAt: string;
-  endAt: string;
-}): Promise<SaleRoundActionResult> {
-  await assertVerifiedAdmin();
+export type PreRegisterActionResult =
+  | { ok: true; code: string; already: boolean }
+  | { ok: false; error: string };
 
-  const parsed = roundInputSchema.extend({ roundId: idSchema }).safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
-  }
-  const { roundId, concertId, name, audience } = parsed.data;
+export async function preRegisterForRound(input: {
+  saleRoundId: string;
+}): Promise<PreRegisterActionResult> {
+  const userId = await sessionUserId();
+  if (!userId) return { ok: false, error: "กรุณาเข้าสู่ระบบ" };
 
-  const startAt = new Date(parsed.data.startAt);
-  const endAt = new Date(parsed.data.endAt);
-  const windowError = validateRoundWindow(startAt, endAt);
-  if (windowError) return { ok: false, error: windowError };
+  const parsed = idSchema.safeParse(input.saleRoundId);
+  if (!parsed.success) return { ok: false, error: "ไม่พบรอบขายนี้" };
 
-  const round = await prisma.saleRound.findUnique({
-    where: { id: BigInt(roundId) },
-    select: { id: true, concertId: true },
-  });
-  if (!round) return { ok: false, error: "ไม่พบรอบนี้" };
-  // กันยิงข้ามคอนเสิร์ต — รหัสรอบเดาได้ ถ้าไม่เช็คจะแก้รอบของคอนเสิร์ตอื่นได้
-  if (round.concertId !== BigInt(concertId)) {
-    return { ok: false, error: "รอบนี้ไม่ได้อยู่ในคอนเสิร์ตนี้" };
-  }
+  const res = await preRegister({ userId, saleRoundId: parsed.data });
+  if (!res.ok) return res;
 
-  await prisma.saleRound.update({
-    where: { id: round.id },
-    data: { name, audience, startAt, endAt },
-  });
-
-  revalidatePath(`/admin/concerts/${concertId}/rounds`);
-  return { ok: true, message: `แก้ไข "${name}" แล้ว` };
+  revalidatePath("/concerts");
+  return { ok: true, code: res.code, already: res.already };
 }
 
-/** ลบรอบ */
-export async function deleteSaleRound(input: {
-  roundId: string;
+export type RedeemActionResult =
+  | { ok: true; roundName: string; already: boolean }
+  | { ok: false; error: string };
+
+// กรอกโค้ดผิดรัว ๆ = การเดาโค้ด → จำกัดอัตราต่อ user (โค้ดสั้นกว่ารหัสผ่านมาก จึงเดาง่ายกว่า)
+const CODE_RL = { limit: 10, windowMs: 10 * 60_000 };
+
+export async function redeemRoundAccessCode(input: {
   concertId: string;
-}): Promise<SaleRoundActionResult> {
-  await assertVerifiedAdmin();
+  code: string;
+}): Promise<RedeemActionResult> {
+  const userId = await sessionUserId();
+  if (!userId) return { ok: false, error: "กรุณาเข้าสู่ระบบ" };
 
-  const parsed = z.object({ roundId: idSchema, concertId: idSchema }).safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
+  const parsed = idSchema.safeParse(input.concertId);
+  if (!parsed.success) return { ok: false, error: "ไม่พบคอนเสิร์ต" };
+  if (typeof input.code !== "string" || input.code.trim().length === 0) {
+    return { ok: false, error: "กรุณากรอกโค้ด" };
   }
-  const { roundId, concertId } = parsed.data;
+  if (input.code.length > 64) return { ok: false, error: "โค้ดไม่ถูกต้อง" };
 
-  const round = await prisma.saleRound.findUnique({
-    where: { id: BigInt(roundId) },
-    select: { id: true, name: true, concertId: true, _count: { select: { orders: true } } },
-  });
-  if (!round) return { ok: false, error: "ไม่พบรอบนี้" };
-  if (round.concertId !== BigInt(concertId)) {
-    return { ok: false, error: "รอบนี้ไม่ได้อยู่ในคอนเสิร์ตนี้" };
-  }
-  // มีคนซื้อไปแล้วในรอบนี้ — ลบได้แต่จะเสียข้อมูลว่ายอดขายมาจากรอบไหน จึงกันไว้ก่อน
-  // (คำสั่งซื้อและตั๋วไม่หาย เพราะ Order.saleRoundId เป็น SetNull ไม่ใช่ Cascade)
-  if (round._count.orders > 0) {
-    return {
-      ok: false,
-      error: `ลบไม่ได้ — มีคำสั่งซื้อ ${round._count.orders} รายการเกิดในรอบนี้ (แก้เวลารอบแทนได้)`,
-    };
+  const rl = await checkRateLimit({ key: `access_code:user:${userId}`, ...CODE_RL });
+  if (!rl.allowed) {
+    return { ok: false, error: "กรอกโค้ดผิดหลายครั้งเกินไป กรุณารอสักครู่" };
   }
 
-  await prisma.saleRound.delete({ where: { id: round.id } });
+  const res = await redeemAccessCode({ userId, concertId: parsed.data, code: input.code });
+  if (!res.ok) return res;
 
-  revalidatePath(`/admin/concerts/${concertId}/rounds`);
-  return { ok: true, message: `ลบ "${round.name}" แล้ว` };
+  revalidatePath("/concerts");
+  return { ok: true, roundName: res.roundName, already: res.already };
 }

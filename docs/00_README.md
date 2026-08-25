@@ -30,9 +30,14 @@
 | 15 | [15_PAYMENT_SECURITY.md](15_PAYMENT_SECURITY.md) | dev / **thesis** | **ความปลอดภัยการตรวจจ่ายเงิน** — threat model, defense levels, ข้อจำกัด + Level 3 future work |
 | 16 | [16_PEAK_LOAD.md](16_PEAK_LOAD.md) | dev / thesis | flash-crowd: non-blocking audit, backoff polling, load-shedding |
 | 17 | [17_GO_LIVE_CHECKLIST.md](17_GO_LIVE_CHECKLIST.md) | user / dev | go-live runbook: credentials, config, N1-N11 fixes, Level 3 |
-| 18 | [18_SECURITY_AUDIT.md](18_SECURITY_AUDIT.md) | dev | audit 10 ช่องโหว่ + วิธีแก้ (บางข้อถูกแก้ไปแล้วในรอบ review ทีหลัง — ต้อง verify ซ้ำ) |
-| 19 | [19_NAMED_TICKET_PLAN.md](19_NAMED_TICKET_PLAN.md) | dev / thesis | บัตรผูกชื่อกันคนกวาดตั๋ว — QR หมุน, เช็คอินกันใช้ซ้ำ, ช่องคืนบัตร |
-| 20 | [20_SEATMAP.md](20_SEATMAP.md) | dev / thesis | **ผังที่นั่งจากรูปสถานที่จริง** — อัลกอริทึมโปรยที่นั่ง, ด่านกันเจนทับ, ผลทดสอบ |
+| 18 | [18_SECURITY_AUDIT.md](18_SECURITY_AUDIT.md) | dev | audit 10 ช่องโหว่ + วิธีแก้ (บางข้อถูกปิดไปแล้วในรอบ Codex review) |
+| 19 | [19_NAMED_TICKET_PLAN.md](19_NAMED_TICKET_PLAN.md) | dev / thesis | บัตรผูกชื่อ + คืนบัตร (anti-scalper) — ทำครบ 3 phase แล้ว |
+| 20 | [20_MEMBERSHIP.md](20_MEMBERSHIP.md) | dev / thesis | ระบบสมาชิก + สัญญากับรอบกดบัตร (Phase 2) |
+| 21 | [21_PRESALE_ROUNDS.md](21_PRESALE_ROUNDS.md) | dev / thesis | รอบพรีเซลหลายชั้นตามแพลตฟอร์มจริง (Phase 2.1) |
+| 22 | [22_SUBSCRIPTION.md](22_SUBSCRIPTION.md) | dev / thesis | แพ็กเกจสมาชิก/ซับสคริปชั่น + รอยต่อสำหรับเปิดเก็บเงิน (Phase 2.2) |
+| 23 | [23_SOLD_OUT.md](23_SOLD_OUT.md) | dev / thesis | บัตรหมด (SOLD OUT) อัตโนมัติ + ปุ่มตั้งรอบมาตรฐาน (Phase 2.3) |
+| 24 | [24_STOREFRONT_UX.md](24_STOREFRONT_UX.md) | dev / thesis | 🆕 คำสั่งซื้อของฉัน + นับถอยหลังเปิดขาย + ค้นหางาน (Phase 2.4) |
+| 25 | [25_SEATMAP.md](25_SEATMAP.md) | dev / thesis | **ผังที่นั่งจากรูปสถานที่จริง** — อัลกอริทึมโปรยที่นั่ง, ด่านกันเจนทับ, ผลทดสอบ |
 | ⭐ | [THESIS_GUIDE.md](THESIS_GUIDE.md) | **ทุกคน** | **material รวมศูนย์ทำรูปเล่ม — canonical facts + ER ที่ถูกต้อง + checklist** |
 
 ---

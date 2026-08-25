@@ -23,6 +23,7 @@ const {
   behaviorUpsert,
   botEventCreate,
   queueTokenCreate,
+  saleRoundFindMany,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   checkRateLimit: vi.fn(),
@@ -34,6 +35,8 @@ const {
   behaviorUpsert: vi.fn(),
   botEventCreate: vi.fn(),
   queueTokenCreate: vi.fn(),
+  // Phase 2.1: route เรียกด่านรอบพรีเซล — คืน [] = คอนเสิร์ตนี้ไม่มีรอบ (พฤติกรรมเดิม ไม่กระทบเทสชุดนี้)
+  saleRoundFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
@@ -42,17 +45,13 @@ vi.mock("@/lib/load-shed", () => ({ acquireInflight, releaseInflight: vi.fn() })
 vi.mock("@/lib/antibot", () => ({ assessRequest }));
 vi.mock("@/lib/queue", () => ({ joinQueue }));
 vi.mock("@/lib/get-ip", () => ({ getClientIp: () => "1.2.3.4" }));
-// ด่าน "รอบกดบัตร" (Phase 2) แทรกอยู่ใน route เดียวกันแต่ไม่ใช่เรื่องของเทสชุดนี้ → ให้ผ่านเสมอ
-// กติกาของรอบมีเทสของตัวเองที่ tests/unit/sale-round.test.ts + scripts/test-sale-round.ts
-vi.mock("@/lib/sale-round-guard", () => ({
-  checkSaleAccess: vi.fn(async () => ({ allowed: true, round: null })),
-}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     concert: { findUnique: concertFindUnique },
     botEvent: { create: botEventCreate },
     queueToken: { create: queueTokenCreate },
     behaviorSession: { findFirst: behaviorFindFirst, upsert: behaviorUpsert },
+    saleRound: { findMany: saleRoundFindMany },
   },
 }));
 
@@ -74,6 +73,7 @@ describe("§3 join — behavior escalation (loop fix + poison scope)", () => {
     acquireInflight.mockResolvedValue("slot-1");
     checkRateLimit.mockResolvedValue({ allowed: true });
     concertFindUnique.mockResolvedValue({ status: "ON_SALE" });
+    saleRoundFindMany.mockResolvedValue([]); // ไม่มีรอบพรีเซล → ด่านรอบปล่อยผ่าน
     joinQueue.mockResolvedValue({ token: "tok", deduped: false, bucket: 0, random: 0 });
     botEventCreate.mockResolvedValue({});
     queueTokenCreate.mockResolvedValue({});

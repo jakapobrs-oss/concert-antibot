@@ -11,7 +11,7 @@ interface Zone {
 }
 
 interface Concert {
-  id: bigint;
+  // ไม่มี id โดยตั้งใจ — การ์ดลิงก์ด้วย slug อย่างเดียว และ BigInt ส่งข้ามไป client component ไม่ได้
   title: string;
   slug: string;
   venue: string;

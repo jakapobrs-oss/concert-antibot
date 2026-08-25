@@ -1,6 +1,6 @@
 // Admin dashboard (Phase 8) — สถิติรวม + anti-bot + queue + ลิงก์ไปรายงาน (โทนเวทีมืด)
 import Link from "next/link";
-import { Music2, Flame, Users, Ticket, ShieldCheck, BarChart3, ScanLine, Undo2, Gauge, Sparkles } from "lucide-react";
+import { Music2, Flame, Users, Ticket, ShieldCheck, BarChart3, ScanLine, Undo2, Gauge, BadgeCheck } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { EqBars } from "@/components/eq-bars";
@@ -150,9 +150,9 @@ export default async function AdminDashboard() {
               คุมคิว
             </Button>
           </Link>
-          <Link href="/admin/members">
-            <Button variant="outline" leftIcon={<Sparkles className="size-4" />}>
-              จัดการสมาชิก
+          <Link href="/admin/memberships">
+            <Button variant="outline" leftIcon={<BadgeCheck className="size-4" />}>
+              สิทธิ์สมาชิก
             </Button>
           </Link>
         </div>

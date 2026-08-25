@@ -1,165 +1,59 @@
 "use server";
 
 // ============================================================
-// Server Actions — สิทธิ์สมาชิก (Phase 2)
+// Membership / Subscription actions ฝั่งผู้ใช้ (Phase 2.2, docs/22)
 // ============================================================
-//   - signUpForMembership : ผู้ใช้กดสมัครเอง (ฟรี — ขอบเขตที่ตกลงไว้ ไม่มีการเก็บเงินค่าสมาชิก)
-//   - grantMembership     : แอดมินให้สิทธิ์
-//   - revokeMembership    : แอดมินเพิกถอนสิทธิ์
-//
-// ตรรกะการตัดสิน "ยังเป็นสมาชิกอยู่ไหม" อยู่ที่ lib/membership.ts (มีเทสหน่วยคุม)
-// ไฟล์นี้รับผิดชอบแค่ สิทธิ์ + ตรวจ input + เขียนฐานข้อมูล
+// สมัคร/ต่ออายุ "แพ็กเกจสมาชิก" + ยกเลิกการต่ออายุ
+//   💰 รอบนี้ยังไม่เก็บเงินจริง (ทีมเคาะ 2026-08-20) — ทุกแพ็กเกจราคา 0 บาท
+//      จุดเสียบระบบจ่ายเงินอยู่ที่ subscribeToPlan() ใน lib/subscription.ts (ดู docs/22 §6)
+// กติกา/ด่านตรวจทั้งหมดอยู่ใน lib/ (unit test คลุมแล้ว) — ที่นี่ทำแค่ auth + validate + revalidate
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
-
-import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { assertVerifiedAdmin } from "@/lib/admin-guard";
-import { addDays, describeMembership, SELF_SIGNUP_DURATION_DAYS } from "@/lib/membership";
+import { subscribeToPlan, cancelSubscription } from "@/lib/subscription";
 
-export type MembershipActionResult = { ok: true; message: string } | { ok: false; error: string };
-
-const idSchema = z.string().regex(/^\d+$/, "รหัสไม่ถูกต้อง");
+const planSchema = z.string().trim().min(1).max(40);
 
 async function sessionUserId(): Promise<string | null> {
   const session = await auth();
   return (session?.user as { id?: string } | undefined)?.id ?? null;
 }
 
-/**
- * ผู้ใช้กดสมัครสมาชิกเอง
- *
- * ใช้ upsert เพราะตาราง memberships มี userId เป็น unique — คนเดียวมีได้แถวเดียว
- * กรณีที่ต้องรองรับ: เคยถูกเพิกถอน/หมดอายุแล้วมาสมัครใหม่ → เขียนทับแถวเดิมให้กลับมา ACTIVE
- * (ล้าง revokedAt ด้วย ไม่งั้นแถวจะขัดแย้งกันเอง: ACTIVE แต่มีเวลาเพิกถอนค้างอยู่)
- */
-export async function signUpForMembership(): Promise<MembershipActionResult> {
+export type SubscribeActionResult =
+  | { ok: true; planName: string; expiresAt: string }
+  | { ok: false; error: string };
+
+export async function subscribeToPlanAction(input: {
+  planCode: string;
+}): Promise<SubscribeActionResult> {
   const userId = await sessionUserId();
-  if (!userId) return { ok: false, error: "ต้องเข้าสู่ระบบก่อน" };
+  if (!userId) return { ok: false, error: "กรุณาเข้าสู่ระบบ" };
 
-  const now = new Date();
-  const existing = await prisma.membership.findUnique({ where: { userId: BigInt(userId) } });
-  if (describeMembership(existing, now).active) {
-    return { ok: false, error: "คุณเป็นสมาชิกอยู่แล้ว" };
-  }
+  const parsed = planSchema.safeParse(input.planCode);
+  if (!parsed.success) return { ok: false, error: "ไม่พบแพ็กเกจนี้" };
 
-  const expiresAt = addDays(now, SELF_SIGNUP_DURATION_DAYS);
-  await prisma.membership.upsert({
-    where: { userId: BigInt(userId) },
-    create: {
-      userId: BigInt(userId),
-      status: "ACTIVE",
-      source: "SELF_SIGNUP",
-      startedAt: now,
-      expiresAt,
-    },
-    update: {
-      status: "ACTIVE",
-      source: "SELF_SIGNUP",
-      startedAt: now,
-      expiresAt,
-      revokedAt: null,
-      grantedByUserId: null,
-    },
-  });
+  const res = await subscribeToPlan({ userId, planCode: parsed.data });
+  if (!res.ok) return res;
 
   revalidatePath("/account/membership");
-  return { ok: true, message: "สมัครสมาชิกเรียบร้อย — ใช้สิทธิ์เข้ารอบสมาชิกได้ทันที" };
-}
-
-/**
- * แอดมินให้สิทธิ์สมาชิก
- *
- * `durationDays = 0` หมายถึงไม่มีกำหนดหมดอายุ (expiresAt = null) ตามที่ lib/membership.ts ตีความ
- */
-export async function grantMembership(input: {
-  userId: string;
-  durationDays: number;
-}): Promise<MembershipActionResult> {
-  const admin = await assertVerifiedAdmin();
-  const adminId = (admin.user as { id?: string } | undefined)?.id;
-
-  const parsed = z
-    .object({
-      userId: idSchema,
-      durationDays: z
-        .number()
-        .int("จำนวนวันต้องเป็นจำนวนเต็ม")
-        .min(0, "จำนวนวันติดลบไม่ได้")
-        .max(3650, "จำนวนวันมากเกินไป"),
-    })
-    .safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
-  }
-  const { userId, durationDays } = parsed.data;
-
-  const user = await prisma.user.findUnique({
-    where: { id: BigInt(userId) },
-    select: { id: true, email: true },
-  });
-  if (!user) return { ok: false, error: "ไม่พบผู้ใช้คนนี้" };
-
-  const now = new Date();
-  const expiresAt = durationDays === 0 ? null : addDays(now, durationDays);
-
-  await prisma.membership.upsert({
-    where: { userId: user.id },
-    create: {
-      userId: user.id,
-      status: "ACTIVE",
-      source: "ADMIN_GRANT",
-      startedAt: now,
-      expiresAt,
-      grantedByUserId: adminId ? BigInt(adminId) : null,
-    },
-    update: {
-      status: "ACTIVE",
-      source: "ADMIN_GRANT",
-      startedAt: now,
-      expiresAt,
-      revokedAt: null,
-      grantedByUserId: adminId ? BigInt(adminId) : null,
-    },
-  });
-
-  revalidatePath("/admin/members");
   return {
     ok: true,
-    message: `ให้สิทธิ์สมาชิกกับ ${user.email} แล้ว${
-      expiresAt ? ` (ถึง ${expiresAt.toLocaleDateString("th-TH")})` : " (ไม่มีกำหนดหมดอายุ)"
-    }`,
+    planName: res.subscription.planName,
+    expiresAt: res.subscription.expiresAt.toISOString(),
   };
 }
 
-/**
- * แอดมินเพิกถอนสิทธิ์
- *
- * ไม่ลบแถวทิ้ง — เก็บไว้เป็นประวัติว่าเคยเป็นสมาชิกและถูกเพิกถอนเมื่อไหร่
- * (ต่างจาก "หมดอายุ" ที่ดูจาก expiresAt — ผู้ใช้ควรเห็นเหตุผลที่ต่างกันบนหน้าสถานะ)
- */
-export async function revokeMembership(input: { userId: string }): Promise<MembershipActionResult> {
-  await assertVerifiedAdmin();
+export type CancelActionResult =
+  | { ok: true; usableUntil: string | null }
+  | { ok: false; error: string };
 
-  const parsed = z.object({ userId: idSchema }).safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
-  }
+export async function cancelSubscriptionAction(): Promise<CancelActionResult> {
+  const userId = await sessionUserId();
+  if (!userId) return { ok: false, error: "กรุณาเข้าสู่ระบบ" };
 
-  const membership = await prisma.membership.findUnique({
-    where: { userId: BigInt(parsed.data.userId) },
-    include: { user: { select: { email: true } } },
-  });
-  if (!membership) return { ok: false, error: "ผู้ใช้คนนี้ไม่มีสิทธิ์สมาชิกอยู่แล้ว" };
-  if (membership.status === "REVOKED") {
-    return { ok: false, error: "สิทธิ์ถูกเพิกถอนไปแล้ว" };
-  }
+  const res = await cancelSubscription({ userId });
+  if (!res.ok) return res;
 
-  await prisma.membership.update({
-    where: { userId: membership.userId },
-    data: { status: "REVOKED", revokedAt: new Date() },
-  });
-
-  revalidatePath("/admin/members");
-  return { ok: true, message: `เพิกถอนสิทธิ์สมาชิกของ ${membership.user.email} แล้ว` };
+  revalidatePath("/account/membership");
+  return { ok: true, usableUntil: res.usableUntil ? res.usableUntil.toISOString() : null };
 }
