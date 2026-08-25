@@ -78,7 +78,7 @@ Root `README.md` (ไม่ใช่ `docs/00_README.md`) **ยังเขี�
 
 ## Test layout
 
-- **Unit**: `tests/unit/*.test.ts` — 34 ไฟล์, 385 cases (รันจริง 2026-08-25), Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
+- **Unit**: `tests/unit/*.test.ts` — 34 ไฟล์, 391 cases (รันจริง 2026-08-25), Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
 - **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (12 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลือดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ
   - 4 ไฟล์ล่าสุดเป็น **เทสบนเบราว์เซอร์จริง** ต้องมี dev server รันอยู่ + ส่ง `E2E_BASE` ถ้าไม่ใช่พอร์ต 3000: `pnpm test:seatmap` (แอดมิน 43 เช็ค) · `pnpm test:seatmap-buyer` (คนซื้อ 27 เช็ค) · `pnpm test:sale-round` (สมาชิก+รอบ 22 เช็ค) · `pnpm test:purchase-antibot` (ด่านบอทตอนซื้อ 7 เช็ค)
 - **Load**: `tests/load/queue.js` (k6) + `tests/load/concurrent-fairness.mjs` (Node/ioredis)
