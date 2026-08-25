@@ -31,6 +31,7 @@ import { TurnstileWidget } from "@/components/turnstile-widget";
 import { formatSeatLabel } from "@/lib/seatmap/seat-rows";
 import {
   distanceFromStage,
+  distanceToPolygonEdges,
   polygonPoleOfInaccessibility,
   stageSideAuto,
   type Polygon,
@@ -39,6 +40,7 @@ import {
 import {
   rowInsetFractions,
   seatGridRenderHints,
+  zoneLabelFontSize,
 } from "@/lib/seatmap/render-hints";
 
 export interface SvgSeat {
@@ -88,8 +90,12 @@ type SeatedMode = "best" | "manual";
 
 // ระดับซูม — ผังสนามจริงมีโซนเล็ก ๆ ริมขอบที่ชื่อโซนอ่านไม่ออกถ้าไม่ขยาย
 const ZOOM_STEPS = [1, 1.75, 2.5] as const;
-// ขนาดตัวอักษรชื่อโซนบนผัง = สัดส่วนของความกว้างรูป (ไม่ fix พิกเซล เพราะรูปคนละขนาดกัน)
+// เพดานขนาดตัวอักษรชื่อโซนบนผัง = สัดส่วนของความกว้างรูป (ไม่ fix พิกเซล เพราะรูปคนละขนาดกัน)
+// โซนที่เล็กกว่านี้จะได้ฟอนต์ย่อลงตามที่ว่างจริงในกรอบ (zoneLabelFontSize)
 const ZONE_LABEL_RATIO = 1 / 46;
+// เกณฑ์ต่ำสุดที่ยังอ่านชื่อโซนออกที่ซูม 1× — เล็กกว่านี้ไม่วาดชื่อ ปล่อยให้เห็นรูปผังแทน
+// หารด้วยระดับซูม: ซูมเข้าไปดูโซนเล็ก ชื่อจะทยอยโผล่ (นี่คือเหตุผลที่ปุ่มซูมมีอยู่)
+const ZONE_LABEL_MIN_RATIO = 1 / 110;
 // ความทึบของแผ่นสีทับโซน (เลขฐาน 16 ต่อท้ายรหัสสี) — ต้องเห็นสีชัดแต่ยังเห็นรูปผังข้างใต้
 const ZONE_FILL_ALPHA = "59"; // ~35%
 const ZONE_FILL_ALPHA_ACTIVE = "b3"; // ~70% สำหรับโซนที่กำลังชี้/โฟกัสอยู่
@@ -238,6 +244,45 @@ export function SeatMapSvg({
     () => new Map(orderedZones.map((item) => [item.zone.id, item.available])),
     [orderedZones],
   );
+
+  /**
+   * ป้ายชื่อโซนบนผังรวม — จุดวาง + ขนาดฟอนต์ที่ "พอดีกับที่ว่างในกรอบโซนจริง"
+   *
+   * ทำไมต้องคำนวณ ไม่ใช้ขนาดเดียวทั้งผัง: ผังจริงมี 69 โซน ขนาดต่างกันหลายเท่า
+   * ขนาดเดียวเท่ากันหมด = โซนเล็กชื่อล้นไปทับโซนข้าง ๆ จนอ่านผังไม่ออกทั้งใบ
+   * โซนที่เล็กจนชื่ออ่านไม่ออก (font = null) จะไม่วาดชื่อ — ยังกดได้ ยังมีชื่อใน tooltip/aria-label
+   */
+  const zoneLabels = useMemo(() => {
+    const maxFont = viewW * ZONE_LABEL_RATIO;
+    const minFont = (viewW * ZONE_LABEL_MIN_RATIO) / zoom;
+    return orderedZones.flatMap(({ zone, available }) => {
+      if (!zone.polygon || zone.polygon.length < 3) return [];
+      // วัดในหน่วยของ viewBox (คูณขนาดรูปก่อน) เพราะรูปไม่ได้จัตุรัส —
+      // ถ้าวัดในสัดส่วน 0-1 ตรง ๆ ระยะแนวตั้งกับแนวนอนจะคนละมาตราส่วน
+      const scaled = zone.polygon.map(
+        ([x, y]) => [x * viewW, y * viewH] as [number, number],
+      );
+      const point = polygonPoleOfInaccessibility(scaled);
+      const font = zoneLabelFontSize({
+        inradius: distanceToPolygonEdges(scaled, point),
+        nameLength: zone.name.length,
+        maxFont,
+        minFont,
+      });
+      return [
+        {
+          id: zone.id,
+          name: zone.name,
+          x: point[0],
+          y: point[1],
+          font,
+          soldOut: available === 0,
+          // ป้ายของโซนที่กำลังชี้อยู่ต้องอ่านออกเสมอ แม้โซนจะเล็กกว่าเกณฑ์
+          highlightFont: Math.max(font ?? 0, minFont),
+        },
+      ];
+    });
+  }, [orderedZones, viewW, viewH, zoom]);
 
   /**
    * คำอธิบายสี (legend) — ยุบโซนที่อยู่เรทเดียวกันเหลือจุดสี + ราคา
@@ -699,7 +744,6 @@ export function SeatMapSvg({
                   const soldOut = available === 0;
                   const isHighlighted = zone.id === highlightZoneId;
                   const baseColor = soldOut ? SOLD_OUT_COLOR : zone.color;
-                  const labelPoint = polygonPoleOfInaccessibility(zone.polygon);
                   return (
                     <g
                       key={zone.id}
@@ -747,25 +791,37 @@ export function SeatMapSvg({
                         stroke={isHighlighted ? "#ffffff" : baseColor}
                         strokeWidth={(viewW / 500) * (isHighlighted ? 2.5 : 1)}
                       />
-                      <text
-                        x={labelPoint[0] * viewW}
-                        y={labelPoint[1] * viewH}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fontSize={labelSize}
-                        fill="#ffffff"
-                        opacity={soldOut ? 0.5 : 1}
-                        className="pointer-events-none select-none font-display font-semibold"
-                        // ขอบดำจาง ๆ รอบตัวอักษร — กันชื่อโซนกลืนกับสีพื้นที่แอดมินตั้งให้ตรงกับรูป
-                        style={{
-                          paintOrder: "stroke",
-                          stroke: "#00000099",
-                          strokeWidth: labelSize / 6,
-                        }}
-                      >
-                        {zone.name}
-                      </text>
                     </g>
+                  );
+                })}
+
+                {/* ---- ชื่อโซน: วาดรวบทีเดียวหลังกรอบทุกโซน ----
+                    เดิมชื่ออยู่ในกลุ่มของโซนตัวเอง โซนที่วาดทีหลังจึงทับชื่อโซนก่อนหน้าได้
+                    แยกมาวาดชั้นบนสุด = ชื่อที่ตัดสินใจแล้วว่าจะวาด ต้องอ่านออกจริงเสมอ */}
+                {zoneLabels.map((label) => {
+                  const isHighlighted = label.id === highlightZoneId;
+                  const font = isHighlighted ? label.highlightFont : label.font;
+                  if (!font) return null;
+                  return (
+                    <text
+                      key={label.id}
+                      x={label.x}
+                      y={label.y}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={font}
+                      fill="#ffffff"
+                      opacity={label.soldOut ? 0.5 : 1}
+                      className="pointer-events-none select-none font-display font-semibold"
+                      // ขอบดำจาง ๆ รอบตัวอักษร — กันชื่อโซนกลืนกับสีพื้นที่แอดมินตั้งให้ตรงกับรูป
+                      style={{
+                        paintOrder: "stroke",
+                        stroke: "#00000099",
+                        strokeWidth: font / 6,
+                      }}
+                    >
+                      {label.name}
+                    </text>
                   );
                 })}
               </svg>

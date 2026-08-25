@@ -170,7 +170,12 @@ function distanceToSegment(point: Point, start: Point, end: Point): number {
   return Math.hypot(point[0] - closestX, point[1] - closestY);
 }
 
-function distanceToPolygonEdges(polygon: Polygon, point: Point): number {
+/**
+ * ระยะจากจุดหนึ่งไปขอบกรอบที่ใกล้ที่สุด
+ * ใช้คู่กับ polygonPoleOfInaccessibility เพื่อวัดว่า "โซนนี้มีที่ว่างพอเขียนชื่อลงไปแค่ไหน"
+ * (คิดในหน่วยเดียวกับ polygon ที่ส่งเข้ามา — ส่งกรอบที่คูณขนาดรูปแล้วถ้าอยากได้หน่วยพิกเซล)
+ */
+export function distanceToPolygonEdges(polygon: Polygon, point: Point): number {
   let shortest = Number.POSITIVE_INFINITY;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     shortest = Math.min(shortest, distanceToSegment(point, polygon[j], polygon[i]));

@@ -18,6 +18,7 @@ import {
   relativeLuminance,
   rowInsetFractions,
   seatGridRenderHints,
+  zoneLabelFontSize,
   seatOutline,
 } from "@/lib/seatmap/render-hints";
 
@@ -337,5 +338,48 @@ describe("rowInsetFractions — ระยะร่นซ้ายรายแถ
     expect(rowInsetFractions(V3, "left", [5, 5])).toEqual([0, 0]);
     expect(rowInsetFractions(V3, "right", [5, 5])).toEqual([0, 0]);
     expect(rowInsetFractions(V3, "top", [])).toEqual([]);
+  });
+});
+
+// ============================================================
+// zoneLabelFontSize — ชื่อโซนบนผังรวมต้องพอดีกรอบ ไม่ล้นไปทับโซนอื่น
+// ============================================================
+// ที่มา: ผังจริง 69 โซน เคยวาดชื่อขนาดเดียวกันหมด โซนเล็กริมขอบชื่อล้นทับกันจนมองผังไม่ออก
+describe("zoneLabelFontSize — ย่อชื่อโซนตามที่ว่างจริงในกรอบ", () => {
+  const base = { nameLength: 2, maxFont: 22, minFont: 9 };
+
+  it("โซนใหญ่ได้ขนาดเต็มเพดาน ไม่ขยายเกินจนดูเทอะทะ", () => {
+    expect(zoneLabelFontSize({ ...base, inradius: 200 })).toBe(22);
+  });
+
+  it("โซนเล็กลงได้ฟอนต์เล็กลงตาม ไม่ใช่ขนาดเดียวกับโซนใหญ่", () => {
+    const small = zoneLabelFontSize({ ...base, inradius: 10 });
+    expect(small).not.toBeNull();
+    expect(small!).toBeLessThan(22);
+    expect(small!).toBeGreaterThanOrEqual(9);
+  });
+
+  it("โซนเล็กจนชื่ออ่านไม่ออก → null (ไม่วาดชื่อ ปล่อยให้เห็นรูปผัง)", () => {
+    expect(zoneLabelFontSize({ ...base, inradius: 4 })).toBeNull();
+  });
+
+  it("ชื่อยาวกว่าได้ฟอนต์เล็กกว่าที่ว่างเท่ากัน (กันชื่อยาวล้นออกด้านข้าง)", () => {
+    const room = { inradius: 30, maxFont: 40, minFont: 9 };
+    const short = zoneLabelFontSize({ ...room, nameLength: 2 });
+    const long = zoneLabelFontSize({ ...room, nameLength: 6 });
+    expect(short).not.toBeNull();
+    expect(long).not.toBeNull();
+    expect(long!).toBeLessThan(short!);
+  });
+
+  it("ซูมเข้า (minFont ต่ำลง) ทำให้โซนที่เคยถูกซ่อนได้ชื่อกลับมา", () => {
+    expect(zoneLabelFontSize({ ...base, inradius: 4 })).toBeNull();
+    expect(zoneLabelFontSize({ ...base, inradius: 4, minFont: 3.6 })).not.toBeNull();
+  });
+
+  it("ข้อมูลกรอบพัง/ชื่อว่าง → null ไม่ใช่ NaN บน SVG", () => {
+    expect(zoneLabelFontSize({ ...base, inradius: 0 })).toBeNull();
+    expect(zoneLabelFontSize({ ...base, inradius: Number.NaN })).toBeNull();
+    expect(zoneLabelFontSize({ ...base, inradius: 50, nameLength: 0 })).toBeNull();
   });
 });
