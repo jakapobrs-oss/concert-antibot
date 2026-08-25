@@ -16,7 +16,12 @@
 // ♿ ทางเลือกที่ไม่ใช้เมาส์: กรอบโซนบนรูปเป็นปุ่มจริง (tabIndex + role=button)
 //    กด Tab ไล่ทีละโซน / Enter หรือ Space เพื่อเปิด — แทนรายการปุ่มโซนแบบเดิมที่ถูกถอดออก
 //    ส่วนที่นั่งในชั้น 2 เป็น <button> จริงใน HTML อยู่แล้ว
-import { useMemo, useState } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, X, ZoomIn, ZoomOut } from "lucide-react";
 
@@ -211,6 +216,59 @@ export function SeatMapSvg({
     null,
   );
   const [zoomIndex, setZoomIndex] = useState(0);
+
+  // ---- ลากผังด้วยคลิกขวาค้าง (แทนการไล่แถบเลื่อน) ----
+  // ทำไมปุ่มขวา: ปุ่มซ้ายถูกจองไว้ให้ "กดเลือกโซน" แล้ว ถ้าเอาปุ่มซ้ายมาลากด้วย
+  // ต้องเดาใจว่าคนตั้งใจลากหรือตั้งใจกดโซน ซึ่งเดาพลาดแล้วเปิดโซนผิดโดยไม่ได้ตั้งใจ
+  // แถบเลื่อนเดิมยังอยู่ครบ — อันนี้เป็นทางลัดเพิ่ม ไม่ใช่ของแทน
+  const panBoxRef = useRef<HTMLDivElement | null>(null);
+  const panStart = useRef<{
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+  } | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+
+  function startPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 2) return; // เฉพาะปุ่มขวา
+    const box = panBoxRef.current;
+    if (!box) return;
+    panStart.current = {
+      x: event.clientX,
+      y: event.clientY,
+      left: box.scrollLeft,
+      top: box.scrollTop,
+    };
+    setIsPanning(true);
+    // จับ pointer ไว้กับกรอบผัง เพื่อให้ลากเลยขอบกรอบออกไปแล้วยังลากต่อได้
+    // ถ้าจับไม่ได้ (เบราว์เซอร์ปล่อย pointer ไปแล้ว) ก็ยังลากในกรอบได้ตามปกติ ไม่ต้องล้ม
+    try {
+      box.setPointerCapture(event.pointerId);
+    } catch {
+      // ไม่ต้องทำอะไร — เสียแค่ความสามารถลากเลยขอบกรอบ
+    }
+    event.preventDefault();
+  }
+
+  function movePan(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = panStart.current;
+    const box = panBoxRef.current;
+    if (!start || !box) return;
+    // ลากไปทางไหน ผังต้องตามมือไปทางนั้น -> เลื่อนสวนทางกับระยะที่เมาส์ขยับ
+    box.scrollLeft = start.left - (event.clientX - start.x);
+    box.scrollTop = start.top - (event.clientY - start.y);
+  }
+
+  function endPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!panStart.current) return;
+    panStart.current = null;
+    setIsPanning(false);
+    const box = panBoxRef.current;
+    if (box?.hasPointerCapture(event.pointerId)) {
+      box.releasePointerCapture(event.pointerId);
+    }
+  }
 
   // เพดานเลือกจริงของ user คนนี้ = ลิมิตต่อบัญชี หักโควตาที่ใช้ไปแล้ว
   const effectiveMax = Math.min(maxSeats, remainingQuota);
@@ -662,6 +720,13 @@ export function SeatMapSvg({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="min-w-0 text-sm text-fg-faint">
               แตะโซนบนผังเพื่อเลือกที่นั่ง
+              {/* บอกทางลัดเฉพาะตอนซูมเข้า — ตอนผังพอดีจอไม่มีอะไรให้เลื่อน จะบอกไปก็สับสน */}
+              {zoom > 1 && (
+                <span className="hidden sm:inline">
+                  {" "}
+                  · คลิกขวาค้างแล้วลากเพื่อเลื่อนผัง
+                </span>
+              )}
             </p>
             <div className="flex items-center gap-1.5">
               <Button
@@ -692,8 +757,19 @@ export function SeatMapSvg({
             </div>
           </div>
 
-          {/* ซูมแล้วเลื่อนดูได้ — ไม่ให้ผังล้นออกนอกหน้าจอ */}
-          <div className="overflow-auto rounded-xl border border-fg/10 bg-ink-950">
+          {/* ซูมแล้วเลื่อนดูได้ — ไม่ให้ผังล้นออกนอกหน้าจอ (แถบเลื่อน หรือคลิกขวาลาก) */}
+          <div
+            ref={panBoxRef}
+            className={`overflow-auto rounded-xl border border-fg/10 bg-ink-950 ${
+              isPanning ? "cursor-grabbing select-none" : ""
+            }`}
+            onPointerDown={startPan}
+            onPointerMove={movePan}
+            onPointerUp={endPan}
+            onPointerCancel={endPan}
+            // ปิดเมนูคลิกขวาบนผัง ไม่งั้นเมนูเด้งทุกครั้งที่ปล่อยมือหลังลากเสร็จ
+            onContextMenu={(event) => event.preventDefault()}
+          >
             <div className="relative" style={{ width: `${zoom * 100}%` }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
