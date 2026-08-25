@@ -20,7 +20,8 @@
 ### หลักฐาน
 - `pnpm typecheck` ✅ · `pnpm lint` ✅ (warning เดิม 1 จุดใน prototype) · `pnpm test:run` **39 ไฟล์ / 537 เคส ✅** (391 seatmap + 146 presale)
 - `prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma` บน shadow DB local: **No difference detected**
-- ⏳ ยังไม่ได้รันกับโค้ดหลัง merge: สคริปต์เบราว์เซอร์ `pnpm test:seatmap` / `test:seatmap-buyer` / `test:purchase-antibot` — ควรรันบน preview ก่อน push master
+- ยกเซิร์ฟเวอร์จริงจากโค้ดหลัง merge (dev บน DB/Redis แยก) แล้วรันสคริปต์เบราว์เซอร์ครบ: `test:seatmap` **43/43** · `test:seatmap-buyer` **27/27** · `test:purchase-antibot` **7/7** · `test:sale-round` (ใหม่ 10 เช็ค: NOT_MEMBER ที่ด่านคิว/หน้าเลือกที่นั่ง/holdAndCreateOrder + เพดาน 2 ใบของรอบ + order ผูก saleRoundId) **10/10** · `test:race` **22/22**
+- 🐛 **บั๊กที่เจอเฉพาะตอนรันจริง (`next build` ผ่านแต่ dev server ไม่ขึ้น)**: Next.js ห้ามใช้ชื่อ slug ต่างกันใต้ path เดียวกัน — สาย seatmap มี `app/api/concerts/[id]/zones/[zoneId]/seats` แต่สาย presale เพิ่ม `app/api/concerts/[concertId]/rounds` → `Error: You cannot use different slug names for the same dynamic path ('concertId' !== 'id')` → ย้ายเป็น `app/api/concerts/[id]/rounds/route.ts` (URL เดิม client ไม่ต้องแก้)
 
 ---
 

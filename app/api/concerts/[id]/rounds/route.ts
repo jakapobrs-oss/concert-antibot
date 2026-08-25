@@ -1,4 +1,4 @@
-// GET /api/concerts/[concertId]/rounds — ไทม์ไลน์รอบกดบัตร + สถานะของ "ผู้ใช้ที่เรียก"
+// GET /api/concerts/[id]/rounds — ไทม์ไลน์รอบกดบัตร + สถานะของ "ผู้ใช้ที่เรียก"
 // ทำเป็น API แยกเพราะหน้า /concerts/[slug] เป็นหน้า cache (revalidate 60) —
 //   ข้อมูลรายบุคคล (เป็นสมาชิกไหม / ลงทะเบียนหรือยัง / ปลดล็อกโค้ดแล้วหรือยัง) ห้ามติดแคชร่วมกัน
 import { NextResponse } from "next/server";
@@ -27,9 +27,11 @@ const GUEST_CTX: UserRoundContext = {
 
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ concertId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { concertId } = await params;
+  // ชื่อ segment ต้องเป็น [id] ให้ตรงกับ app/api/concerts/[id]/zones/... ของสาย seatmap
+  // (Next.js ห้ามใช้ชื่อ slug ต่างกันใต้ path เดียวกัน — เจอตอนยก dev server หลัง merge 2026-08-25)
+  const { id: concertId } = await params;
   if (!/^\d+$/.test(concertId)) {
     return NextResponse.json({ error: "ไม่พบคอนเสิร์ต" }, { status: 404 });
   }
