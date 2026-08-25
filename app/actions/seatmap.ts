@@ -23,7 +23,13 @@ import {
   parseRowSpec,
   type SeatSpot,
 } from "@/lib/seatmap/seat-rows";
-import { parsePolygon, type Polygon, type StageSide } from "@/lib/seatmap/polygon";
+import {
+  parsePolygon,
+  stageSideAuto,
+  type Polygon,
+  type StageSide,
+} from "@/lib/seatmap/polygon";
+import { suggestRowSpec } from "@/lib/seatmap/row-spec-suggest";
 import { hasSignificantAspectRatioChange } from "@/lib/seatmap/aspect-ratio";
 import { readZoneSheet } from "@/lib/seatmap/zone-sheet-xlsx";
 import { canRegenerateZoneSeats, type ExistingSeatState } from "@/lib/seatmap/guard";
@@ -679,5 +685,115 @@ export async function importZonesFromSheet(input: {
     message: `นำเข้าสำเร็จ — สร้างใหม่ ${created} โซน อัปเดต ${updated} โซน (${sheet.tiers.length} เรทราคา)`,
     skipped,
     notInFile,
+  };
+}
+
+/**
+ * เสนอ "ที่นั่งต่อแถว" จากกรอบโซนแล้วบันทึกให้ทีเดียวหลายโซน (ระดับ A: เครื่องเสนอ คนแก้ทับได้)
+ *
+ * ทำไมต้องมีแบบยกชุด: ผังจริง 69 โซน กดทีละโซนก็ 69 รอบ — แต่การ "เจนที่นั่งใหม่" มีผลกับที่นั่งเดิม
+ * จึงเดินผ่านด่านเดียวกับ saveZoneRowSpec ทุกโซน (regenerationVerdict: ขายแล้ว/จองค้าง = ข้าม ไม่แตะ)
+ * และทำทีละโซนใน transaction แยกกัน — โซนที่ผ่านก็ผ่าน โซนที่ติดด่านก็รายงานชื่อกลับไป
+ *
+ * onlyMissing=true (ค่าปกติ) = แตะเฉพาะโซนที่ยังไม่เคยกำหนดที่นั่งต่อแถว
+ * ไม่ทับของที่แอดมินตั้งใจกรอกมาจาก Excel
+ */
+export async function applySuggestedRowSpecs(input: {
+  concertId: string;
+  onlyMissing?: boolean;
+}): Promise<SeatmapActionResult> {
+  await assertVerifiedAdmin();
+
+  const parsed = z
+    .object({ concertId: idSchema, onlyMissing: z.boolean().default(true) })
+    .safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
+  }
+  const concertId = BigInt(parsed.data.concertId);
+
+  const concert = await prisma.concert.findUnique({
+    where: { id: concertId },
+    select: {
+      layoutImageWidth: true,
+      layoutImageHeight: true,
+      stagePolygon: true,
+      zones: {
+        select: {
+          id: true,
+          name: true,
+          totalSeats: true,
+          isStanding: true,
+          polygon: true,
+          stageSide: true,
+          rowSpec: true,
+        },
+        orderBy: { id: "asc" },
+      },
+    },
+  });
+  if (!concert) return { ok: false, error: "ไม่พบคอนเสิร์ต" };
+
+  const stagePolygon = parsePolygon(concert.stagePolygon);
+  const applied: string[] = [];
+  const skipped: string[] = [];
+
+  for (const zone of concert.zones) {
+    if (zone.isStanding) continue; // โซนยืนไม่มีแถว
+    if (parsed.data.onlyMissing && zone.rowSpec !== null) continue; // เคารพค่าที่แอดมินกรอกไว้แล้ว
+    const polygon = parsePolygon(zone.polygon);
+    if (!polygon) {
+      skipped.push(`${zone.name} (ยังไม่มีกรอบ)`);
+      continue;
+    }
+
+    const spec = suggestRowSpec({
+      polygon,
+      stageSide:
+        (zone.stageSide as StageSide | null) ?? stageSideAuto(polygon, stagePolygon),
+      seatCount: zone.totalSeats,
+      imageWidth: concert.layoutImageWidth ?? 0,
+      imageHeight: concert.layoutImageHeight ?? 0,
+    });
+    if (!spec) {
+      skipped.push(`${zone.name} (คำนวณไม่ได้)`);
+      continue;
+    }
+
+    // ด่านเดียวกับการจัดแถวรายโซน — ที่นั่งที่มีภาระผูกพันห้ามถูกลบทิ้ง
+    const verdict = await regenerationVerdict(zone.id);
+    if (!verdict.allowed) {
+      skipped.push(`${zone.name} (${verdict.reason})`);
+      continue;
+    }
+
+    const seats = buildSeatRowsFromSpec(spec);
+    await prisma.$transaction(async (tx) => {
+      await replaceSeats(tx, zone.id, seats);
+      await tx.zone.update({
+        where: { id: zone.id },
+        data: { rowSpec: JSON.stringify(spec) },
+      });
+    });
+    applied.push(zone.name);
+  }
+
+  revalidatePath(`/admin/concerts/${parsed.data.concertId}`);
+  revalidatePath(`/admin/concerts/${parsed.data.concertId}/seatmap`);
+
+  if (applied.length === 0) {
+    return {
+      ok: false,
+      error:
+        skipped.length > 0
+          ? `ไม่ได้จัดแถวโซนไหนเลย — ${skipped.join(", ")}`
+          : "ไม่มีโซนที่ต้องเสนอ (ทุกโซนกำหนดที่นั่งต่อแถวไว้แล้ว หรือเป็นโซนยืน)",
+    };
+  }
+  return {
+    ok: true,
+    message:
+      `เสนอและจัดแถวให้ ${applied.length} โซนแล้ว — ตรวจ/แก้ทับได้ที่ปุ่ม "จัดแถว" ของแต่ละโซน` +
+      (skipped.length > 0 ? ` · ข้าม ${skipped.length} โซน: ${skipped.join(", ")}` : ""),
   };
 }

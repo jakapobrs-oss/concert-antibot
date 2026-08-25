@@ -26,6 +26,7 @@ import {
   FileSpreadsheet,
   Download,
   Theater,
+  Sparkles,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -56,8 +57,10 @@ import {
   setZoneStageSide,
   saveStagePolygon,
   importZonesFromSheet,
+  applySuggestedRowSpecs,
 } from "@/app/actions/seatmap";
 import { MAX_ROWS, rowLabelFor } from "@/lib/seatmap/seat-rows";
+import { suggestRowSpec } from "@/lib/seatmap/row-spec-suggest";
 
 interface ZoneView {
   id: string;
@@ -203,6 +206,10 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
   const [manualRowSpec, setManualRowSpec] = useState("");
   const [rowEditorZoneId, setRowEditorZoneId] = useState<string | null>(null);
   const [rowDrafts, setRowDrafts] = useState<string[]>([]);
+  // จำนวนแถวที่แอดมินอยากให้ "เสนอจากกรอบ" — ว่าง = ให้ระบบเลือกจากสัดส่วนกรอบ
+  const [suggestRowCount, setSuggestRowCount] = useState("");
+  // ปุ่มยกชุดต้องกด 2 ครั้ง (ครั้งแรกเปลี่ยนเป็น "ยืนยัน") เพราะมันเจนที่นั่งใหม่หลายโซนพร้อมกัน
+  const [bulkSuggestArmed, setBulkSuggestArmed] = useState(false);
   const [zoomIndex, setZoomIndex] = useState(0);
   const [stageSideDrafts, setStageSideDrafts] = useState<
     Record<string, "auto" | StageSide>
@@ -607,6 +614,39 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
     }
   }
 
+  /** เสนอที่นั่งต่อแถวจากกรอบโซน — เติมลงช่องให้แอดมินตรวจ/แก้ก่อน ยังไม่บันทึกอะไร */
+  function handleSuggestRows(zone: ZoneView) {
+    const rowCountText = suggestRowCount.trim();
+    const spec = suggestRowSpec({
+      polygon: zone.polygon,
+      stageSide: zone.stageSide ?? automaticStageSides.get(zone.id) ?? null,
+      seatCount: zone.totalSeats,
+      imageWidth: viewW,
+      imageHeight: viewH,
+      rowCount: rowCountText ? Number(rowCountText) : undefined,
+    });
+    if (!spec) {
+      setFeedback({ ok: false, text: "เสนอไม่ได้ — โซนนี้ต้องมีกรอบบนรูปก่อน" });
+      return;
+    }
+    setRowDrafts(spec.map(String));
+    setFeedback({
+      ok: true,
+      text: `เสนอ ${spec.length} แถวจากรูปทรงกรอบโซน "${zone.name}" — ตรวจตัวเลขแล้วกด "บันทึกการจัดแถว"`,
+    });
+  }
+
+  /** เสนอ + บันทึกให้ทุกโซนที่ยังไม่กำหนดแถว (ฝั่ง server ข้ามโซนที่ขายแล้ว/จองค้างให้เอง) */
+  async function handleBulkSuggest() {
+    setBusy(true);
+    setFeedback(null);
+    const result = await applySuggestedRowSpecs({ concertId, onlyMissing: true });
+    setFeedback({ ok: result.ok, text: result.ok ? result.message : result.error });
+    setBusy(false);
+    setBulkSuggestArmed(false);
+    if (result.ok) startTransition(() => router.refresh());
+  }
+
   /** บันทึกกรอบเวที — ส่ง null เพื่อลบเวทีออกจากผัง */
   async function handleSaveStage(polygon: Polygon | null) {
     if (polygon && polygon.length < 3) {
@@ -677,6 +717,10 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
 
   const working = busy || pending;
   const zonesWithoutFrame = zones.filter((zone) => !zone.polygon).length;
+  // โซนที่ปุ่ม "เสนอจัดแถวยกชุด" จะแตะ: นั่งได้ + มีกรอบ + ยังไม่เคยกำหนดที่นั่งต่อแถว
+  const zonesNeedingRowSpec = zones.filter(
+    (zone) => !zone.isStanding && zone.polygon !== null && zone.rowSpec === null,
+  ).length;
   const editingZone = editingZoneId
     ? zones.find((zone) => zone.id === editingZoneId) ?? null
     : null;
@@ -715,6 +759,36 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
 
     return (
       <div className="mt-3 rounded-lg border border-brand-400/20 bg-ink-850 p-3">
+        {/* เสนอจากกรอบ: เครื่องแจกที่นั่งตามรูปทรงโซน แล้วคนแก้ทับก่อนบันทึก */}
+        <div className="mb-2 flex items-center gap-2">
+          <Input
+            type="number"
+            min={1}
+            max={MAX_ROWS}
+            step={1}
+            value={suggestRowCount}
+            disabled={working}
+            placeholder="จำนวนแถว (ว่าง = อัตโนมัติ)"
+            onChange={(event) => setSuggestRowCount(event.target.value)}
+            aria-label="จำนวนแถวที่ต้องการให้เสนอ"
+            className="min-w-0 flex-1"
+          />
+          <Button
+            type="button"
+            variant="subtle"
+            size="sm"
+            disabled={working || !zone.polygon}
+            title={
+              zone.polygon
+                ? "แจกที่นั่งรวมลงแถวตามรูปทรงกรอบโซนบนรูป — แก้ตัวเลขได้ก่อนบันทึก"
+                : "ต้องวาดกรอบให้โซนนี้ก่อน"
+            }
+            onClick={() => handleSuggestRows(zone)}
+          >
+            <Sparkles className="size-3.5" aria-hidden />
+            เสนอจากกรอบ
+          </Button>
+        </div>
         <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
           {rowDrafts.map((value, index) => (
             <div key={index} className="flex items-center gap-2">
@@ -1341,6 +1415,37 @@ export function SeatmapEditor({ concertId, layout, stagePolygon, zones }: Props)
             <p className="mb-3 text-xs text-warning">
               ยังไม่ได้วาดกรอบ {zonesWithoutFrame} โซน — ผังฝั่งคนซื้อจะยังไม่ใช้รูปนี้จนกว่าจะครบทุกโซน
             </p>
+          )}
+          {zonesNeedingRowSpec > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              <Button
+                type="button"
+                variant={bulkSuggestArmed ? "primary" : "subtle"}
+                size="sm"
+                loading={working}
+                disabled={working}
+                title="ใช้กับโซนที่มีกรอบแต่ยังไม่กำหนดที่นั่งต่อแถวเท่านั้น — โซนที่ขายแล้ว/จองค้างจะถูกข้าม"
+                onClick={() =>
+                  bulkSuggestArmed ? handleBulkSuggest() : setBulkSuggestArmed(true)
+                }
+              >
+                <Sparkles className="size-3.5" aria-hidden />
+                {bulkSuggestArmed
+                  ? `ยืนยัน — เจนที่นั่งใหม่ ${zonesNeedingRowSpec} โซนตามกรอบ`
+                  : `เสนอจัดแถวจากกรอบให้ ${zonesNeedingRowSpec} โซนที่ยังไม่กำหนด`}
+              </Button>
+              {bulkSuggestArmed && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={working}
+                  onClick={() => setBulkSuggestArmed(false)}
+                >
+                  ยกเลิก
+                </Button>
+              )}
+            </div>
           )}
           {zones.length === 0 ? (
             <p className="text-sm text-fg-faint">ยังไม่มีโซน — นำเข้าจากไฟล์ Excel ได้เลย</p>

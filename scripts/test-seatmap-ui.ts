@@ -459,6 +459,95 @@ async function main() {
     check("DB อัปเดตเป็นจำนวนใหม่", finalSeats === SEAT_COUNT_SECOND, `got ${finalSeats}`);
     await page.screenshot({ path: ".shots/seatmap-4-regenerated.png" });
 
+    // ---------- 8.5) เสนอ "ที่นั่งต่อแถว" จากกรอบโซน (ระดับ A: เครื่องเสนอ คนแก้ทับได้) ----------
+    // feedback box ตัวเดิมค้างข้อความก่อนหน้าอยู่ — ต้องรอ "ข้อความที่คาด" ไม่ใช่รอแค่กล่องโผล่
+    const waitFeedback = async (text: string): Promise<string> => {
+      const box = page.locator('[role="status"]', { hasText: text });
+      await box.waitFor({ timeout: 30_000 });
+      return (await box.innerText()).trim();
+    };
+
+    // 8.5a รายโซน: กด "จัดแถว" -> "เสนอจากกรอบ" ต้องเติมช่องให้ครบและรวมเท่าจำนวนที่นั่ง แล้วบันทึกได้
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "จัดแถว", exact: true }).first().click();
+    await page.getByRole("button", { name: "เสนอจากกรอบ", exact: true }).click();
+    const suggestMsg = await waitFeedback("แถวจากรูปทรงกรอบโซน");
+    check("ปุ่มเสนอจากกรอบเติมแถวให้และบอกให้ตรวจก่อนบันทึก", suggestMsg.includes("ตรวจตัวเลข"), suggestMsg);
+    const draftValues = await page
+      .locator('input[aria-label^="จำนวนที่นั่งแถว"]')
+      .evaluateAll((inputs) => inputs.map((input) => Number((input as HTMLInputElement).value)));
+    const draftTotal = draftValues.reduce((sum, value) => sum + value, 0);
+    check(
+      `ที่นั่งต่อแถวที่เสนอรวมได้ ${SEAT_COUNT_SECOND} พอดี และไม่มีแถวว่าง`,
+      draftValues.length >= 1 && draftTotal === SEAT_COUNT_SECOND && draftValues.every((v) => v >= 1),
+      `rows=${draftValues.length} total=${draftTotal}`
+    );
+    await page.getByRole("button", { name: "บันทึกการจัดแถว", exact: true }).click();
+    const saveRowsMsg = await waitFeedback("จัดแถวโซน");
+    check("บันทึกแถวที่เสนอได้ผ่านด่านเดิม (รวมเท่าจำนวนที่นั่ง)", saveRowsMsg.includes("แถว)"), saveRowsMsg);
+    const rowLabelsAfterSuggest = await prisma.seat.groupBy({
+      by: ["rowLabel"],
+      where: { zoneId: zone.id },
+      _count: { _all: true },
+    });
+    check(
+      "DB: ที่นั่งถูกเจนใหม่ตามแถวที่เสนอ (จำนวนแถวตรง ยอดรวมไม่เปลี่ยน)",
+      rowLabelsAfterSuggest.length === draftValues.length &&
+        rowLabelsAfterSuggest.reduce((sum, row) => sum + row._count._all, 0) === SEAT_COUNT_SECOND,
+      `rows=${rowLabelsAfterSuggest.length}`
+    );
+    await page.screenshot({ path: ".shots/seatmap-4b-suggested-rows.png" });
+
+    // 8.5b ยกชุด: ล้าง rowSpec ให้เหมือนโซนที่นำเข้าจาก Excel โดยไม่กรอกแถว -> ปุ่มยกชุดต้องเห็น 1 โซน
+    //     (โซนจาก Excel ยังไม่มีกรอบ -> ไม่นับ) กด 2 ครั้ง (ยืนยัน) แล้ว rowSpec ต้องถูกตั้งให้
+    await prisma.$executeRaw`UPDATE zones SET "rowSpec" = NULL WHERE id = ${zone.id}`;
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^เสนอจัดแถวจากกรอบให้ 1 โซน/ }).click();
+    await page.getByRole("button", { name: /^ยืนยัน — เจนที่นั่งใหม่ 1 โซน/ }).click();
+    const bulkMsg = await waitFeedback("เสนอและจัดแถวให้");
+    check("ยกชุด: เสนอ+บันทึกให้โซนที่ยังไม่กำหนดแถวได้ (นับเฉพาะโซนที่มีกรอบ)", bulkMsg.includes("1 โซนแล้ว"), bulkMsg);
+    const zoneAfterBulk = await prisma.zone.findUniqueOrThrow({
+      where: { id: zone.id },
+      select: { rowSpec: true },
+    });
+    check("DB: rowSpec ถูกตั้งค่าจากการยกชุด", zoneAfterBulk.rowSpec !== null, String(zoneAfterBulk.rowSpec));
+    // ปุ่มหายเมื่อ router.refresh() ส่งข้อมูลโซนชุดใหม่มา (rowSpec ไม่ว่างแล้ว) — รอได้ ไม่ใช่เช็คทันที
+    let bulkButtonGone = true;
+    try {
+      await page
+        .getByRole("button", { name: /^เสนอจัดแถวจากกรอบให้/ })
+        .waitFor({ state: "detached", timeout: 10_000 });
+    } catch {
+      bulkButtonGone = false;
+    }
+    check("ยกชุดเสร็จแล้วปุ่มหายไป (ไม่เหลือโซนที่ยังไม่กำหนดแถว)", bulkButtonGone);
+
+    // 8.5c 🔴 ยกชุดต้องข้ามโซนที่ขายบัตรไปแล้ว (ด่านเดียวกับเจนทับ) และไม่แตะที่นั่งเดิม
+    await prisma.$executeRaw`UPDATE zones SET "rowSpec" = NULL WHERE id = ${zone.id}`;
+    const seatsBeforeBulkSkip = await prisma.seat.findMany({
+      where: { zoneId: zone.id },
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+    await prisma.seat.update({ where: { id: seatsBeforeBulkSkip[0].id }, data: { status: "SOLD" } });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^เสนอจัดแถวจากกรอบให้ 1 โซน/ }).click();
+    await page.getByRole("button", { name: /^ยืนยัน — เจนที่นั่งใหม่ 1 โซน/ }).click();
+    const bulkSkipMsg = await waitFeedback("ไม่ได้จัดแถวโซนไหนเลย");
+    check("❌ ยกชุดข้ามโซนที่มีที่นั่งขายแล้ว พร้อมบอกเหตุผล", bulkSkipMsg.includes("ขายไปแล้ว"), bulkSkipMsg);
+    const seatsAfterBulkSkip = await prisma.seat.findMany({
+      where: { zoneId: zone.id },
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+    check(
+      "ที่นั่งของโซนที่ถูกข้ามยังเป็นตัวเดิมทุกตัว",
+      seatsBeforeBulkSkip.map((s) => s.id.toString()).join(",") ===
+        seatsAfterBulkSkip.map((s) => s.id.toString()).join(",")
+    );
+    // คืนสถานะให้ข้อ 9 เริ่มจากโซนที่ไม่มีภาระผูกพัน (ข้อ 9 ตั้ง SOLD เองอีกที)
+    await prisma.seat.update({ where: { id: seatsBeforeBulkSkip[0].id }, data: { status: "AVAILABLE" } });
+
     // ---------- 9) 🔴 "ตั้งกรอบให้โซนนี้" บนโซนที่ขายบัตรไปแล้ว ----------
     // ทำไมต้องมีทางนี้: ด่านข้อ 6-7 ปฏิเสธการเจนทับตลอดไปเมื่อมีที่นั่งขายแล้ว (ถูกต้อง เพราะเจน = ลบ+สร้างใหม่)
     // แต่แปลว่าคอนเสิร์ตที่กำลังขายอยู่จะไม่มีวันได้ผังบนรูปจริง -> assignZoneFrame แตะ "แค่กรอบโซน"
