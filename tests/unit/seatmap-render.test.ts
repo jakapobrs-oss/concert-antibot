@@ -16,6 +16,7 @@ import {
   OUTLINE_LIGHT,
   parseHexColor,
   relativeLuminance,
+  rowInsetFractions,
   seatGridRenderHints,
   seatOutline,
 } from "@/lib/seatmap/render-hints";
@@ -260,5 +261,81 @@ describe("polygonArea — ฐานของจุดปักป้ายชื
       [0.42, 0.68], [0.19, 0.68], [0.10, 0.62],
     ];
     expect(polygonArea(standing)).toBeGreaterThan(0);
+  });
+});
+
+describe("rowInsetFractions — ระยะร่นซ้ายรายแถวตามหน้าตัดกรอบโซนจริง", () => {
+  // กรอบโซน V3 จริงจาก DB (BABYMONSTER): รูปตัว L — หัวกว้างเต็ม กลางคอดชิดขวา ท้ายร่นซ้ายนิดเดียว
+  const V3: [number, number][] = [
+    [0.5239018087855297, 0.2825693699218151],
+    [0.5704134366925064, 0.2825693699218151],
+    [0.5691214470284238, 0.5827993254637437],
+    [0.5316537467700259, 0.5827993254637437],
+    [0.5316537467700259, 0.4434769277939598],
+    [0.5497416020671835, 0.4434769277939598],
+    [0.5497416020671835, 0.3473248505288977],
+    [0.5239018087855297, 0.3473248505288977],
+  ];
+  // จำนวนที่นั่งรายแถวจริงของ V3: A–M 14 ที่ · N–AF 6 ที่ · AG–BG 12 ที่ (รวม 620)
+  const V3_ROWS = [
+    ...new Array<number>(13).fill(14),
+    ...new Array<number>(19).fill(6),
+    ...new Array<number>(27).fill(12),
+  ];
+
+  it("V3 จริง 59 แถว: หัวโซนชนขอบซ้าย · ช่วงคอดร่น ~55% · ช่วงท้ายร่น ~15%", () => {
+    const insets = rowInsetFractions(V3, null, V3_ROWS);
+    expect(insets).toHaveLength(59);
+    expect(insets[0]).toBeLessThan(0.05); // แถว A (14 ที่) เต็มความกว้าง
+    expect(insets[6]).toBeLessThan(0.05);
+    expect(insets[20]).toBeGreaterThan(0.45); // ช่วงคอด N–AF (6 ที่) โดนเว้าซ้าย → ร่นขวาลึก
+    expect(insets[20]).toBeLessThan(0.65);
+    expect(insets[45]).toBeGreaterThan(0.1); // ช่วงท้าย AG–BG (12 ที่) ร่นจากซ้ายเล็กน้อย
+    expect(insets[45]).toBeLessThan(0.25);
+  });
+
+  it("โซนวางเอียง (สี่เหลี่ยมหมุน 45°) แถวกว้างเท่ากันหมด → ระยะร่นไล่เพิ่มทีละแถวเป็นแนวเอียง ไม่ซิกแซก", () => {
+    // ข้าวหลามตัด: หน้าตัดแนวนอนกว้างสุดตรงกลาง แคบที่หัว-ท้าย — แถวจริงกว้างเท่ากัน
+    const diamond: [number, number][] = [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]];
+    const insets = rowInsetFractions(diamond, "top", new Array<number>(8).fill(10));
+    // ทุกแถวกว้างเท่าหน้าตัดกว้างสุด → วางกึ่งกลางตรงกลางเสมอ = ร่นเท่ากันทุกแถว (ไม่แกว่งตามขอบซ้าย)
+    const spread = Math.max(...insets) - Math.min(...insets);
+    expect(spread).toBeLessThan(0.05);
+  });
+
+  it("แท่งเอียง: กึ่งกลางหน้าตัดเลื่อนไปทางเดียวเรื่อย ๆ → ระยะร่นต้องเพิ่มแบบไม่ย้อนกลับ", () => {
+    // สี่เหลี่ยมด้านขนานเอียงไปขวาเมื่อลึกลง (แบบโซนโค้งรอบสนาม)
+    const slanted: [number, number][] = [[0, 0], [0.3, 0], [1, 1], [0.7, 1]];
+    const insets = rowInsetFractions(slanted, "top", new Array<number>(6).fill(5));
+    for (let i = 1; i < insets.length; i++) {
+      expect(insets[i]).toBeGreaterThanOrEqual(insets[i - 1] - 0.03);
+    }
+    expect(insets[insets.length - 1]).toBeGreaterThan(insets[0] + 0.3);
+  });
+
+  it("เวทีอยู่ล่าง = ไล่แถวจากขอบล่างขึ้นบน: แถวหน้าอยู่ท่อนล่าง (เต็ม) แถวหลังอยู่ท่อนบน (ร่นขวา)", () => {
+    // ครึ่งล่างเต็มแนว ครึ่งบนเหลือเฉพาะฝั่งขวา
+    const flipped: [number, number][] = [
+      [0.5, 0], [1, 0], [1, 1], [0, 1], [0, 0.5], [0.5, 0.5],
+    ];
+    const insets = rowInsetFractions(flipped, "bottom", [4, 4, 2, 2]);
+    expect(insets[0]).toBeLessThan(0.05); // แถวหน้า (ล่างของรูป) เต็มแนว
+    expect(insets[3]).toBeGreaterThan(0.45); // แถวหลัง (บนของรูป) ชิดขวา
+    expect(insets[3]).toBeLessThan(0.6);
+  });
+
+  it("สี่เหลี่ยมเต็มแนว แถวเท่ากันหมด → ไม่มีแถวไหนถูกร่น (เท่าพฤติกรรมเดิม)", () => {
+    const rect: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    for (const inset of rowInsetFractions(rect, "top", new Array<number>(10).fill(8))) {
+      expect(inset).toBeLessThan(0.05);
+    }
+  });
+
+  it("ไม่มีกรอบโซน / จุดไม่พอ / เวทีซ้าย-ขวา / ไม่มีแถว → ศูนย์ล้วนหรือว่าง (ชิดซ้ายแบบเดิม)", () => {
+    expect(rowInsetFractions(null, "top", [3, 3, 3])).toEqual([0, 0, 0]);
+    expect(rowInsetFractions([[0, 0], [1, 1]], "top", [2, 2])).toEqual([0, 0]);
+    expect(rowInsetFractions(V3, "left", [5, 5])).toEqual([0, 0]);
+    expect(rowInsetFractions(V3, "right", [5, 5])).toEqual([0, 0]);
+    expect(rowInsetFractions(V3, "top", [])).toEqual([]);
   });
 });

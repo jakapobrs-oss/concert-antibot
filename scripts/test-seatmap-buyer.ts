@@ -264,11 +264,10 @@ async function main() {
         .locator('svg[aria-label="ผังโซนที่นั่ง"] g[data-stage]')
         .count()) === 1,
     );
+    // ผังรุ่น drill-down ไม่มีรายการโซนใต้รูปแล้ว (user-test: รกเกินไป) — หน้ารวมต้องบอกวิธีใช้แทน
     check(
-      "โซนเรียงจากใกล้เวทีที่สุดเมื่อระบุเวทีแล้ว",
-      (await page.locator("main").innerText()).includes(
-        "เรียงจากใกล้เวทีที่สุด",
-      ),
+      "หน้ารวมบอกให้แตะโซนบนผัง (ไม่มีรายการโซนซ้ำใต้รูป)",
+      (await page.locator("main").innerText()).includes("แตะโซนบนผังเพื่อเลือกที่นั่ง"),
     );
 
     // ผังรุ่นนี้ไม่โปรยจุดที่นั่งบนรูปแล้ว — ถ้ายังมี circle แปลว่าโค้ดเก่าหลุดกลับมา
@@ -285,23 +284,19 @@ async function main() {
     );
     await page.screenshot({ path: ".shots/seatmap-buyer-1-map.png" });
 
-    // ---------- 2.5) กดโซนบนรูป -> default ต้องไม่เปิดเผยรายที่นั่ง แล้วค่อยเปิดโหมดเลือกเอง ----------
+    // ---------- 2.5) กดโซนบนรูป -> เข้าโซนแบบ "เลือกที่นั่งเอง" และกริดโหลดทันที (ค่าเริ่มต้นจาก user-test) ----------
     await page
       .locator('svg[aria-label="ผังโซนที่นั่ง"] g[data-zone-name]')
       .first()
       .click();
     const seatButtons = page.locator("button[data-seat-number]");
-    await page
-      .getByRole("button", { name: "⚡ ให้ระบบเลือกที่ดีที่สุดให้" })
-      .waitFor({
-        timeout: 10_000,
-      });
-    check(
-      "เปิดโซนแล้ว default ยังไม่มีปุ่มที่นั่งรายตัว",
-      (await seatButtons.count()) === 0,
-    );
-    await page.getByRole("button", { name: "🪑 เลือกที่นั่งเอง" }).click();
     await seatButtons.first().waitFor({ timeout: 10_000 });
+    check(
+      "เปิดโซนแล้วโหมดเริ่มต้นคือเลือกที่นั่งเอง (ไม่ต้องกดเพิ่ม)",
+      (await page
+        .getByRole("button", { name: "🪑 เลือกที่นั่งเอง" })
+        .getAttribute("aria-pressed")) === "true",
+    );
     check(
       "กดโซนบนผัง → เปิดแผงเลือกที่นั่งครบทุกที่",
       (await seatButtons.count()) === SEAT_COUNT,
@@ -369,7 +364,7 @@ async function main() {
       `status=${invalidZoneResponse.status()}`,
     );
 
-    // ---------- 5) โหมด default: จำนวน 2 ต้องได้แถวหน้าสุดและติดกัน A1,A2 ----------
+    // ---------- 5) โหมดระบบเลือกให้ (โหมดรอง): จำนวน 2 ต้องได้แถวหน้าสุดและติดกัน A1,A2 ----------
     await page
       .getByRole("button", { name: /VIP ทดสอบ/ })
       .first()
@@ -377,8 +372,9 @@ async function main() {
     const bestModeButton = page.getByRole("button", {
       name: "⚡ ให้ระบบเลือกที่ดีที่สุดให้",
     });
+    await bestModeButton.click();
     check(
-      "เปิดโซนนั่งแล้วใช้โหมดระบบเลือกให้เป็นค่าเริ่มต้น",
+      "สลับไปโหมดระบบเลือกให้ได้จากโหมดเลือกเอง",
       (await bestModeButton.getAttribute("aria-pressed")) === "true",
     );
     await page

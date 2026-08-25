@@ -9,7 +9,11 @@
 //
 // แยกออกมาเป็น pure function เพราะเทสตรงได้ (เทส component ต้องมี DOM + จำลองการวัดขนาด)
 
-import type { StageSide } from "@/lib/seatmap/polygon";
+import {
+  isPointInPolygon,
+  type Polygon,
+  type StageSide,
+} from "@/lib/seatmap/polygon";
 
 export interface SeatGridRenderHints {
   stageSide: StageSide | null;
@@ -102,4 +106,95 @@ export function seatOutline(fill: string): string {
  */
 export function isSeatLabelLegible(fontPx: number): boolean {
   return Number.isFinite(fontPx) && fontPx >= MIN_LABEL_FONT_PX;
+}
+
+// ---------------------------------------------------------------
+// ระยะร่นซ้ายรายแถวของกริดที่นั่ง — ให้เงาของกริดตรงกับรูปทรงโซนบนผังจริง
+// ---------------------------------------------------------------
+// ที่มา (บั๊กจริงจาก user-test): โซน V3 เป็นรูปตัว L — หัวโซนกว้างเต็ม ช่วงกลางคอดชิดขวา
+// (โดนแท่นเวทีกินพื้นที่ฝั่งซ้าย = "เว้าซ้าย") แล้วท้ายโซนกว้างขึ้นแต่ร่นจากซ้ายเล็กน้อย
+// การจัดชิดข้างเดียวทั้งโซน (ซ้าย/กลาง/ขวา) เลยไม่มีทางตรงรูป — ต้องตัดสิน "ทีละแถว"
+//
+// วิธีคิด: แถวที่ i ลึกจากฝั่งเวทีเป็นสัดส่วน (i+0.5)/n ของความสูงโซน
+// สแกนหน้าตัดแนวนอนของกรอบโซนที่ความลึกนั้น หา "กึ่งกลาง" ของหน้าตัด
+// แล้ววางแถว (กว้างตามจำนวนที่นั่งจริงของแถว) ให้กึ่งกลางแถวตรงกับกึ่งกลางหน้าตัด
+// → คืนระยะร่นซ้ายเป็นสัดส่วนของ "ความกว้างแถวที่กว้างสุด" (= ความกว้างกริดใน UI)
+//
+// ทำไมยึดกึ่งกลาง ไม่ใช่ขอบซ้ายของหน้าตัด: โซนที่วางเอียง (โค้งรอบสนาม) หน้าตัดแนวนอน
+// จะกว้าง-แคบเป็นรูปข้าวหลามตัดทั้งที่แถวจริงกว้างเท่ากันทุกแถว — ยึดขอบซ้ายจะได้กริดซิกแซก
+// ยึดกึ่งกลางจะได้กริดเอียงตามแนวโซน ซึ่งใกล้ของจริงที่สุดเท่าที่กริดสี่เหลี่ยมทำได้
+// (กริดหมุนตามโซนถูกถอดออกแล้วโดยตั้งใจ — ดู docs/20_SEATMAP.md §2.1)
+// ตอบได้เฉพาะตอนแถวเรียงตามแกนตั้งของรูป (เวทีบน/ล่าง หรือไม่รู้ทิศซึ่ง fallback เป็นบน)
+// เวทีซ้าย/ขวา = แกนแถวเป็นแนวนอน → คืนศูนย์ล้วน (ชิดซ้ายแบบเดิม ปลอดภัยไว้ก่อน)
+
+// ความละเอียดการสแกนหน้าตัดต่อแถว — คลาดเคลื่อนสูงสุด ~1/48 (~2%) ของความกว้างโซน
+const ROW_INSET_SAMPLE_COLS = 48;
+// เพดานระยะร่น (เท่าของความกว้างกริด) — โซนบางเฉียบที่เอียงมากอาจคำนวณได้หลายเท่า กันกริดกว้างเกินเหตุ
+const MAX_ROW_INSET = 3;
+
+export function rowInsetFractions(
+  polygon: Polygon | null,
+  stageSide: StageSide | null,
+  rowSeatCounts: number[],
+): number[] {
+  const rowCount = rowSeatCounts.length;
+  const zeros = new Array<number>(rowCount).fill(0);
+  if (rowCount === 0) return zeros;
+  if (!polygon || polygon.length < 3) return zeros;
+  // แถวในกริดเรียงแนวตั้งเสมอ — เวทีอยู่ข้าง (แกนแถวจริงเป็นแนวนอน) เทียบหน้าตัดแนวนอนไม่ได้
+  if (stageSide === "left" || stageSide === "right") return zeros;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of polygon) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (width <= 0 || height <= 0) return zeros;
+  const maxSeats = Math.max(...rowSeatCounts);
+  if (maxSeats <= 0) return zeros;
+
+  // ปกติ "แถว A (หน้าสุด)" คือขอบบนของรูป — เวทีอยู่ล่างก็ไล่จากขอบล่างขึ้นไปแทน
+  const frontIsTop = stageSide !== "bottom";
+
+  // หน้าตัดของแต่ละแถว: (ซ้าย, ขวา) เป็นสัดส่วนของกรอบโซน — null ถ้าตาข่ายไม่โดนโซนเลย
+  const slices = rowSeatCounts.map((_, rowIndex) => {
+    // ใช้กึ่งกลางแถว ไม่ใช่ขอบแถว — กันไปสุ่มโดนรอยต่อระหว่างท่อนของรูปพอดี
+    const depth = (rowIndex + 0.5) / rowCount;
+    const y = frontIsTop ? minY + depth * height : maxY - depth * height;
+    let left: number | null = null;
+    let right: number | null = null;
+    for (let col = 0; col < ROW_INSET_SAMPLE_COLS; col++) {
+      const fraction = (col + 0.5) / ROW_INSET_SAMPLE_COLS;
+      if (isPointInPolygon(polygon, [minX + fraction * width, y])) {
+        if (left === null) left = fraction;
+        right = fraction;
+      }
+    }
+    return left === null || right === null ? null : { left, right };
+  });
+
+  // แถวที่กว้างสุด (ที่นั่งมากสุด) = หน้าตัดที่กว้างสุดของโซน — ใช้เป็นสเกลแปลง "ที่นั่ง → สัดส่วนโซน"
+  const widestSlice = Math.max(
+    0,
+    ...slices.map((slice) => (slice ? slice.right - slice.left : 0)),
+  );
+  if (widestSlice <= 0) return zeros;
+
+  return rowSeatCounts.map((seatCount, rowIndex) => {
+    const slice = slices[rowIndex];
+    // หน้าตัดว่าง (รูปบางเกินตาข่าย) → ไม่ร่น ดีกว่าเดาผิดข้าง
+    if (!slice) return 0;
+    const rowWidth = (seatCount / maxSeats) * widestSlice;
+    const center = (slice.left + slice.right) / 2;
+    const insetInZone = Math.max(center - rowWidth / 2, 0);
+    // แปลงจากสัดส่วนกรอบโซน → สัดส่วนความกว้างกริด (ฝั่ง UI คูณ px ของแถวกว้างสุดได้ตรง ๆ)
+    return Math.min(insetInZone / widestSlice, MAX_ROW_INSET);
+  });
 }

@@ -278,6 +278,7 @@ export default async function SeatsPage({
               height: concert.layoutImageHeight!,
             }}
             stagePolygon={stagePolygon}
+            slug={slug}
             maxSeats={concert.maxTicketsPerUser}
             remainingQuota={remainingQuota}
             concertId={concert.id.toString()}
