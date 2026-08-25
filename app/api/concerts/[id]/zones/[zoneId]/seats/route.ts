@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isAdmitted } from "@/lib/queue";
+import { refreshAdmitted } from "@/lib/queue";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getHeldSeats } from "@/lib/seat-hold";
 
@@ -35,7 +35,9 @@ export async function GET(
 
   // 2) ด่านคิวต้องมาก่อน query โซน/ที่นั่งเสมอ: กันบอท scrape สต็อกทีละโซนด้วย token มั่ว
   const queueToken = new URL(request.url).searchParams.get("qt") ?? "";
-  const admitted = await isAdmitted(queueToken, concertId, userId);
+  // ใช้ refreshAdmitted (ไม่ใช่ isAdmitted): การเปิดดูโซน = หลักฐานว่ากำลังเลือกอยู่จริง
+  // → ต่ออายุ admit window ให้อัตโนมัติ (มีเพดานแข็ง 15 นาทีใน queue lib)
+  const admitted = await refreshAdmitted(queueToken, concertId, userId);
   if (!admitted)
     return jsonNoStore({ error: "คิวหมดอายุหรือไม่มีสิทธิ์ดูที่นั่ง" }, 403);
 

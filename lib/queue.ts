@@ -20,12 +20,13 @@
 import crypto from "node:crypto";
 import { redis } from "@/lib/redis";
 import { env } from "@/lib/env";
-import { computeAdmitLimit } from "@/lib/admit-policy";
+import { computeAdmitLimit, computeAdmitExtension } from "@/lib/admit-policy";
 
 // ---- ค่าคงที่ของระบบคิว (ดึงบางส่วนจาก env ได้) ----
 const BUCKET_SIZE_MS = 2000; // ขนาด time-window: คนเข้าคิวภายใน 2 วิ ถือว่าเสมอภาคกัน
 const RANDOM_RANGE = 1_000_000; // ช่วงเลขสุ่มภายใน bucket (0 ถึง 999,999)
 const ADMIT_TTL_SECONDS = 300; // ปล่อยเข้าแล้วมีเวลา 5 นาทีเลือกที่นั่ง
+const ADMIT_HARD_CAP_SECONDS = 900; // เพดานแข็งของการต่ออายุจากการใช้งาน — รวมไม่เกิน 15 นาทีนับจากถูกปล่อยเข้า
 const TOKEN_TTL_SECONDS = 3600; // token อยู่ในระบบได้สูงสุด 1 ชม
 
 // key builders — รวมไว้ที่เดียวกันเปลี่ยนง่าย
@@ -336,6 +337,41 @@ export async function isAdmitted(
   return true;
 }
 
+// เช็คสิทธิ์เหมือน isAdmitted แล้ว "ต่ออายุ" ให้ด้วย (sliding window) —
+// ใช้กับเส้นทางที่พิสูจน์ว่าผู้ใช้กำลังเลือกที่นั่งอยู่จริง: โหลดหน้าเลือกที่นั่ง / เปิดดูที่นั่งรายโซน
+// เพดานอยู่ใน computeAdmitExtension: ต่อครั้งละ ADMIT_TTL แต่รวมไม่เกิน ADMIT_HARD_CAP นับจากถูกปล่อยเข้า
+// ⚠️ เส้นทางเงิน (booking action) ยังใช้ isAdmitted แบบเช็คอย่างเดียว — การกดซื้อไม่ใช่เหตุให้ต่ออายุ
+export async function refreshAdmitted(
+  token: string,
+  concertId: string,
+  userId?: string
+): Promise<boolean> {
+  const expireScore = await redis.zscore(keys.admitted(concertId), token);
+  if (!expireScore || Number(expireScore) <= Date.now()) return false;
+
+  // อ่าน meta ทีเดียว ได้ทั้ง owner-check และ admittedAt สำหรับคำนวณเพดาน
+  const meta = await redis.hgetall(keys.token(token));
+  if (userId !== undefined && meta?.userId !== userId) return false;
+
+  const now = Date.now();
+  const admittedAtRaw = meta?.admittedAt ? Number(meta.admittedAt) : NaN;
+  const nextExpireAt = computeAdmitExtension({
+    now,
+    currentExpireAt: Number(expireScore),
+    admittedAt: Number.isFinite(admittedAtRaw) ? admittedAtRaw : null,
+    ttlMs: ADMIT_TTL_SECONDS * 1000,
+    hardCapMs: ADMIT_HARD_CAP_SECONDS * 1000,
+  });
+  if (nextExpireAt > Number(expireScore)) {
+    const pipeline = redis.pipeline();
+    pipeline.zadd(keys.admitted(concertId), nextExpireAt, token);
+    // hash ของ token ต้องมีชีวิตถึงเวลาเดียวกัน — ไม่งั้น owner-check จะตายก่อนสิทธิ์หมดจริง
+    pipeline.expire(keys.token(token), Math.ceil((nextExpireAt - now) / 1000));
+    await pipeline.exec();
+  }
+  return true;
+}
+
 // สถิติคิว (สำหรับ admin dashboard + thesis evaluation)
 export async function getQueueStats(concertId: string): Promise<{
   waiting: number;
@@ -354,5 +390,6 @@ export async function getQueueStats(concertId: string): Promise<{
 export const QUEUE_CONFIG = {
   BUCKET_SIZE_MS,
   ADMIT_TTL_SECONDS,
+  ADMIT_HARD_CAP_SECONDS,
   TOKEN_TTL_SECONDS,
 };

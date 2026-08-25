@@ -20,3 +20,27 @@ export function computeAdmitLimit(
   if (opts.seatsLeft !== undefined) limit = Math.min(limit, opts.seatsLeft);
   return Math.max(0, limit);
 }
+
+// ============================================================
+// Sliding admit window — "ต่ออายุสิทธิ์เลือกที่นั่งได้ถึงเมื่อไหร่"
+// ============================================================
+// ที่มา: ผังสนามจริงมีหลายสิบโซน ผู้ใช้เลือกเกิน 5 นาทีแล้วโดนตัดสิทธิ์กลางมือ
+// นโยบาย: ทุกครั้งที่ผู้ใช้ "ยังใช้งานอยู่จริง" (โหลดหน้าเลือกที่นั่ง/เปิดดูโซน)
+//   ต่ออายุออกไปอีก 1 ช่วง TTL แต่รวมแล้วไม่เกินเพดานแข็งนับจากตอนถูกปล่อยเข้า
+//   → คนใช้งานจริงไม่โดนเด้งกลางทาง / คนแช่ token ทิ้งไว้ยังหลุดตามเดิม
+//   → ไม่มีใครครองห้องเลือกที่นั่งเกินเพดานได้ ไม่ว่าจะกดถี่แค่ไหน (คิวยังไหล)
+export function computeAdmitExtension(params: {
+  now: number; // เวลาปัจจุบัน (epoch ms)
+  currentExpireAt: number; // เวลาหมดอายุปัจจุบันใน admitted set
+  admittedAt: number | null; // เวลาที่ถูกปล่อยเข้า — null = token รุ่นเก่าที่ไม่มีค่านี้
+  ttlMs: number; // ความยาวการต่อ 1 ครั้ง (= ADMIT_TTL)
+  hardCapMs: number; // เพดานแข็งรวม นับจาก admittedAt
+}): number {
+  const { now, currentExpireAt, admittedAt, ttlMs, hardCapMs } = params;
+  // token รุ่นเก่าไม่รู้เวลาเริ่ม → คำนวณเพดานไม่ได้ ไม่ต่อ (ปลอดภัยไว้ก่อน)
+  if (admittedAt === null) return currentExpireAt;
+  const ideal = now + ttlMs;
+  const cap = admittedAt + hardCapMs;
+  // ห้าม "หด" เวลาที่ถืออยู่แล้ว และห้ามทะลุเพดานแข็ง
+  return Math.max(currentExpireAt, Math.min(ideal, cap));
+}

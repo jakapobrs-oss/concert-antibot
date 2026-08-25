@@ -10,7 +10,7 @@ import { SeatMap } from "@/components/seat-map";
 import { SeatMapSvg } from "@/components/seat-map-svg";
 import { parsePolygon, parseStageSide } from "@/lib/seatmap/polygon";
 import { Badge } from "@/components/ui/badge";
-import { isAdmitted } from "@/lib/queue";
+import { refreshAdmitted } from "@/lib/queue";
 import { checkSaleAccess } from "@/lib/sale-round-guard";
 import { getHeldSeats } from "@/lib/seat-hold";
 import { auth } from "@/lib/auth";
@@ -109,8 +109,9 @@ export default async function SeatsPage({
 
   // 🔒 Queue gate — ต้องมี queue token ที่ถูก admit + เป็นของ user คนนี้จริง
   // ส่ง userId กัน token sharing (คนหนึ่งผ่านคิว แล้วแชร์ token ให้คนอื่น)
+  // refreshAdmitted = เช็ค + ต่ออายุ (การโหลดหน้านี้คือหลักฐานว่ากำลังใช้งานจริง)
   const admitted = qt
-    ? await isAdmitted(qt, concert.id.toString(), userId)
+    ? await refreshAdmitted(qt, concert.id.toString(), userId)
     : false;
   if (!admitted) {
     redirect(`/concerts/${slug}/queue`);
