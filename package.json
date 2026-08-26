@@ -2,6 +2,7 @@
   "name": "concert-antibot",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "ระบบจองบัตรคอนเสิร์ตที่มี anti-bot 2 ชั้น (scoring + behavior) + fairness queue (โปรเจ็คจบ ป.ตรี)",
   "scripts": {
     "dev": "next dev --turbo",

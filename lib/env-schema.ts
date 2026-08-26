@@ -76,6 +76,8 @@ export const envSchema = z.object({
   // อีเมลติดต่อเรื่องข้อมูลส่วนบุคคล/ปัญหาการใช้งาน — โชว์ในหน้า /privacy (rev 34)
   //   ไม่ตั้ง = หน้านโยบายบอกให้ติดต่อผ่านแชตช่วยเหลือในเว็บแทน (ไม่ใส่อีเมลปลอม)
   SUPPORT_EMAIL: z.string().optional(),
+  // อีเมลแอดมินที่ seed ใช้ (rev 31) — หน้า /privacy ใช้เป็นช่องทางติดต่อสำรองเมื่อไม่ตั้ง SUPPORT_EMAIL (rev 38, user ตัดสิน "ติดต่อผ่านเมลแอดมินได้เลย")
+  SEED_ADMIN_EMAIL: z.string().optional(),
 
   // Queue fairness — HMAC secret สำหรับคำนวณ deterministic randomScore ต่อ userId+concert
   // กัน leave/rejoin re-roll: user เดิม+concert เดิม ได้ randomScore เดิมเสมอ
