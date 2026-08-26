@@ -41,7 +41,7 @@
 | **(cross-cutting) Membership / สมาชิก** | `lib/membership.ts` · `app/actions/{membership,admin-membership}.ts` · `app/(public)/account/membership/` · `app/(admin)/admin/memberships/` · `components/{membership-join-button,admin-membership-actions}.tsx` · Prisma `Membership` · tests `tests/unit/{membership,admin-membership-action}.test.ts` (57 เคส) · doc `docs/20_MEMBERSHIP.md` — **สิทธิ์เดียว = เข้ารอบขายก่อน ไม่แซงคิว/ไม่ลดราคา/ไม่เพิ่มเพดานตั๋ว** |
 | **(cross-cutting) Subscription / แพ็กเกจสมาชิก** | `lib/subscription.ts` · `app/actions/membership.ts` (subscribe/cancel) · `components/subscription-plans.tsx` · Prisma `Subscription` · tests `tests/unit/subscription.test.ts` (32 เคส) · doc `docs/22_SUBSCRIPTION.md` — **ledger แยกจาก `Membership` ที่เป็นสิทธิ์จริง · ยังไม่เก็บเงิน (ทุกแพ็กเกจ 0 บาท)** |
 | **(cross-cutting) Storefront UX / หน้าร้าน** | `lib/{order-view,countdown,concert-filter}.ts` · `app/(public)/account/orders/` · `components/{order-actions,countdown,concert-browser}.tsx` · tests `tests/unit/storefront.test.ts` (26 เคส) · doc `docs/24_STOREFRONT_UX.md` — **ไม่มี migration · order ค้างจ่ายกลับไปจ่ายต่อได้ · นับถอยหลังแล้ว refetch ให้ server ตัดสิน** |
-| **(cross-cutting) Sold out / บัตรหมด** | `lib/sold-out.ts` · hook ใน `lib/order-finalize.ts` (หลังออกตั๋ว) · ด่านใน `app/api/queue/join` + `lib/sale-round.ts` (`DenyReason = SOLD_OUT`) · UI `components/sale-round-panel.tsx` + หน้าคอนเสิร์ต · preset `createStandardRounds` ใน `app/actions/admin-sale-round.ts` · tests `tests/unit/sold-out.test.ts` (14 เคส) · doc `docs/23_SOLD_OUT.md` — **soldOut = ไม่เหลือทั้ง AVAILABLE และ HELD · พลิกสถานะทิศทางเดียว** |
+| **(cross-cutting) Sold out / บัตรหมด** | `lib/sold-out.ts` (นิยาม pure `isSoldOut`/`isTemporarilyFull` อยู่ `lib/admit-policy.ts`) · **ทางออกของคิวเมื่อหมด** (2026-08-26, docs/23 §8): status route บันทึก snapshot `queue:{id}:seats` ผ่าน `recordSeatAvailability()` ใน `lib/queue.ts` → `getQueueStatus` ตอบ `SOLD_OUT` / `WAITING`+`seatsFull` → `waiting-room.tsx` หยุด poll + ปุ่มกลับ; ประตู `resolveEntryForUser` เช็คบัตรหมดทุกคอนเสิร์ตรวมไม่มีรอบ · hook ใน `lib/order-finalize.ts` (หลังออกตั๋ว) · ด่านใน `app/api/queue/join` + `lib/sale-round.ts` (`DenyReason = SOLD_OUT`) · UI `components/sale-round-panel.tsx` + หน้าคอนเสิร์ต · preset `createStandardRounds` ใน `app/actions/admin-sale-round.ts` · tests `tests/unit/sold-out.test.ts` (14 เคส) · doc `docs/23_SOLD_OUT.md` — **soldOut = ไม่เหลือทั้ง AVAILABLE และ HELD · พลิกสถานะทิศทางเดียว** |
 | **(cross-cutting) Presale rounds / รอบพรีเซล** | `lib/{sale-round,pre-registration,access-code}.ts` · `app/actions/{sale-round,admin-sale-round}.ts` · `app/api/concerts/[id]/rounds/` · `components/{sale-round-panel,admin-sale-rounds}.tsx` · Prisma `SaleRound`+`PreRegistration`+`AccessCode`+`AccessCodeRedemption` · tests `tests/unit/{sale-round,access-code}.test.ts` (48 เคส) · doc `docs/21_PRESALE_ROUNDS.md` — ด่านรอบต่อเข้า `app/api/queue/join` + `app/actions/booking.ts` + `lib/order-finalize.ts` แล้ว · **คอนเสิร์ตที่ไม่มีรอบ = พฤติกรรมเดิม** |
 | **(cosmetic) UI kit + design tooling** | `components/ui/*` (shadcn-style primitives) · `app/prototype/` (demo/simulation, **ไม่ต่อ Redis จริง อย่าเข้าใจผิดว่าเป็น admission code จริง** — ของจริงคือ `lib/admit-policy.ts`+`lib/queue.ts`) · `.impeccable/`, `.shots/`, `scripts/shoot-design.ts` |
 
@@ -65,7 +65,7 @@
 | `09_LOCAL_PRESENTATION.md` | คู่มือรันสาธิต — ต้องแก้ payment เป็น PromptPay |
 | `10_PAYMENT_PROVIDERS.md` | ทำไมเลือก PromptPay+EasySlip — ยังแม่นยำ |
 | `11_REQUIREMENTS.md` | source of truth ของ requirement ทั้งหมด (rev 9 — 2026-08-25 merge: §2.7–2.11 สมาชิก/พรีเซล/ซับสคริปชั่น/บัตรหมด/UX ฉบับ presale + §2.2.3 ผังรายโซน + §2.12 คืนบัตร/ขายต่อ) |
-| `12_CHANGELOG.md` | ประวัติ session — ล่าสุดคือ Revision 25 (2026-08-25 merge สาย presale). เลข 18–22 มีสองชุด (สาย seatmap ด้านบน / สาย presale ใต้ป้ายแยก) เพราะเขียนคู่ขนาน. **มีช่องว่าง rev 17→18** ไม่รวมงาน named-ticket + 7-part Codex review (commit ถึง 2026-07-10) |
+| `12_CHANGELOG.md` | ประวัติ session — ล่าสุดคือ Revision 26 (2026-08-26 คิวมีทางออกเมื่อบัตรหมด + พบ DB local ว่าง); 25 = merge สาย presale (2026-08-25). เลข 18–22 มีสองชุด (สาย seatmap ด้านบน / สาย presale ใต้ป้ายแยก) เพราะเขียนคู่ขนาน. **มีช่องว่าง rev 17→18** ไม่รวมงาน named-ticket + 7-part Codex review (commit ถึง 2026-07-10) |
 | `13_THESIS_EVALUATION.md` | ⚠️⚠️ flag สำคัญสุด — สถิติ "inversion 96.8%" มาจาก test script self-referential |
 | `14_SCREENSHOTS_GUIDE.md` | ต้องแก้ "9/9"→"101"+ route param |
 | `15_PAYMENT_SECURITY.md` | threat model T1-T10 + fix F1-F8/H1-H4/N1-N5 — rated current |
@@ -76,7 +76,7 @@
 | `20_MEMBERSHIP.md` | ระบบสมาชิก + สัญญา `getActiveMembership()` (2026-08-20) |
 | `21_PRESALE_ROUNDS.md` | รอบพรีเซล 4 ชั้น + ลงทะเบียนล่วงหน้า + โค้ดสิทธิ์ ตามแพลตฟอร์มจริง (2026-08-20) |
 | `22_SUBSCRIPTION.md` | แพ็กเกจสมาชิก (ledger แยกจากสถานะสิทธิ์) + รอยต่อเปิดเก็บเงินทีหลัง (2026-08-20) |
-| `23_SOLD_OUT.md` | บัตรหมดอัตโนมัติ + รอบทั่วไปไม่เปิดขายเมื่อหมดตั้งแต่รอบสมาชิก (2026-08-20) |
+| `23_SOLD_OUT.md` | บัตรหมดอัตโนมัติ + รอบทั่วไปไม่เปิดขายเมื่อหมดตั้งแต่รอบสมาชิก (2026-08-20) · §8 ทางออกของคิวเมื่อบัตรหมด (2026-08-26) |
 | `24_STOREFRONT_UX.md` | **เอกสารใหม่สุด (2026-08-21)** — คำสั่งซื้อของฉัน (จ่ายต่อ/ยกเลิก) + นับถอยหลังเปิดขาย + ค้นหางาน |
 | `25_SEATMAP.md` | ผังที่นั่งจากรูปสถานที่จริง — **เขียนใหม่ 2026-08-21 ตัวเลขทดสอบมาจากการรันจริง** (§2.1 บอกว่าอะไรถูกถอดออกและทำไม) · §8.3 = รอบ 2026-08-25 · §9 มีข้อจำกัด "โซนเอียงกริดหมุนตามไม่ได้" ที่ตั้งใจยอม |
 | `SECURITY_TODO.md` | backlog ความปลอดภัย — ข้อ 1 (bot-score ตอนซื้อ) ✅ ปิดแล้ว 2026-08-25; ที่เหลือ (Turnstile hostname/action ไม่เช็ก ฯลฯ) ยังค้าง |
@@ -86,11 +86,12 @@ Root `README.md` (ไม่ใช่ `docs/00_README.md`) **ยังเขี�
 
 ## Test layout
 
-- **Unit**: `tests/unit/*.test.ts` — 39 ไฟล์, 537 cases (รันจริง 2026-08-25 หลัง merge สาย presale), Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test`)
-- **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (12 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลือดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ
-  - 4 ไฟล์ล่าสุดเป็น **เทสบนเบราว์เซอร์จริง** ต้องมี dev server รันอยู่ + ส่ง `E2E_BASE` ถ้าไม่ใช่พอร์ต 3000: `pnpm test:seatmap` (แอดมิน 43 เช็ค) · `pnpm test:seatmap-buyer` (คนซื้อ 27 เช็ค) · `pnpm test:sale-round` (ด่านรอบพรีเซล 10 เช็ค — เขียนใหม่หลัง merge 2026-08-25) · `pnpm test:purchase-antibot` (ด่านบอทตอนซื้อ 7 เช็ค)
+- **Unit**: `tests/unit/*.test.ts` — 40 ไฟล์, 541 cases (รันจริง 2026-08-26 — เพิ่ม `queue-soldout-gate.test.ts`), Vitest, mock ล้วนไม่ต้องมี DB/Redis จริง (`pnpm test:run` — **ห้าม `pnpm test` = watch ค้าง**)
+- **Race/integration**: **ไม่ได้อยู่ใต้ `tests/`** — เป็น `tsx` script เดี่ยวใน `scripts/test-*.ts` (14 ไฟล์) รันกับ Postgres/Redis จริง — CI (`pnpm test:race`) เดินแค่ `test-n1-race.ts`, ที่เหลือดูจากคอมเมนต์หัวไฟล์ว่าต้องรันมือ (Redis ล้วน: `npx tsx --env-file=.env scripts/test-queue-{ghost,rejoin,status-dos,soldout}.ts` — รันทุกครั้งที่แตะ `lib/queue.ts`)
+  - 5 ไฟล์เป็น **เทสบนเบราว์เซอร์จริง** ต้องมี dev server รันอยู่ + DB seed (`pnpm db:seed` ให้มี `user@local`) + ส่ง `E2E_BASE` ถ้าไม่ใช่พอร์ต 3000: `pnpm test:seatmap` (แอดมิน 43 เช็ค) · `pnpm test:seatmap-buyer` (คนซื้อ 27 เช็ค) · `pnpm test:sale-round` (ด่านรอบพรีเซล 10 เช็ค — เขียนใหม่หลัง merge 2026-08-25) · `pnpm test:purchase-antibot` (ด่านบอทตอนซื้อ 7 เช็ค) · `pnpm test:queue-soldout-ui` (ห้องรอเมื่อบัตรหมด 5 เช็ค + 2 ขั้น "ระหว่างรอ" ที่**ข้ามเมื่อ dev ใช้ Turnstile คีย์จริง** — คำขอเข้าคิวครั้งแรกไม่มี token = CHALLENGE เสมอ สคริปต์ผ่าน Turnstile จริงไม่ได้โดยตั้งใจ)
+  - ⚠️ ทางเดินห้องรอ (`/concerts/[slug]/queue`) **automate ไม่ได้กับคีย์จริง** — เทสเบราว์เซอร์ทุกตัวเลี่ยงด้วยการเตรียม token ผ่าน `joinQueue()`+`admitNext()` แล้วเริ่มที่หน้าเลือกที่นั่ง
 - **Load**: `tests/load/queue.js` (k6) + `tests/load/concurrent-fairness.mjs` (Node/ioredis)
-- **E2E**: `scripts/e2e-booking.ts` (playwright-core) — `package.json`'s `test:e2e` (`playwright test`) **น่าจะใช้ไม่ได้แล้ว** เพราะไม่มี `@playwright/test` ติดตั้ง
+- **E2E**: `scripts/e2e-booking.ts` (playwright-core) — `pnpm test:e2e` ชี้มาที่ไฟล์นี้แล้ว (2026-08-26; เดิมเป็น `playwright test` ที่รันไม่ได้เพราะไม่มี `@playwright/test`)
 - CI (`.github/workflows/ci.yml`): job 1 = typecheck+vitest (ไม่ต้องมี service), job 2 = spin postgres:16 จริงแล้ว `pnpm test:race`
 
 ## ห้ามอ่านเข้า context (build artifacts / regeneratable)

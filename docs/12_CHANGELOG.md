@@ -5,6 +5,38 @@
 
 ---
 
+## [Revision 26 — คิวมี "ทางออก" เมื่อบัตรหมด: ไม่ค้างตำแหน่ง 1 ตลอดกาล] — 2026-08-26
+
+### Trigger
+งานค้างข้อ 4.1 ใน HANDOFF: คอนเสิร์ตที่ไม่เหลือที่นั่ง (สร้างไว้ 0 ที่นั่ง / ขายหมดแต่ป้าย SOLD_OUT ยังไม่ถูกติด)
+ผู้ใช้เข้าคิวได้แล้ว**ค้าง "ตำแหน่ง 1" จน token หมดอายุ 1 ชม.** → "คิวหมดอายุ กรุณาเข้าคิวใหม่" → วนกลับมาค้างอีก
+
+### Root cause — ช่องโหว่ 3 จุดต่อกัน (ไม่ใช่บั๊กเดี่ยว)
+1. **ประตูปล่อยผ่าน** `lib/sale-round.ts` `resolveEntryForUser` — คอนเสิร์ต**ไม่มีรอบ** `return ok` ก่อนเช็คบัตรหมด (ตรรกะ sold-out มีเฉพาะเส้นทางที่มีรอบ) · `Concert.status` ยัง ON_SALE เพราะพลิกเป็น SOLD_OUT เฉพาะตอนออกตั๋วสำเร็จ (docs/23 §3)
+2. **ระหว่างรอไม่มีสัญญาณ** `app/api/queue/status` นับที่นั่งว่างได้ 0 → `admitNext` คืน 0 เงียบ ๆ → `getQueueStatus` มีแค่ WAITING/ADMITTED/EXPIRED/NOT_FOUND
+3. **จอแสดงผิด** `components/waiting-room.tsx` — 403 ทุกแบบ (บัตรหมด/ยังไม่เปิดขาย/รอบล็อก) ขึ้นจอ "ตรวจพบกิจกรรมผิดปกติ" เหมือนโดนจับเป็นบอท
+
+ข้อควรระวังที่ทำให้แก้แบบง่ายไม่ได้: ว่าง 0 ≠ หมดเสมอ — ยังมีที่นั่ง HELD ที่อาจหลุดกลับมาใน 5 นาที (นิยาม docs/23 §2: หมดจริง = ว่าง 0 **และ** ค้างจ่าย 0)
+
+### ของที่แก้
+- **ประตู**: `resolveEntryForUser` เช็ค `getConcertAvailability` ทุกคอนเสิร์ต (ไม่มีรอบ → context เปล่า ไม่โหลดสมาชิก/ลงทะเบียน) · join route ตอบ `action: "SOLD_OUT"` แยกจาก `ROUND_LOCKED` (ตรงกับที่ docs/23 §3 เขียนไว้แต่โค้ดไม่เคยทำสำหรับคอนเสิร์ตไม่มีรอบ)
+- **ระหว่างรอ**: ผู้ที่ได้ lock ปล่อยคิว (ทุก ~3 วิ/คอนเสิร์ต, query DB อยู่แล้ว) ใช้ `getConcertAvailability` แทน `countAvailableSeats` แล้ว `recordSeatAvailability()` เขียน snapshot `{available, held}` ลง Redis `queue:{id}:seats` TTL 30 วิ → `getQueueStatus` ตอบสถานะใหม่ **`SOLD_OUT`** (ว่าง 0 และค้างจ่าย 0) หรือ `WAITING` + **`seatsFull`** (ว่าง 0 แต่มีคนค้างจ่าย) — คนโพลอื่นไม่แตะ DB เพิ่ม (หลัก peak-load เดิม) · ไม่มี snapshot = ไม่รู้ = รอต่อ (ห้ามเดาว่าหมด) · **ไม่ลบใครออกจากคิว** — snapshot หมดอายุเอง ถ้าเปิดขายใหม่/hold หลุด คิวไหลต่อโดยไม่ต้องเข้าคิวใหม่ · ADMITTED ไม่ถูกกระทบ
+- **จอ**: `SOLD_OUT` → หยุด poll + จอ "บัตรหมดแล้ว" + ปุ่ม "กลับหน้าคอนเสิร์ต" (ไม่ใช่ "เข้าคิวใหม่" ที่วนลูป) · `seatsFull` → "ที่นั่งทั้งหมดถูกจองไว้ชั่วคราว…" + ไม่เชียร์ "ใกล้แล้ว" · 403 แยกตาม `action` — จอบอทเฉพาะ `BLOCK`
+- นิยาม `isSoldOut`/`isTemporarilyFull` ย้ายไป `lib/admit-policy.ts` (ไฟล์ pure) แล้ว re-export จาก `lib/sold-out.ts` — `lib/queue.ts` ใช้นิยามเดียวกันโดยไม่ลาก prisma เข้าโมดูลคิว
+- ไม่แตะ: ทิศทางเดียว ON_SALE→SOLD_OUT ของ `syncSoldOutStatus` (ตัดสินไว้ใน docs/23 §3)
+
+### หลักฐาน
+- **reproduce ก่อนแก้** (Redis จริง): ปล่อยคิว 3 รอบด้วย `seatsLeft: 0` → `WAITING position=1` ทุกรอบ ไม่มีสัญญาณอะไรเลย
+- **`scripts/test-queue-soldout.ts` (ใหม่, ชั้น 2 Redis จริง) 9/9** — ไม่มี snapshot ยังรอ / หมดจริง → SOLD_OUT / ไม่ถูกเตะออก / TTL ≤ 30 / เต็มชั่วคราว → seatsFull / ที่นั่งกลับมา → WAITING ปกติ → ADMITTED / ADMITTED ไม่โดน snapshot เตะ
+- **`pnpm test:queue-soldout-ui` (ใหม่, ชั้น 3 เบราว์เซอร์+DB+Redis จริง) 5/5 + ข้าม 2** — ประตูปฏิเสธด้วย "บัตรหมดแล้ว" + ปุ่มกลับ + ไม่ใช่จอบอท + ไม่สร้างคิวเพิ่ม + กดกลับได้จริง · ขั้น "ระหว่างรอ" (seatsFull → SOLD_OUT บนจอ) ถูก**ข้ามเพราะ dev ใช้ Turnstile คีย์จริง** — คำขอเข้าคิวครั้งแรกไม่มี token = CHALLENGE เสมอ (`lib/antibot.ts` +40) สคริปต์ผ่าน Turnstile จริงไม่ได้และตั้งใจไม่ bypass; รันครบได้เมื่อ dev ใช้ test key ของ Cloudflare (ตรรกะ anti-bot ยังทำงานครบ)
+- unit **`tests/unit/queue-soldout-gate.test.ts` (ใหม่ 4)** — ไม่มีรอบ+หมด → SOLD_OUT / เต็มชั่วคราว → เข้าคิวได้ / มีที่นั่ง → `{ok, round:null}` / ไม่โหลด context สมาชิก · `antibot-part3.test.ts` เพิ่ม mock `seat.count` (route นับที่นั่งทุกคอนเสิร์ตแล้ว — เทสเดิม 3 ข้อพังเพราะ mock ไม่มี ไม่ใช่โค้ดผิด) · unit ทั้งชุด **541/541 (40 ไฟล์)** · typecheck สะอาด · lint = warning เดิม 1 จุดใน prototype
+- regression เดิมไม่พัง: `test-queue-ghost` 7/7 · `test-queue-rejoin` 11/11 · `test-queue-status-dos` 5/5 · `test:seatmap-buyer` 27/27 · `test:sale-round` 10/10 · `test:purchase-antibot` 7/7
+
+### เจอระหว่างทาง (ไม่ใช่ของ rev นี้ แต่ต้องรู้)
+- **DB local `concert_antibot` ว่างเปล่า** — 0 users / 0 concerts, sequence เริ่มที่ 1, ไม่มีตาราง `_prisma_migrations` (= schema ถูกสร้างใหม่ด้วย `db push`) ทั้งที่ volume ยังเป็น `project-end_postgres-data` ตัวเดิม · ข้อมูลเดโม BABYMONSTER (#70, 69 โซน, รูปผัง) ที่ HANDOFF 25 ส.ค. อ้างว่าอยู่ใน DB นี้**ไม่มีแล้ว** · DB `concert_merge_test` (ใช้ตรวจ merge 25 ส.ค.) มีแค่ seed · ไม่พบ dump/backup ในเครื่อง → seed `user@local`/`admin@local` + คอนเสิร์ตตัวอย่าง 2 งานกลับเข้า `concert_antibot` (2026-08-26) เพื่อรันเทสเบราว์เซอร์ — ถ้าจะสาธิตผัง 69 โซนต้องนำเข้ารูป+Excel ใหม่
+
+---
+
 ## [Revision 25 — merge สาย presale (พรชนก) เข้า seatmap: ระบบสมาชิก/รอบพรีเซลเหลือฉบับเดียว] — 2026-08-25
 
 ### Trigger
