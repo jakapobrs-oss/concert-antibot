@@ -25,6 +25,27 @@ beforeEach(() => {
   verifyTurnstileMock.mockReset();
 });
 
+describe("assessPurchase — token ต้องเป็นของด่านซื้อ (SECURITY_TODO #2)", () => {
+  it("ส่ง action=purchase + Host ของคำขอให้ verifyTurnstile (token จากด่านคิวใช้ตรงนี้ไม่ได้)", async () => {
+    verifyTurnstileMock.mockResolvedValue({ success: true, devMode: false });
+    const headers = realBrowserHeaders();
+    headers.set("host", "concert-antibot.vercel.app");
+    await assessPurchase({ userAgent: REAL_UA, headers, turnstileToken: "tok", ip: "203.0.113.7" });
+    expect(verifyTurnstileMock).toHaveBeenCalledWith("tok", "203.0.113.7", {
+      action: "purchase",
+      hostname: "concert-antibot.vercel.app",
+    });
+  });
+
+  it("verifyTurnstile ตอบไม่ผ่านเพราะ action-mismatch → นับเป็น fail (+55) เหมือน token ปลอม", async () => {
+    verifyTurnstileMock.mockResolvedValue({ success: false, devMode: false, errorCodes: ["action-mismatch"] });
+    const r = await assessPurchase({ userAgent: REAL_UA, headers: realBrowserHeaders(), turnstileToken: "tok" });
+    expect(r.signals.turnstile).toBe("fail");
+    expect(r.score).toBe(55);
+    expect(r.action).toBe("CHALLENGE");
+  });
+});
+
 describe("assessPurchase — คนซื้อจริง", () => {
   it("เบราว์เซอร์ปกติที่ไม่มี Turnstile token ต้องผ่าน (ไม่ใช่ CHALLENGE ยกแผง)", async () => {
     const r = await assessPurchase({

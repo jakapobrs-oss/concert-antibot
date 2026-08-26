@@ -1403,6 +1403,7 @@ export function SeatMapSvg({
             </p>
             <TurnstileWidget
               siteKey={turnstileSiteKey}
+              action="purchase"
               size="compact"
               onVerify={(token) => {
                 setNeedChallenge(false);

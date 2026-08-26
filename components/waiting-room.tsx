@@ -262,6 +262,7 @@ export function WaitingRoom({
         <p className="text-sm text-fg-dim">กรุณาทำเครื่องหมายด้านล่างเพื่อเข้าคิว</p>
         <TurnstileWidget
           siteKey={turnstileSiteKey}
+          action="queue_join"
           onVerify={(token) => attemptJoin(token)}
         />
       </div>

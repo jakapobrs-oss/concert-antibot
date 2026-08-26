@@ -105,7 +105,28 @@ describe("assessRequest — Turnstile signal", () => {
       fingerprintHash: "fp",
       ip: "203.0.113.7",
     });
-    expect(mockedVerify).toHaveBeenCalledWith("tok", "203.0.113.7");
+    // SECURITY_TODO #2: ด่านคิวต้องบอก verifyTurnstile ว่า token ควรเป็นของ widget "queue_join"
+    //   ไม่มี Host header ในเทสนี้ → hostname: null (= ข้ามเช็คโดเมน แต่ยังเช็ค action)
+    expect(mockedVerify).toHaveBeenCalledWith("tok", "203.0.113.7", {
+      action: "queue_join",
+      hostname: null,
+    });
+  });
+
+  it("ส่ง Host ของคำขอไปให้ verifyTurnstile เทียบกับโดเมนที่ token ถูกแก้ (SECURITY_TODO #2)", async () => {
+    const headers = completeHeaders();
+    headers.set("host", "concert-antibot.vercel.app");
+    await assessRequest({
+      turnstileToken: "tok",
+      userAgent: CHROME_UA,
+      headers,
+      fingerprintHash: "fp",
+      ip: "203.0.113.7",
+    });
+    expect(mockedVerify).toHaveBeenCalledWith("tok", "203.0.113.7", {
+      action: "queue_join",
+      hostname: "concert-antibot.vercel.app",
+    });
   });
 });
 

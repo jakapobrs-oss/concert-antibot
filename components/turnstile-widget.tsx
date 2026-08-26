@@ -3,6 +3,7 @@
 // Cloudflare Turnstile widget (client) — โหลด script + render checkbox
 // callback ส่ง token กลับให้ parent ผ่าน onVerify
 import { useEffect, useRef } from "react";
+import type { TurnstileAction } from "@/lib/turnstile-actions";
 
 // ขยาย window type สำหรับ turnstile global
 declare global {
@@ -22,6 +23,8 @@ interface TurnstileOptions {
   "expired-callback"?: () => void;
   theme?: "light" | "dark" | "auto";
   size?: "normal" | "compact";
+  // ชื่อจุดที่ขอ — ฝังใน token ให้ server เทียบตอน verify (SECURITY_TODO #2)
+  action?: string;
 }
 
 const SCRIPT_URL =
@@ -30,11 +33,15 @@ const SCRIPT_URL =
 export function TurnstileWidget({
   siteKey,
   onVerify,
+  // บังคับระบุทุกจุด — server (lib/turnstile.ts) ปฏิเสธ token ที่ action ไม่ตรงด่าน
+  // จึงห้ามมี widget ที่ "ไม่มี action" หลุดไป ไม่งั้นคนจริงแก้ challenge แล้วยังไม่ผ่าน
+  action,
   // "compact" (150px) สำหรับกล่องแคบ เช่น แถบสรุปที่นั่งข้างผัง — ขนาด normal กว้าง 300px จะล้นกล่อง
   size = "normal",
 }: {
   siteKey: string;
   onVerify: (token: string) => void;
+  action: TurnstileAction;
   size?: "normal" | "compact";
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -47,6 +54,7 @@ export function TurnstileWidget({
         widgetIdRef.current = window.turnstile.render(ref.current, {
           sitekey: siteKey,
           callback: onVerify,
+          action,
           // ธีมมืดให้กลืนกับพื้นเวทีของเว็บ
           theme: "dark",
           size,
@@ -68,7 +76,7 @@ export function TurnstileWidget({
         document.head.appendChild(s);
       }
     }
-  }, [siteKey, onVerify, size]);
+  }, [siteKey, onVerify, action, size]);
 
   return <div ref={ref} className="flex justify-center" />;
 }

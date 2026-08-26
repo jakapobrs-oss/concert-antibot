@@ -17,6 +17,7 @@
 //   → ที่นี่ "ไม่ส่ง token" = 0 คะแนน (ไม่ใช่ความผิด) · ส่งมาแล้วผ่าน = หลักฐานว่าเป็นคน
 import { scoreUserAgent, scoreHeaders, ANTIBOT_CONFIG, type BotAction } from "@/lib/antibot";
 import { verifyTurnstile } from "@/lib/turnstile";
+import { TURNSTILE_ACTIONS } from "@/lib/turnstile-actions";
 
 export interface PurchaseSignals {
   turnstile: "pass" | "fail" | "dev-pass" | "not-required";
@@ -61,7 +62,12 @@ export async function assessPurchase(params: {
   let turnstileSignal: PurchaseSignals["turnstile"] = "not-required";
   let turnstilePassed = false;
   if (params.turnstileToken) {
-    const ts = await verifyTurnstile(params.turnstileToken, params.ip);
+    // SECURITY_TODO #2: token ต้องแก้จาก widget ของด่านซื้อ (action) บนโดเมนที่คำขอนี้ยิงมา (Host)
+    //   token ที่มนุษย์แก้ให้ที่ด่านคิวแล้วสคริปต์เอามาใช้ตรงนี้ = action-mismatch → นับเป็น "fail" (+55)
+    const ts = await verifyTurnstile(params.turnstileToken, params.ip, {
+      action: TURNSTILE_ACTIONS.PURCHASE,
+      hostname: params.headers.get("host"),
+    });
     if (ts.success) {
       turnstileSignal = ts.devMode ? "dev-pass" : "pass";
       turnstilePassed = true;

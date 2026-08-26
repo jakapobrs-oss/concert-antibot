@@ -16,6 +16,7 @@
 //   4. Fingerprint presence (ไม่มี fingerprint = น่าสงสัย เพราะ JS ไม่รัน)
 // (Layer 2 = behavior analysis จะเพิ่ม Phase 6)
 import { verifyTurnstile } from "@/lib/turnstile";
+import { TURNSTILE_ACTIONS } from "@/lib/turnstile-actions";
 
 export type BotAction = "ALLOW" | "CHALLENGE" | "BLOCK";
 
@@ -78,7 +79,11 @@ export async function assessRequest(params: {
   let score = 0;
 
   // --- Signal 1: Turnstile (หนักสุด) ---
-  const ts = await verifyTurnstile(params.turnstileToken, params.ip);
+  // SECURITY_TODO #2: token ต้องแก้จาก widget ของด่านคิว (action) บนโดเมนที่คำขอนี้ยิงมา (Host)
+  const ts = await verifyTurnstile(params.turnstileToken, params.ip, {
+    action: TURNSTILE_ACTIONS.QUEUE_JOIN,
+    hostname: params.headers.get("host"),
+  });
   let turnstileSignal: BotSignals["turnstile"];
   if (!params.turnstileToken) {
     turnstileSignal = "missing";
