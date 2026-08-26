@@ -1,5 +1,6 @@
 // Unit tests — lib/email-signup-gate.ts: production ที่ไม่มี email provider ต้องปิดรับสมัครด้วยอีเมล
 // บั๊กที่จับ (readiness audit 2026-08-26): prod ไม่มี RESEND_API_KEY แต่ยังรับสมัคร → บัญชียืนยันไม่ได้ + token ลง log
+// เพิ่ม 2026-08-27: โหมดข้ามยืนยัน (EMAIL_VERIFICATION=skip) ไม่ต้องส่งอีเมล → เปิดเสมอ
 import { describe, it, expect } from "vitest";
 import { isEmailSignupOpen, EMAIL_SIGNUP_CLOSED_MESSAGE } from "@/lib/email-signup-gate";
 
@@ -14,6 +15,14 @@ describe("isEmailSignupOpen — ด่านสมัครด้วยอีเ
 
   it("dev ไม่มี provider → ยังเปิด (ลิงก์ยืนยันโผล่ใน console ให้ copy)", () => {
     expect(isEmailSignupOpen({ isProduction: false, isEmailEnabled: false })).toBe(true);
+  });
+
+  it("ไม่ส่ง verificationRequired = ถือว่ายังต้องยืนยัน (default ปลอดภัย)", () => {
+    expect(isEmailSignupOpen({ isProduction: true, isEmailEnabled: false, verificationRequired: true })).toBe(false);
+  });
+
+  it("โหมดข้ามยืนยัน (skip) บน production ที่ไม่มี provider → เปิด เพราะไม่ต้องส่งอีเมล", () => {
+    expect(isEmailSignupOpen({ isProduction: true, isEmailEnabled: false, verificationRequired: false })).toBe(true);
   });
 
   it("ข้อความบอกทางออก (Google) ไม่ใช่แค่บอกว่าปิด", () => {

@@ -34,8 +34,11 @@ export async function authenticateCredentials(input: {
   email: string;
   password: string;
   ip?: string | null;
+  // F1 เปิดอยู่เสมอ (default true) — ผู้เรียก (lib/auth.ts) ส่ง false เฉพาะโหมดเดโม EMAIL_VERIFICATION=skip
+  //   รับเป็นพารามิเตอร์แทน import env เพื่อให้ไฟล์นี้ยัง unit-test ได้โดยไม่ต้องตั้ง env ครบ
+  requireVerifiedEmail?: boolean;
 }): Promise<AuthedUser | null> {
-  const { email, password, ip } = input;
+  const { email, password, ip, requireVerifiedEmail = true } = input;
 
   // 1. rate limit ต่อ email — กัน brute-force รหัสของ account เดียว (email ไม่ spoofable เหมือน IP)
   const emailRl = await checkRateLimit({ key: `login:email:${email}`, ...EMAIL_RL });
@@ -89,7 +92,9 @@ export async function authenticateCredentials(input: {
 
   // 8. F1: ต้องยืนยันอีเมลก่อนถึงจะเข้าได้ (กัน pre-registration + dangerous-link takeover)
   //    วางไว้ "หลัง" verify+reset → คนที่รู้รหัสถูก (เจ้าของจริง) เท่านั้นที่จะเจอด่านนี้ = ไม่ leak ว่า email มีบัญชี
-  if (!user.emailVerified) return null;
+  //    โหมดเดโม (requireVerifiedEmail=false): ข้ามด่านนี้ — บัญชีที่สมัครในโหมดนั้นถูกตั้ง emailVerified ตั้งแต่สมัครอยู่แล้ว
+  //    ที่ข้ามให้ด้วยคือบัญชีเก่าที่ค้างไม่ยืนยัน (สมัครไว้ตอนยังไม่มีระบบส่งเมล)
+  if (requireVerifiedEmail && !user.emailVerified) return null;
 
   return {
     id: user.id.toString(),

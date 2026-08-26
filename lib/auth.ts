@@ -10,7 +10,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { authenticateCredentials } from "@/lib/credentials-auth";
 import { clientIpFromXff } from "@/lib/get-ip";
-import { env, isGoogleEnabled } from "@/lib/env";
+import { env, isGoogleEnabled, isEmailVerificationRequired } from "@/lib/env";
 
 // schema validate login input
 // หมายเหตุ: ไม่ใช้ .email() เพราะ dev accounts ใช้ "admin@local"/"user@local" (ไม่มี TLD)
@@ -40,6 +40,8 @@ const providers: Provider[] = [
         email: parsed.data.email,
         password: parsed.data.password,
         ip,
+        // EMAIL_VERIFICATION=skip (โหมดเดโม) → ไม่บังคับ emailVerified ตอนล็อกอิน
+        requireVerifiedEmail: isEmailVerificationRequired,
       });
     },
   }),

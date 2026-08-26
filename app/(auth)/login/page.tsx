@@ -28,8 +28,13 @@ export default async function LoginPage({
       {registered && (
         <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-success/25 bg-success/10 p-3 text-sm text-success">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
-          {/* บังคับยืนยันอีเมลก่อนล็อกอิน (credentials-auth.ts F1) — ห้ามบอก "เข้าสู่ระบบได้เลย" เพราะยังเข้าไม่ได้ */}
-          <span>สมัครสมาชิกสำเร็จ — เราส่งลิงก์ยืนยันไปที่อีเมลของคุณแล้ว กรุณายืนยันก่อนเข้าสู่ระบบ</span>
+          {/* บังคับยืนยันอีเมลก่อนล็อกอิน (credentials-auth.ts F1) — ห้ามบอก "เข้าสู่ระบบได้เลย" เพราะยังเข้าไม่ได้
+              ยกเว้น registered=verified = โหมดข้ามยืนยัน (EMAIL_VERIFICATION=skip) ที่ถือว่ายืนยันตั้งแต่สมัคร */}
+          {registered === "verified" ? (
+            <span>สมัครสมาชิกสำเร็จ — เข้าสู่ระบบได้เลย</span>
+          ) : (
+            <span>สมัครสมาชิกสำเร็จ — เราส่งลิงก์ยืนยันไปที่อีเมลของคุณแล้ว กรุณายืนยันก่อนเข้าสู่ระบบ</span>
+          )}
         </div>
       )}
       {error && (

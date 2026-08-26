@@ -37,6 +37,11 @@ export const envSchema = z.object({
   // ใช้ string ธรรมดา ไม่ใช่ .email() เพราะ dev ใช้ "noreply@localhost" (ไม่มี TLD)
   // ตอน production ที่ส่งจริงค่อย validate รูปแบบใน lib ที่ส่งเมล
   EMAIL_FROM: z.string().default("noreply@localhost"),
+  // ยืนยันอีเมลก่อนเข้าใช้ (F1): "required" = ต้องกดลิงก์ในอีเมล (default, ปลอดภัย)
+  //   "skip" = สมัครแล้วถือว่ายืนยันทันที ไม่ส่งอีเมล — สำหรับเดโม/ส่งงานที่ไม่มีโดเมนส่งเมล (2026-08-27)
+  //   ⚠️ skip เปิดช่อง pre-registration takeover (ใครก็สมัครด้วยอีเมลคนอื่นได้) → มี boot-warn บน production
+  //   โค้ดส่งลิงก์ยืนยัน/หน้า /verify ยังอยู่ครบ แค่ไม่ถูกเรียกในโหมด skip — สลับกลับด้วย env ตัวเดียว
+  EMAIL_VERIFICATION: z.enum(["required", "skip"]).default("required"),
 
   // Payment (PromptPay + EasySlip)
   // PROMPTPAY_ID = เบอร์มือถือ/เลขบัตร ปชช. ที่ "รับเงิน" — ใช้สร้าง QR + ตรวจ receiver ในสลิป

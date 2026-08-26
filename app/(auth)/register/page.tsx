@@ -4,12 +4,17 @@ import { AlertCircle } from "lucide-react";
 import { AuthTabs } from "@/components/auth-tabs";
 import { RegisterForm } from "@/components/register-form";
 import { GoogleSignInButton } from "@/components/google-signin-button";
-import { isEmailEnabled, isProduction } from "@/lib/env";
+import { isEmailEnabled, isEmailVerificationRequired, isProduction } from "@/lib/env";
 import { isEmailSignupOpen, EMAIL_SIGNUP_CLOSED_MESSAGE } from "@/lib/email-signup-gate";
 
 export default function RegisterPage() {
   // production ที่ยังไม่ตั้งอีเมล → ไม่โชว์ฟอร์ม (server action ปฏิเสธอยู่แล้ว แต่ไม่ควรให้กรอกจนจบแล้วค่อยรู้)
-  const emailSignupOpen = isEmailSignupOpen({ isProduction, isEmailEnabled });
+  //   โหมดข้ามยืนยัน (EMAIL_VERIFICATION=skip) ไม่ต้องส่งอีเมล → เปิดเสมอ
+  const emailSignupOpen = isEmailSignupOpen({
+    isProduction,
+    isEmailEnabled,
+    verificationRequired: isEmailVerificationRequired,
+  });
 
   return (
     <div className="animate-fade-in-up">

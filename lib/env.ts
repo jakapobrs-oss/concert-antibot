@@ -14,6 +14,8 @@ export { envSchema };
 // helper: รู้ว่า Google login เปิดอยู่มั้ย
 export const isGoogleEnabled = !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 export const isEmailEnabled = !!env.RESEND_API_KEY;
+// ต้องยืนยันอีเมลก่อนเข้าใช้ไหม (EMAIL_VERIFICATION=skip = โหมดเดโม ไม่ส่งอีเมล ถือว่ายืนยันตั้งแต่สมัคร)
+export const isEmailVerificationRequired = env.EMAIL_VERIFICATION !== "skip";
 
 // helper: payment config พร้อมแค่ไหน
 export const isEasySlipConfigured = !!env.EASYSLIP_API_KEY;
@@ -91,11 +93,21 @@ if (isProduction && !isGeminiConfigured) {
   );
 }
 
-// เตือนถ้า production แต่ยังไม่ตั้ง RESEND_API_KEY (readiness audit 2026-08-26)
+// เตือนถ้า production แต่ยังไม่ตั้ง RESEND_API_KEY (readiness audit 2026-08-26) — เฉพาะเมื่อยังต้องยืนยันอีเมล
 //   สมัครด้วยอีเมลถูกปิด (fail-closed ใน app/actions/auth.ts ผ่าน lib/email-signup-gate.ts) — เข้าได้ทาง Google เท่านั้น
-if (isProduction && !isEmailEnabled) {
+if (isProduction && !isEmailEnabled && isEmailVerificationRequired) {
   console.error(
     "🚨 [EMAIL] production แต่ยังไม่ได้ตั้ง RESEND_API_KEY — ปิดรับสมัครด้วยอีเมล (ล็อกอินได้เฉพาะ Google) จนกว่าจะตั้งค่า"
+  );
+}
+
+// เตือนดัง ๆ ถ้า production ปิดการยืนยันอีเมล (EMAIL_VERIFICATION=skip — โหมดเดโม/ส่งงาน 2026-08-27)
+//   ผลข้างเคียงด้านความปลอดภัย: ใครก็สมัครด้วยอีเมลของคนอื่น + รหัสตัวเองได้ (pre-registration takeover ที่ F1 กันไว้)
+//   และเจ้าของอีเมลตัวจริงจะ Google sign-in ไม่ได้ (OAuthAccountNotLinked) — ห้ามใช้โหมดนี้เมื่อเปิดขายจริง
+if (isProduction && !isEmailVerificationRequired) {
+  console.error(
+    "🚨 [AUTH] EMAIL_VERIFICATION=skip บน production — สมัครแล้วถือว่ายืนยันอีเมลทันที ไม่ส่งอีเมล (โหมดเดโม): " +
+      "ใครก็สมัครด้วยอีเมลของคนอื่นได้ กลับเป็น required ก่อนเปิดใช้จริง"
   );
 }
 

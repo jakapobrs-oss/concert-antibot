@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { clientIpFromXff } from "@/lib/get-ip";
-import { env, isEmailEnabled, isProduction } from "@/lib/env";
+import { env, isEmailEnabled, isEmailVerificationRequired, isProduction } from "@/lib/env";
 import { sendVerificationEmail } from "@/lib/email";
 import { isEmailSignupOpen, EMAIL_SIGNUP_CLOSED_MESSAGE } from "@/lib/email-signup-gate";
 
@@ -29,7 +29,7 @@ export type RegisterResult =
 export async function registerUser(formData: FormData): Promise<RegisterResult> {
   // 🚪 production ที่ยังไม่ตั้ง RESEND_API_KEY = ปิดรับสมัครด้วยอีเมล (fail-closed แบบเดียวกับ payment/cron)
   //   ไม่งั้นได้บัญชีที่ยืนยันไม่ได้ (ลิงก์ไปโผล่ใน log) + "อีเมลนี้ถูกใช้แล้ว" กันเจ้าของจริงสมัครซ้ำ — ดู lib/email-signup-gate.ts
-  if (!isEmailSignupOpen({ isProduction, isEmailEnabled })) {
+  if (!isEmailSignupOpen({ isProduction, isEmailEnabled, verificationRequired: isEmailVerificationRequired })) {
     return { ok: false, error: EMAIL_SIGNUP_CLOSED_MESSAGE };
   }
 
@@ -71,8 +71,15 @@ export async function registerUser(formData: FormData): Promise<RegisterResult> 
       passwordHash,
       name,
       role: "USER",
+      // โหมดข้ามยืนยัน (EMAIL_VERIFICATION=skip): ถือว่ายืนยันตั้งแต่สมัคร ให้ผ่านด่าน F1 ตอนล็อกอินได้เลย
+      emailVerified: isEmailVerificationRequired ? null : new Date(),
     },
   });
+
+  // โหมดข้ามยืนยัน: ไม่ส่งอีเมล — โค้ดส่งลิงก์ยืนยันด้านล่าง (+ หน้า /verify) ยังอยู่ครบ แค่ไม่ถูกเรียก
+  if (!isEmailVerificationRequired) {
+    return { ok: true, userId: user.id.toString() };
+  }
 
   // ส่ง verification token — ส่งไม่ออก (Resend ปฏิเสธ/เน็ตล่ม) = ถอนบัญชีที่เพิ่งสร้างแล้วบอกให้ลองใหม่
   //   เดิม "ไม่ rollback" โดยหวังให้ user ขอลิงก์ใหม่ทีหลัง แต่ระบบยังไม่มีปุ่มขอลิงก์ใหม่ → บัญชีตายด้าน
@@ -103,7 +110,8 @@ export async function registerAction(
   const result = await registerUser(formData);
   if (result.ok) {
     // redirect() โยน error พิเศษเพื่อเปลี่ยนหน้า — โค้ดด้านล่างจะไม่ทำงาน
-    redirect("/login?registered=1");
+    //   registered=verified → หน้า login บอก "เข้าสู่ระบบได้เลย" (โหมดข้ามยืนยัน) แทนข้อความให้ไปเช็คอีเมล
+    redirect(isEmailVerificationRequired ? "/login?registered=1" : "/login?registered=verified");
   }
   return { error: result.error, fieldErrors: result.fieldErrors };
 }
