@@ -1,6 +1,7 @@
 // ปุ่ม "เข้าสู่ระบบ/สมัครด้วย Google" — ใช้ร่วมกันทั้งหน้า login + register (DRY)
 // โผล่เฉพาะเมื่อ isGoogleEnabled (= ตั้ง GOOGLE_CLIENT_ID/SECRET แล้ว) — กันปุ่มที่กดแล้ว error
 // เป็น Server Component เพราะ signIn("google") ต้องรันใน server action
+import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { signIn } from "@/lib/auth";
 import { isGoogleEnabled } from "@/lib/env";
@@ -35,6 +36,17 @@ export function GoogleSignInButton({ label = "เข้าสู่ระบบ�
           {label}
         </Button>
       </form>
+      {/* OAuth ไม่มีฟอร์มให้ติ๊กยอมรับ → แจ้งใต้ปุ่มว่าการกดถือเป็นการยอมรับ (บัญชีใหม่จาก Google ถูกสร้างตอนกดนี่) */}
+      <p className="mt-2.5 text-center text-xs leading-relaxed text-fg-faint">
+        การดำเนินการต่อด้วย Google ถือว่ายอมรับ{" "}
+        <Link href="/terms" className="text-fg-dim underline underline-offset-2 hover:text-fg">
+          ข้อกำหนดการใช้งาน
+        </Link>{" "}
+        และ{" "}
+        <Link href="/privacy" className="text-fg-dim underline underline-offset-2 hover:text-fg">
+          นโยบายความเป็นส่วนตัว
+        </Link>
+      </p>
     </>
   );
 }

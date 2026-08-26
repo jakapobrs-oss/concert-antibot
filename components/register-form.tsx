@@ -2,8 +2,10 @@
 
 // ฟอร์มสมัครสมาชิก — ใช้ useActionState เพื่อแสดง error/field error โดยไม่ throw
 import { useActionState } from "react";
+import Link from "next/link";
 import { AlertCircle } from "lucide-react";
 import { registerAction } from "@/app/actions/auth";
+import { CONSENT_FIELD } from "@/lib/consent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,6 +61,31 @@ export function RegisterForm() {
         ) : (
           <p className="text-xs text-fg-faint">อย่างน้อย 8 ตัวอักษร</p>
         )}
+      </div>
+
+      {/* ความยินยอม (PDPA) — required ฝั่งเบราว์เซอร์แค่ช่วย UX; server ตรวจซ้ำใน registerUser (lib/consent.ts) */}
+      <div className="space-y-1.5">
+        <label className="flex cursor-pointer items-start gap-2.5 text-sm leading-relaxed text-fg-dim">
+          <input
+            type="checkbox"
+            name={CONSENT_FIELD}
+            required
+            className="mt-1 size-4 shrink-0 accent-brand-600"
+            aria-invalid={!!fieldErr?.acceptTerms}
+          />
+          <span>
+            ฉันได้อ่านและยอมรับ{" "}
+            <Link href="/terms" target="_blank" className="font-semibold text-brand-300 hover:underline">
+              ข้อกำหนดการใช้งาน
+            </Link>{" "}
+            และ{" "}
+            <Link href="/privacy" target="_blank" className="font-semibold text-brand-300 hover:underline">
+              นโยบายความเป็นส่วนตัว
+            </Link>{" "}
+            รวมถึงการเก็บลายนิ้วมือเบราว์เซอร์และรูปแบบการใช้งานเพื่อคัดกรองบอท
+          </span>
+        </label>
+        <FieldError messages={fieldErr?.acceptTerms} />
       </div>
 
       <Button type="submit" size="lg" className="w-full" loading={isPending}>

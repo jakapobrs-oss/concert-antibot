@@ -1,6 +1,8 @@
 // Checkout page (Phase 7) — แสดง QR PromptPay + upload สลิป (โทนเวทีมืด)
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { returnCutoffHours } from "@/lib/legal-info";
 import { auth } from "@/lib/auth";
 import { generatePromptPayQR } from "@/lib/promptpay";
 import { SiteHeader } from "@/components/site-header";
@@ -81,7 +83,16 @@ export default async function CheckoutPage({
             คำสั่งซื้อหมดอายุแล้ว — ที่นั่งถูกปล่อยคืน กรุณาเริ่มจองใหม่
           </div>
         ) : (
-          <CheckoutClient
+          <>
+            {/* เงื่อนไขบัตรที่ต้องเห็นก่อนจ่าย (บัตรระบุชื่อ/คืนบัตร/คืนเงิน) — ลิงก์ไปฉบับเต็ม */}
+            <p className="mb-4 rounded-lg border border-fg/10 bg-ink-900/60 px-3.5 py-2.5 text-xs leading-relaxed text-fg-faint">
+              การชำระเงินถือว่ายอมรับ{" "}
+              <Link href="/ticket-terms" target="_blank" className="font-semibold text-fg-dim underline underline-offset-2 hover:text-fg">
+                เงื่อนไขบัตรและการคืนเงิน
+              </Link>{" "}
+              — บัตรระบุชื่อผู้ถือ โอนสิทธิ์ไม่ได้ · คืนบัตรได้ถึง {returnCutoffHours} ชั่วโมงก่อนเริ่มงาน คืนเงินเต็มจำนวน
+            </p>
+            <CheckoutClient
             orderId={orderId}
             amount={amount}
             qrDataUrl={dataUrl}
@@ -90,6 +101,7 @@ export default async function CheckoutPage({
             expiresAt={order.expiresAt.toISOString()}
             concertSlug={order.concert.slug}
           />
+          </>
         )}
       </main>
     </div>

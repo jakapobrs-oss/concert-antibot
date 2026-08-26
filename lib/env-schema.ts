@@ -73,6 +73,10 @@ export const envSchema = z.object({
   // ขอจาก: https://aistudio.google.com/apikey
   GEMINI_API_KEY: z.string().optional(),
 
+  // อีเมลติดต่อเรื่องข้อมูลส่วนบุคคล/ปัญหาการใช้งาน — โชว์ในหน้า /privacy (rev 34)
+  //   ไม่ตั้ง = หน้านโยบายบอกให้ติดต่อผ่านแชตช่วยเหลือในเว็บแทน (ไม่ใส่อีเมลปลอม)
+  SUPPORT_EMAIL: z.string().optional(),
+
   // Queue fairness — HMAC secret สำหรับคำนวณ deterministic randomScore ต่อ userId+concert
   // กัน leave/rejoin re-roll: user เดิม+concert เดิม ได้ randomScore เดิมเสมอ
   // สร้างด้วย: openssl rand -base64 32

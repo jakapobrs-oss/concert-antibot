@@ -8,7 +8,7 @@ export function SiteFooter() {
     <footer className="bg-stage relative mt-auto overflow-hidden border-t border-fg/10">
       <div className="bg-grain pointer-events-none absolute inset-0" aria-hidden />
 
-      <div className="relative mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:grid-cols-[1.4fr_1fr_1fr]">
+      <div className="relative mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
         {/* แบรนด์ */}
         <div>
           <Link href="/" className="flex w-fit items-center gap-2.5 text-fg">
@@ -61,6 +61,28 @@ export function SiteFooter() {
             ศึกษาการป้องกันบอทและความเป็นธรรมในการจองบัตรคอนเสิร์ต
           </p>
         </div>
+
+        {/* เอกสารสำหรับผู้ใช้ — กฎหมาย/เงื่อนไข (PDPA ต้องหาเจอจากทุกหน้า) */}
+        <nav className="text-sm" aria-label="เอกสารและนโยบาย">
+          <p className="mb-3 font-display font-semibold text-fg">นโยบาย</p>
+          <ul className="space-y-2 text-fg-faint">
+            <li>
+              <Link href="/terms" className="transition-colors hover:text-fg">
+                ข้อกำหนดการใช้งาน
+              </Link>
+            </li>
+            <li>
+              <Link href="/privacy" className="transition-colors hover:text-fg">
+                นโยบายความเป็นส่วนตัว
+              </Link>
+            </li>
+            <li>
+              <Link href="/ticket-terms" className="transition-colors hover:text-fg">
+                เงื่อนไขบัตรและการคืนเงิน
+              </Link>
+            </li>
+          </ul>
+        </nav>
       </div>
 
       {/* แถบล่าง: copyright + เส้น barcode เหมือนขอบตั๋ว */}

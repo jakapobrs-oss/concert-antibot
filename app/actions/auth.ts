@@ -14,6 +14,7 @@ import { clientIpFromXff } from "@/lib/get-ip";
 import { env, isEmailEnabled, isEmailVerificationRequired, isProduction } from "@/lib/env";
 import { sendVerificationEmail } from "@/lib/email";
 import { isEmailSignupOpen, EMAIL_SIGNUP_CLOSED_MESSAGE } from "@/lib/email-signup-gate";
+import { hasAcceptedTerms, CONSENT_FIELD, CONSENT_REQUIRED_MESSAGE } from "@/lib/consent";
 
 const registerSchema = z
   .object({
@@ -31,6 +32,16 @@ export async function registerUser(formData: FormData): Promise<RegisterResult> 
   //   ไม่งั้นได้บัญชีที่ยืนยันไม่ได้ (ลิงก์ไปโผล่ใน log) + "อีเมลนี้ถูกใช้แล้ว" กันเจ้าของจริงสมัครซ้ำ — ดู lib/email-signup-gate.ts
   if (!isEmailSignupOpen({ isProduction, isEmailEnabled, verificationRequired: isEmailVerificationRequired })) {
     return { ok: false, error: EMAIL_SIGNUP_CLOSED_MESSAGE };
+  }
+
+  // 📜 ความยินยอม (PDPA) — ต้องติ๊กยอมรับข้อกำหนด+นโยบายก่อน; ตรวจฝั่ง server เสมอ (required ในฟอร์มข้ามได้ด้วย DevTools)
+  //   ตรวจก่อนแตะ DB/rate-limit: ไม่ยินยอม = ไม่มีอะไรถูกบันทึก (เวลาที่ยอมรับ = User.createdAt ของบัญชีที่สร้างสำเร็จ)
+  if (!hasAcceptedTerms(formData.get(CONSENT_FIELD))) {
+    return {
+      ok: false,
+      error: CONSENT_REQUIRED_MESSAGE,
+      fieldErrors: { [CONSENT_FIELD]: [CONSENT_REQUIRED_MESSAGE] },
+    };
   }
 
   const raw = {

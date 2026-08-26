@@ -85,6 +85,17 @@ export default async function QueuePage({
             </p>
           )}
         </div>
+
+        {/* แจ้งการเก็บข้อมูลกันบอท ณ จุดที่เริ่มเก็บจริง (fingerprint + พฤติกรรมเมาส์/คีย์เริ่มใน WaitingRoom) — PDPA */}
+        {concert.status === "ON_SALE" && (
+          <p className="relative mt-4 text-center text-xs leading-relaxed text-fg-faint">
+            ระหว่างอยู่ในห้องรอ ระบบเก็บลายนิ้วมือเบราว์เซอร์และรูปแบบการขยับเมาส์/กดคีย์ (เป็นตัวเลขสรุป ไม่เก็บสิ่งที่พิมพ์)
+            เพื่อคัดกรองบอท —{" "}
+            <Link href="/privacy" className="underline underline-offset-2 hover:text-fg">
+              นโยบายความเป็นส่วนตัว
+            </Link>
+          </p>
+        )}
       </main>
     </div>
   );
