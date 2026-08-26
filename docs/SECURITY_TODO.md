@@ -69,6 +69,9 @@
   ใน production = ปฏิเสธทันที `test-key-on-production` โดยไม่ยิง Cloudflare + boot-warn ใน `lib/env.ts` ทั้ง site key/secret
   (3) ห้องรอ: 428 ซ้ำหลังส่ง token → ขึ้น "ยืนยันไม่ผ่าน" + mount widget ใหม่ (เดิมกล่องค้าง "สำเร็จ!" เงียบ ๆ)
   (4) เก็บ error code ลง `signals.turnstileErrors` ทั้งด่านคิว/ด่านซื้อ · เทส `turnstile.test.ts` +2 · `antibot.test.ts` +2 · `antibot-purchase.test.ts` +1
+- **ผ่านแล้วบน prod 2026-08-26 14:55** (token จริง + action `queue_join` + hostname `concert-antibot.vercel.app` → join 200 → ผ่านคิว)
+  หลังแก้อีก 1 ชั้น: คีย์จริงเดิมเป็นของบัญชี Cloudflare อื่นที่ไม่มีโดเมน prod (error 110200) → widget ใหม่ในบัญชี user
+  (`concert-antibot`, hostnames `concert-antibot.vercel.app` + `localhost`) — ดู CHANGELOG rev 28
 - **หลักฐาน**: `tests/unit/turnstile.test.ts` (ใหม่ 14) · `antibot.test.ts` +1 · `antibot-purchase.test.ts` +2 · typecheck 0
 
 ### 3. payerKey fallback ใช้ชื่อผู้โอน — ✅ แก้แล้ว (2026-08-26) แบบ "ธนาคาร:ชื่อ"

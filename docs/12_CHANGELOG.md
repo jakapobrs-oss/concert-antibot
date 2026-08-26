@@ -34,7 +34,12 @@
 ### หลักฐาน
 - unit: `turnstile.test.ts` +2 (prod ปฏิเสธโดยไม่ยิง fetch / dev ผ่าน) · `antibot.test.ts` +2 · `antibot-purchase.test.ts` +1 assertion
   → รวม **574/574** · typecheck 0 · eslint 0 (ไฟล์ที่แตะ)
-- เช็คมือบน prod หลัง deploy: ดู HANDOFF.md §0 (ผลรอบใหม่ของ user)
+- เช็คมือบน prod หลัง deploy (14:55): **ผ่าน** — เข้า `/concerts/bts-bangkok-2026/queue` → Turnstile โหลดจาก challenges.cloudflare.com 200
+  ไม่มี error 110200 → `POST /api/queue/join` 200 → `ผ่านคิวแล้ว` เด้งไปหน้าเลือกที่นั่ง (Managed mode ตรวจแบบไม่ต้องติ๊กสำหรับเบราว์เซอร์ปกติ)
+- **รอบแรกหลังสลับคีย์ยังพัง (14:42)**: widget ขึ้น "ไม่สามารถเชื่อมต่อกับเว็บไซต์ได้" — console: `TurnstileError 110200` = โดเมนไม่อยู่ใน
+  Hostname management ของ widget · เปิด Cloudflare dashboard ของ user แล้วพบว่า **บัญชี user ไม่มี widget เลย** — คีย์ `0x4AA…` เดิมใน `.env`
+  เป็นของบัญชี Cloudflare อื่น (เพิ่มโดเมนให้ไม่ได้) → **สร้าง widget ใหม่ในบัญชี user** ชื่อ `concert-antibot` (hostnames
+  `concert-antibot.vercel.app` + `localhost`, Managed) → user ใส่คู่ใหม่ลง `.env` แล้ว rm/add env prod อีกรอบ + redeploy (`n0qys5loc`) → ผ่าน
 
 ### บทเรียน
 - "เทสเขียว + เข้าคิวได้" ≠ CAPTCHA ทำงาน — test key ผ่านเสมอ; สัญญาณเดียวคือป้าย "for testing only" บน widget → ตอนนี้มี boot-warn + fail-closed แทนการพึ่งสายตา

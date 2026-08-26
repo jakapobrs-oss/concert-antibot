@@ -40,7 +40,7 @@
 - [ ] **`NODE_ENV=production`** — ตอนนี้ `.env` = development → fail-closed/HSTS/secure-cookie/boot-guard **ตายหมด** (ระบบรันโหมด dev-mock: slip ผ่าน mock, CAPTCHA fail-open)
 - [ ] **`NEXTAUTH_URL=https://<โดเมนจริง>`** — ตอนนี้ฮาร์ดโค้ด `http://localhost:3000` → ใช้สร้างลิงก์ยืนยันอีเมล + OAuth callback + cookie host (ถ้าไม่แก้ ลิงก์ verify จะชี้ localhost + Google redirect mismatch)
 - [ ] เปลี่ยน infra credentials ที่เป็น default (`POSTGRES_PASSWORD=dev_only_change_me`, `MINIO_ROOT_PASSWORD=minioadmin_change_me`) เป็นรหัสจริง
-- [ ] ⚠️ **ลำดับสำคัญ:** ตั้ง Turnstile key **ก่อน/พร้อม** flip `NODE_ENV=production` ไม่งั้น H1 จะ block ผู้ใช้ทุกคนทันที — **ต้องเป็นคีย์จริง ไม่ใช่ test key `1x0000…` ของ Cloudflare** (prod เคยตั้ง test key ไว้ 43 วันโดยไม่รู้ตัว = CAPTCHA ปิดเงียบ ๆ; ตั้งแต่ rev 28 โค้ดปฏิเสธ test key บน production + เตือนตอน boot) และโดเมน prod ต้องอยู่ใน Hostname management ของ widget
+- [ ] ⚠️ **ลำดับสำคัญ:** ตั้ง Turnstile key **ก่อน/พร้อม** flip `NODE_ENV=production` ไม่งั้น H1 จะ block ผู้ใช้ทุกคนทันที — **ต้องเป็นคีย์จริง ไม่ใช่ test key `1x0000…` ของ Cloudflare** (prod เคยตั้ง test key ไว้ 43 วันโดยไม่รู้ตัว = CAPTCHA ปิดเงียบ ๆ; ตั้งแต่ rev 28 โค้ดปฏิเสธ test key บน production + เตือนตอน boot) และโดเมน prod ต้องอยู่ใน Hostname management ของ widget — widget ที่ใช้อยู่ (2026-08-26) = `concert-antibot` ในบัญชี Cloudflare ของเจ้าของโปรเจกต์ (hostnames `concert-antibot.vercel.app` + `localhost`; เปลี่ยนโดเมน = ต้องเพิ่มที่นั่น ไม่งั้น widget ขึ้น error 110200)
 
 ---
 
