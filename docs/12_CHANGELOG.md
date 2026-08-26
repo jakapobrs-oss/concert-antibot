@@ -19,6 +19,10 @@ user-test ทุกเส้นทางบน prod ผ่าน Chrome (รา�
 - `lib/local-datetime.ts` (ใหม่, pure): `parseThaiDateTimeLocal()` — ไม่มี TZ → เติม `+07:00`; มี Z/offset → ใช้ตามนั้น; พัง/ว่าง → null
 - `app/actions/concert.ts` ใช้ helper + ฟ้อง "วันเวลาไม่ถูกต้อง" / "เวลาปิดขายต้องอยู่หลังเวลาเริ่มขาย" (เดิมสร้างได้แม้ปิดก่อนเริ่ม)
 - ไม่แก้ข้อมูลเก่า: คอนเสิร์ต #46 (ทดสอบ, ปิดขาย) ยังเก็บเวลาเลื่อนอยู่
+- **`prisma/seed.ts` (พ่วงใน rev นี้ เพราะ deploy `bg3f1yhg1` ล้ม)**: seed รันทุก deploy บน Vercel และ `concert.deleteMany` คอนเสิร์ตเดโม
+  → พอมีออเดอร์จาก user-test อ้างถึง BTS ก็ชน FK `orders_concertId_fkey` → build ล้มทั้ง deploy (ไม่ใช่โค้ดที่แก้) →
+  เปลี่ยนเป็นสร้างเฉพาะเมื่อยังไม่มี slug (idempotent, ไม่ล้างเดโมทุก deploy อีก) + เลิกพิมพ์รหัสผ่าน fixture ลง build log ·
+  ยังคงสร้าง `admin@local`/`user@local` บน production (รอ user ตัดสินใจ — ดู SECURITY_TODO/HANDOFF)
 - **ยังไม่แก้** บั๊กอื่นจาก user-test: ตัวกรอง bot-log, ยกเลิกออเดอร์ไม่มี confirm, คอนเสิร์ต 0 โซน ฿∞/กำลังขาย, ปุ่มให้สิทธิ์สมาชิก, validation ภาษาอังกฤษ
 
 ### หลักฐาน
