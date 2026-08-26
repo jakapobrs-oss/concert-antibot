@@ -13,6 +13,7 @@
 // ทำไมต้องนับ held ด้วย: ถ้าประกาศ SOLD OUT ตอน available = 0 แต่ยังมี held ค้าง
 //   พอ hold หมดอายุที่นั่งจะไหลกลับมาเป็น AVAILABLE แต่ป้าย "บัตรหมด" ค้างไปแล้ว = โกหกผู้ใช้
 import { prisma } from "@/lib/prisma";
+import { isSoldOut } from "@/lib/admit-policy";
 
 export type ConcertAvailability = {
   available: number; // เลือกได้ตอนนี้
@@ -21,19 +22,10 @@ export type ConcertAvailability = {
 };
 
 // ------------------------------------------------------------
-// pure
+// pure — นิยามจริงย้ายไป lib/admit-policy.ts (ไฟล์ pure ไม่แตะ DB) เพราะ lib/queue.ts ต้องใช้
+//   นิยามเดียวกันตัดสิน "คิวไม่มีทางไปต่อ" โดยไม่ลาก prisma เข้าโมดูลคิว — re-export ให้ผู้เรียกเดิมใช้ชื่อเดิม
 // ------------------------------------------------------------
-
-// บัตรหมดจริงไหม — ต้องไม่เหลือทั้งที่นั่งว่างและที่นั่งที่ค้างจ่าย
-export function isSoldOut(params: { available: number; held: number }): boolean {
-  return params.available <= 0 && params.held <= 0;
-}
-
-// "ตอนนี้ยังเลือกที่นั่งไม่ได้" แต่ยังไม่ถือว่าหมด (มี hold ค้างที่อาจหลุดกลับมา)
-//   ใช้บอกผู้ใช้ให้รอ แทนที่จะไล่กลับด้วยคำว่าบัตรหมด
-export function isTemporarilyFull(params: { available: number; held: number }): boolean {
-  return params.available <= 0 && params.held > 0;
-}
+export { isSoldOut, isTemporarilyFull } from "@/lib/admit-policy";
 
 // ------------------------------------------------------------
 // DB

@@ -44,3 +44,24 @@ export function computeAdmitExtension(params: {
   // ห้าม "หด" เวลาที่ถืออยู่แล้ว และห้ามทะลุเพดานแข็ง
   return Math.max(currentExpireAt, Math.min(ideal, cap));
 }
+
+// ============================================================
+// ที่นั่งของคอนเสิร์ตจากมุมคนในคิว — "คิวนี้ยังมีทางไปต่อไหม"
+// ============================================================
+// นิยามเดียวกับ docs/23 (เดิมอยู่ใน lib/sold-out.ts ซึ่ง import prisma) — ย้ายมาไฟล์ pure
+//   เพราะ lib/queue.ts ต้องตัดสิน SOLD_OUT / เต็มชั่วคราว จาก snapshot ใน Redis โดยไม่ลาก DB เข้าโมดูลคิว
+//   available = ที่นั่ง AVAILABLE (เลือกได้ตอนนี้)
+//   held      = ที่นั่ง HELD (คนอื่นอยู่หน้าจ่ายเงิน อีกไม่กี่นาทีอาจหลุดกลับมา)
+export type SeatSnapshot = { available: number; held: number };
+
+// บัตรหมดจริงไหม — ต้องไม่เหลือทั้งที่นั่งว่างและที่นั่งที่ค้างจ่าย
+//   (ประกาศหมดตอนว่าง 0 เฉย ๆ แล้ว hold หลุดกลับมา = โกหกผู้ใช้)
+export function isSoldOut(params: SeatSnapshot): boolean {
+  return params.available <= 0 && params.held <= 0;
+}
+
+// "ตอนนี้ยังเลือกที่นั่งไม่ได้" แต่ยังไม่ถือว่าหมด (มี hold ค้างที่อาจหลุดกลับมา)
+//   ใช้บอกผู้ใช้ให้รอ แทนที่จะไล่กลับด้วยคำว่าบัตรหมด
+export function isTemporarilyFull(params: SeatSnapshot): boolean {
+  return params.available <= 0 && params.held > 0;
+}

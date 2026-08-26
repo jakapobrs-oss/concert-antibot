@@ -13,12 +13,20 @@ import { useBehaviorTracker } from "@/lib/use-behavior-tracker";
 
 interface QueueStatus {
   token: string;
-  status: "WAITING" | "ADMITTED" | "EXPIRED" | "NOT_FOUND";
+  status: "WAITING" | "ADMITTED" | "EXPIRED" | "NOT_FOUND" | "SOLD_OUT";
   position: number;
   ahead: number;
   total: number;
   admitExpiresAt?: number;
+  seatsFull?: boolean; // ว่าง 0 แต่มีคนค้างจ่าย — รอ hold หลุด ไม่ใช่คิวค้าง
 }
+
+// หัวข้อจอ "ไม่มีคิวให้รอ" ตาม action ที่ /api/queue/join ตอบ 403 — action อื่น (BLOCK) = จอบอท
+const CLOSED_TITLE: Record<string, string> = {
+  SOLD_OUT: "บัตรหมดแล้ว",
+  NOT_ON_SALE: "ยังไม่เปิดขาย",
+  ROUND_LOCKED: "ยังเข้าคิวรอบนี้ไม่ได้",
+};
 
 // peak-load: poll แบบ backoff ตามตำแหน่งคิว — คนอยู่ท้ายคิวไม่ต้อง poll ถี่
 //   (ยังไงก็อีกนานกว่าจะถึง) ลดภาระ /api/queue/status ตอน flash-crowd ได้หลายเท่า
@@ -50,6 +58,8 @@ export function WaitingRoom({
   const [error, setError] = useState<string | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [needChallenge, setNeedChallenge] = useState(false);
+  // "ไม่มีคิวให้รอ" — บัตรหมด / ยังไม่เปิดขาย / ยังไม่ถึงรอบ: ทางออกคือกลับหน้าคอนเสิร์ต ไม่ใช่เข้าคิวใหม่ (วนลูป)
+  const [closed, setClosed] = useState<{ title: string; message: string } | null>(null);
   const tokenRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stoppedRef = useRef(false); // หยุด poll เมื่อ admitted/expired/unmount
@@ -86,6 +96,13 @@ export function WaitingRoom({
         setTimeout(() => router.push(`/concerts/${slug}/seats?qt=${token}`), 1200);
         return;
       }
+      if (data.status === "SOLD_OUT") {
+        // บัตรหมดระหว่างรอ — หยุด poll แล้วบอกตรง ๆ (เดิมไม่มีสถานะนี้ → ค้าง "ตำแหน่ง 1" จนคิวหมดอายุ)
+        stoppedRef.current = true;
+        if (pollRef.current) clearTimeout(pollRef.current);
+        setClosed({ title: "บัตรหมดแล้ว", message: "ที่นั่งถูกจองครบแล้วระหว่างที่คุณรอ ขอบคุณที่สนใจ" });
+        return;
+      }
       if (data.status === "EXPIRED" || data.status === "NOT_FOUND") {
         stoppedRef.current = true;
         if (pollRef.current) clearTimeout(pollRef.current);
@@ -116,9 +133,14 @@ export function WaitingRoom({
           }),
         });
 
-        // BLOCK — ปฏิเสธ
+        // 403 มีหลายความหมาย — แยกด้วย action จาก server: จอ "ตรวจพบกิจกรรมผิดปกติ" ใช้เฉพาะ BLOCK
+        //   บัตรหมด/ยังไม่เปิดขาย/ยังไม่ถึงรอบ ไม่ใช่ความผิดผู้ใช้ → บอกเหตุผลจริง + ทางกลับ
+        //   (เดิม 403 ทุกแบบขึ้นจอบอท — คนที่มาช้าจนบัตรหมดถูกกล่าวหาว่าเป็นบอท)
         if (res.status === 403) {
-          setBlocked(true);
+          const body = await res.json().catch(() => ({}));
+          const title = CLOSED_TITLE[String(body.action)];
+          if (title) setClosed({ title, message: body.error ?? "" });
+          else setBlocked(true);
           return;
         }
         // CHALLENGE — ต้องทำ Turnstile ก่อน
@@ -215,6 +237,21 @@ export function WaitingRoom({
     );
   }
 
+  if (closed) {
+    return (
+      <div className="space-y-4 text-center">
+        <div className="mx-auto grid size-16 place-items-center rounded-full border border-fg/15 bg-fg/5 text-fg-dim">
+          <Ban className="size-8" />
+        </div>
+        <h2 className="font-display text-xl font-semibold text-fg">{closed.title}</h2>
+        {closed.message && <p className="text-sm leading-relaxed text-fg-dim">{closed.message}</p>}
+        <Button variant="outline" onClick={() => router.push(`/concerts/${slug}`)}>
+          กลับหน้าคอนเสิร์ต
+        </Button>
+      </div>
+    );
+  }
+
   if (needChallenge) {
     return (
       <div className="space-y-4 text-center">
@@ -260,7 +297,8 @@ export function WaitingRoom({
       : Math.min(100, Math.max(0, ((initial - status.position) / initial) * 100));
   targetRef.current = progress;
   const runnerLeft = 4 + (display / 100) * 88; // % ตำแหน่งนักวิ่งบนแทร็ก (ใช้ display ที่ลื่น)
-  const near = status.status === "WAITING" && status.position <= 20; // ใกล้ถึงคิว → วิ่งเร็ว
+  // ใกล้ถึงคิว → วิ่งเร็ว (แต่ถ้าที่นั่งเต็มชั่วคราว อย่าเชียร์ว่า "ใกล้แล้ว" — ยังไม่รู้ว่าจะได้ปล่อยเมื่อไหร่)
+  const near = status.status === "WAITING" && status.position <= 20 && !status.seatsFull;
   const runnerMode: "jog" | "fast" | "cheer" = celebrating ? "cheer" : near ? "fast" : "jog";
 
   return (
@@ -363,9 +401,11 @@ export function WaitingRoom({
           </div>
         </div>
         <p className="mt-2 text-xs text-fg-faint">
-          {near && !celebrating
-            ? "ใกล้แล้ว! เตรียมเลือกที่นั่ง — อย่าปิดหน้านี้"
-            : "กรุณาอย่าปิดหน้านี้ — ระบบจะพาคุณเข้าสู่หน้าเลือกที่นั่งอัตโนมัติเมื่อถึงคิว"}
+          {status.seatsFull && !celebrating
+            ? "ที่นั่งทั้งหมดถูกจองไว้ชั่วคราว — ถ้ามีคนไม่ชำระเงินในเวลาที่กำหนด ที่นั่งจะกลับมาและระบบจะปล่อยคิวต่อ"
+            : near && !celebrating
+              ? "ใกล้แล้ว! เตรียมเลือกที่นั่ง — อย่าปิดหน้านี้"
+              : "กรุณาอย่าปิดหน้านี้ — ระบบจะพาคุณเข้าสู่หน้าเลือกที่นั่งอัตโนมัติเมื่อถึงคิว"}
         </p>
       </div>
 

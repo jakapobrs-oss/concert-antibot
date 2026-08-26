@@ -117,14 +117,15 @@ async function handleJoin(req: NextRequest): Promise<NextResponse> {
   }
 
   // 🎟️ Phase 2.1 (docs/21): ด่านรอบพรีเซล — ROUND_ENTRY
-  //   คอนเสิร์ตที่ไม่มีรอบเลย = ผ่านทันที (พฤติกรรมเดิม ไม่กระทบคอนเสิร์ตเก่า)
+  //   คอนเสิร์ตที่ไม่มีรอบเลย = ไม่มีด่านรอบ (พฤติกรรมเดิม) แต่ "บัตรหมด" ปิดประตูทุกคอนเสิร์ต
   //   ทำ "หลัง" auth + rate-limit เหมือนเช็คคอนเสิร์ต (กันยิงรัวกิน DB ฟรี — Codex §2 #6)
   const entry = await resolveEntryForUser(concertId, userId);
   if (!entry.ok) {
     return NextResponse.json(
       {
         error: entryDenyMessage(entry),
-        action: "ROUND_LOCKED",
+        // บัตรหมด ≠ รอบล็อก — client ต้องพาผู้ใช้กลับหน้าคอนเสิร์ต ไม่ใช่บอกให้รอรอบถัดไป (docs/23 §3)
+        action: entry.reason === "SOLD_OUT" ? "SOLD_OUT" : "ROUND_LOCKED",
         reason: entry.reason,
         nextRoundAt: entry.nextRound?.startAt.toISOString() ?? null,
       },

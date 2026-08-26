@@ -344,17 +344,27 @@ export async function loadUserRoundContext(
   };
 }
 
-// ⭐ ตัวที่ route/action เรียกจริง — คอนเสิร์ตไม่มีรอบ = ผ่านเสมอ (พฤติกรรมเดิม)
+// context เปล่าสำหรับคอนเสิร์ตที่ไม่มีรอบ — ไม่ต้องโหลดสมาชิก/ลงทะเบียน/โค้ดสิทธิ์ (ไม่มีรอบให้เทียบ)
+const NO_ROUND_CONTEXT: UserRoundContext = {
+  membership: null,
+  preRegisteredRoundIds: [],
+  unlockedRoundIds: [],
+};
+
+// ⭐ ตัวที่ route/action เรียกจริง — คอนเสิร์ตไม่มีรอบ = ไม่มีด่านรอบ (พฤติกรรมเดิม)
+//   แต่ "บัตรหมด" ต้องปิดประตูทุกคอนเสิร์ตรวมที่ไม่มีรอบ — เดิม return ok ก่อนเช็คบัตรหมด
+//   → คอนเสิร์ตที่ไม่เหลือที่นั่ง (0 ที่นั่ง / ขายหมดแต่ป้าย SOLD_OUT ยังไม่ถูกติด) ปล่อยคนเข้าคิว
+//   แล้วค้างตำแหน่ง 1 ตลอดกาล (regression: scripts/test-queue-soldout.ts)
 export async function resolveEntryForUser(
   concertId: string | bigint,
   userId: string | bigint,
   now: Date = new Date()
 ): Promise<EntryDecision> {
   const rounds = await loadRounds(concertId);
-  if (rounds.length === 0) return { ok: true, round: null };
-
   const [ctx, availability] = await Promise.all([
-    loadUserRoundContext(userId, concertId, now),
+    rounds.length > 0
+      ? loadUserRoundContext(userId, concertId, now)
+      : Promise.resolve(NO_ROUND_CONTEXT),
     getConcertAvailability(concertId),
   ]);
   return resolveRoundEntry(rounds, ctx, now, { soldOut: availability.soldOut });

@@ -20,7 +20,13 @@
 import crypto from "node:crypto";
 import { redis } from "@/lib/redis";
 import { env } from "@/lib/env";
-import { computeAdmitLimit, computeAdmitExtension } from "@/lib/admit-policy";
+import {
+  computeAdmitLimit,
+  computeAdmitExtension,
+  isSoldOut,
+  isTemporarilyFull,
+  type SeatSnapshot,
+} from "@/lib/admit-policy";
 
 // ---- ค่าคงที่ของระบบคิว (ดึงบางส่วนจาก env ได้) ----
 const BUCKET_SIZE_MS = 2000; // ขนาด time-window: คนเข้าคิวภายใน 2 วิ ถือว่าเสมอภาคกัน
@@ -28,12 +34,15 @@ const RANDOM_RANGE = 1_000_000; // ช่วงเลขสุ่มภายใ
 const ADMIT_TTL_SECONDS = 300; // ปล่อยเข้าแล้วมีเวลา 5 นาทีเลือกที่นั่ง
 const ADMIT_HARD_CAP_SECONDS = 900; // เพดานแข็งของการต่ออายุจากการใช้งาน — รวมไม่เกิน 15 นาทีนับจากถูกปล่อยเข้า
 const TOKEN_TTL_SECONDS = 3600; // token อยู่ในระบบได้สูงสุด 1 ชม
+// snapshot ที่นั่ง (ว่าง/ค้างจ่าย) ที่ผู้ปล่อยคิวบันทึกไว้ให้คนในคิวอ่าน — อายุสั้น: ไม่มีใครปล่อยคิวต่อ = หายเอง
+const SEAT_SNAPSHOT_TTL_SECONDS = 30;
 
 // key builders — รวมไว้ที่เดียวกันเปลี่ยนง่าย
 const keys = {
   queue: (concertId: string) => `queue:${concertId}`,
   admitted: (concertId: string) => `queue:${concertId}:admitted`,
   token: (token: string) => `queue:token:${token}`,
+  seats: (concertId: string) => `queue:${concertId}:seats`, // String(JSON {available, held}) + TTL สั้น
   // dedup key — ผูก 1 identity (user/device) ต่อ 1 slot ในคอนเสิร์ตหนึ่ง
   // กันเปิดหลายแท็บ/หลายหน้าจอด้วย account เดียวเพื่อรุมกดบัตร (Sybil/multi-tab)
   userSlot: (concertId: string, userId: string) => `queue:${concertId}:user:${userId}`,
@@ -52,11 +61,13 @@ end
 
 export interface QueuePosition {
   token: string;
-  status: "WAITING" | "ADMITTED" | "EXPIRED" | "NOT_FOUND";
+  // SOLD_OUT = ยังอยู่ในคิวแต่บัตรหมดจริงแล้ว (ว่าง 0 และค้างจ่าย 0) — client ต้องหยุด poll แล้วพากลับ
+  status: "WAITING" | "ADMITTED" | "EXPIRED" | "NOT_FOUND" | "SOLD_OUT";
   position: number; // ตำแหน่งในคิว (1-based) — 0 ถ้า admitted แล้ว
   ahead: number; // มีกี่คนอยู่ข้างหน้า
   total: number; // จำนวนคนในคิวทั้งหมด
   admitExpiresAt?: number; // epoch ms ที่ admit window จะหมด (ถ้า ADMITTED)
+  seatsFull?: boolean; // WAITING แต่ที่นั่งว่าง 0 (ยังมีคนค้างจ่าย) — บอกผู้ใช้ว่ากำลังรอ hold หลุด ไม่ใช่คิวค้าง
 }
 
 // HMAC-based deterministic random — ป้องกัน leave/rejoin re-roll
@@ -217,13 +228,50 @@ export async function getQueueStatus(token: string): Promise<QueuePosition> {
     return { token, status: "EXPIRED", position: 0, ahead: 0, total: 0 };
   }
   const total = await redis.zcard(keys.queue(concertId));
+
+  // ที่นั่งของคอนเสิร์ตจาก snapshot ที่ "ผู้ปล่อยคิว" บันทึกไว้ (ดู recordSeatAvailability)
+  //   ไม่มี snapshot = ไม่รู้ → รอต่อตามปกติ ห้ามเดาว่าหมด (โกหกว่าหมดแย่กว่าให้รอ)
+  //   หมดจริง (ว่าง 0 และค้างจ่าย 0) → SOLD_OUT ให้ client หยุด poll + บอกทางกลับ — ไม่ลบใครออกจากคิว
+  //   เต็มชั่วคราว (ว่าง 0 แต่มีคนค้างจ่าย) → ยัง WAITING แต่ติดธง seatsFull ให้บอกผู้ใช้ว่ารออะไรอยู่
+  //   เดิมไม่มีสองอย่างนี้: admitNext คืน 0 เงียบ ๆ → ผู้ใช้ค้าง "ตำแหน่ง 1" จน token หมดอายุ ไม่มีทางออก
+  const seats = await readSeatSnapshot(concertId);
+  if (seats && isSoldOut(seats)) {
+    return { token, status: "SOLD_OUT", position: rank + 1, ahead: rank, total };
+  }
   return {
     token,
     status: "WAITING",
     position: rank + 1,
     ahead: rank,
     total,
+    ...(seats && isTemporarilyFull(seats) ? { seatsFull: true } : {}),
   };
+}
+
+// บันทึก "ที่นั่งเหลือเท่าไหร่" ของคอนเสิร์ตให้คนในคิวทุกคนอ่านได้โดยไม่ต้องแตะ DB เอง
+//   ผู้เรียก = status route ที่ได้ lock ปล่อยคิว (นับจาก DB อยู่แล้วทุก ~3 วิ/คอนเสิร์ต) — คนโพลที่เหลืออ่าน Redis อย่างเดียว
+//   TTL สั้น: ถ้าไม่มีใครปล่อยคิวต่อ (คิวถูกหยุด/ไม่มีคนโพล) snapshot หายเอง → กลับไปสถานะ "ไม่รู้ = รอ"
+//   ถ้าแอดมินเปิดขายใหม่/hold หลุด ค่าถูกเขียนทับในรอบถัดไป ไม่ต้องล้างอะไร คิวไหลต่อเองโดยไม่ต้องเข้าคิวใหม่
+export async function recordSeatAvailability(concertId: string, seats: SeatSnapshot): Promise<void> {
+  await redis.set(
+    keys.seats(concertId),
+    JSON.stringify({ available: seats.available, held: seats.held }),
+    "EX",
+    SEAT_SNAPSHOT_TTL_SECONDS
+  );
+}
+
+// อ่าน snapshot กลับ — ไม่มี/ข้อมูลเพี้ยน = null (ถือว่าไม่รู้)
+async function readSeatSnapshot(concertId: string): Promise<SeatSnapshot | null> {
+  const raw = await redis.get(keys.seats(concertId));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<SeatSnapshot>;
+    if (typeof parsed.available !== "number" || typeof parsed.held !== "number") return null;
+    return { available: parsed.available, held: parsed.held };
+  } catch {
+    return null;
+  }
 }
 
 // ปล่อยคนจากคิวเข้าห้องเลือกที่นั่ง แบบ "รู้ความจุ" (capacity-aware) — เรียกเป็นรอบ ๆ (on-demand)

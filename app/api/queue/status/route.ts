@@ -2,8 +2,8 @@
 // ฝั่ง server จะ auto-admit batch ตอนถูก poll ด้วย (on-demand admission)
 // เพื่อไม่ต้องมี cron แยก — เหมาะกับ local-only deployment
 import { NextRequest, NextResponse } from "next/server";
-import { getQueueStatus, admitNext } from "@/lib/queue";
-import { countAvailableSeats } from "@/lib/seat-availability";
+import { getQueueStatus, admitNext, recordSeatAvailability } from "@/lib/queue";
+import { getConcertAvailability } from "@/lib/sold-out";
 import { isQueuePaused, getEffectiveCap } from "@/lib/queue-control";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { redis } from "@/lib/redis";
@@ -51,7 +51,12 @@ export async function GET(req: NextRequest) {
         // capacity-aware: ไม่เกินความจุห้อง (cap; ใช้ค่า override ของแอดมินถ้ามี) และไม่เกินที่นั่งที่เหลือ
         let seatsLeft: number | undefined;
         try {
-          seatsLeft = await countAvailableSeats(concertId);
+          // นับทั้ง "ว่าง" และ "ค้างจ่าย" (นิยามบัตรหมดของ docs/23) แล้วบันทึก snapshot ลง Redis
+          //   → getQueueStatus ของทุกคนที่โพลรู้ว่าบัตรหมดจริง/เต็มชั่วคราว โดยไม่ต้องแตะ DB เพิ่ม
+          //   (เดิมนับแค่ว่างแล้วให้ admitNext คืน 0 เงียบ ๆ → คนในคิวค้างตำแหน่ง 1 ไม่มีทางออก)
+          const availability = await getConcertAvailability(concertId);
+          seatsLeft = availability.available;
+          await recordSeatAvailability(concertId, availability);
         } catch {
           // นับที่นั่งไม่ได้ (เช่น concertId ไม่ใช่เลข/DB ล่ม) → พึ่ง cap อย่างเดียว
           // ยังปลอดภัยเพราะ seat-hold (SET NX) กัน double-book ที่ชั้นเลือกที่นั่งอยู่แล้ว
