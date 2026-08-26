@@ -5,6 +5,44 @@
 
 ---
 
+## [Revision 28 — Turnstile บน prod เป็น test key มา 43 วัน: ปฏิเสธชัดเจน + ห้องรอมี feedback + เก็บ error code] — 2026-08-26
+
+### Trigger
+เช็คมือหลัง deploy rev 27 (SECURITY_TODO #2): user เข้าคิว BTS บน prod → กล่อง Turnstile ขึ้น "สำเร็จ!" พร้อมแถบแดง
+"สำหรับการทดสอบเท่านั้น" แล้วค้าง ไม่ไปต่อ (screenshot 13:44)
+
+### Root cause (2 ชั้น)
+- **config**: Vercel Production ตั้ง `TURNSTILE_SITE_KEY`/`TURNSTILE_SECRET_KEY` เป็น **test key ของ Cloudflare** ตั้งแต่ตั้ง env
+  (43 วัน) → siteverify ผ่านเสมอ = CAPTCHA ปิดอยู่เงียบ ๆ ตลอดมา (ที่เข้าคิวบน prod ได้ทุกครั้งก็เพราะแบบนี้)
+  · `lib/turnstile.ts` มองว่า "dev mode" เฉพาะตอน **ไม่ได้ตั้ง** secret → prod ที่ตั้ง test secret ไว้จึงเข้าเช็ค action/hostname
+  ของ rev 27 กับค่าหลอกของ test key (`hostname=example.com`, `action=""`) = `action-mismatch` ทุกครั้ง → 428 ซ้ำ
+- **UX**: `waiting-room.tsx` รับ 428 ซ้ำแล้ว `setNeedChallenge(true)` ซ้ำ = ไม่ re-render → กล่องค้าง "สำเร็จ!" ไม่มี feedback ไม่รีเซ็ต
+  (จะเกิดกับ false positive ทุกแบบ ไม่ใช่แค่เคสคีย์ผิด)
+
+### สิ่งที่ทำ
+- user สลับ env prod เป็นคีย์จริง (ชุดเดียวกับ `.env` dev) ผ่าน `vercel env rm/add --value "$(node --env-file=.env -e …)"` — ค่าไม่ผ่านแชท
+- `lib/turnstile.ts`: secret == test secret → **development = dev mode** (ข้ามเช็ค 2 ข้อเหมือนไม่ตั้ง — เดิมโดน action-mismatch ทั้งที่เป็น test key)
+  / **production = ปฏิเสธทันที `test-key-on-production` โดยไม่ยิง Cloudflare** (fail-closed สอดคล้อง `not-configured`)
+- `lib/env.ts`: boot-warn 🚨 เมื่อ production ตั้ง secret = test secret หรือ site key ขึ้นต้น `1x0000`/`2x0000`/`3x0000`
+- `lib/antibot.ts` + `lib/antibot-purchase.ts`: เก็บ `turnstileErrors` ลง `signals` (เฉพาะตอน fail) → เห็นสาเหตุใน `bot_events`
+  (rev 27 เขียนว่ามีแต่ไม่ได้เก็บจริง — แก้เอกสาร SECURITY_TODO #2 ด้วย)
+- `components/waiting-room.tsx`: 428 หลังส่ง token → "ยืนยันไม่ผ่าน กรุณาทำเครื่องหมายใหม่อีกครั้ง" (`role=alert`) + เปลี่ยน `key`
+  ให้ widget mount ใหม่ (token ใช้ได้ครั้งเดียว) · `turnstile-widget.tsx`: `turnstile.remove()` ตอน unmount (แยก effect ไม่ผูก deps เดิม
+  กัน onVerify เปลี่ยน identity แล้วถอด widget กลางคัน)
+- **ไม่แตะ**: กติกาคะแนน/threshold · schema (`signals` เป็น Json) · ไม่มี migration/env ใหม่
+
+### หลักฐาน
+- unit: `turnstile.test.ts` +2 (prod ปฏิเสธโดยไม่ยิง fetch / dev ผ่าน) · `antibot.test.ts` +2 · `antibot-purchase.test.ts` +1 assertion
+  → รวม **574/574** · typecheck 0 · eslint 0 (ไฟล์ที่แตะ)
+- เช็คมือบน prod หลัง deploy: ดู HANDOFF.md §0 (ผลรอบใหม่ของ user)
+
+### บทเรียน
+- "เทสเขียว + เข้าคิวได้" ≠ CAPTCHA ทำงาน — test key ผ่านเสมอ; สัญญาณเดียวคือป้าย "for testing only" บน widget → ตอนนี้มี boot-warn + fail-closed แทนการพึ่งสายตา
+- config บน prod ต้องมี guard ในโค้ด (fail-closed + boot-warn) ไม่ใช่พึ่ง checklist ใน docs/17 อย่างเดียว
+- ทุก state ที่ผู้ใช้ "ทำสำเร็จแล้วแต่ server ไม่รับ" ต้องมี feedback — silent retry = ค้างเงียบ
+
+---
+
 ## [Revision 27 — ปิด SECURITY_TODO #2–#4: Turnstile ผูก action+โดเมน · คีย์ผู้จ่าย "ธนาคาร:ชื่อ" · เทียบยอดเป็นสตางค์] — 2026-08-26
 
 ### Trigger

@@ -59,9 +59,16 @@
 - **ข้อจำกัด / ข้อระวัง**:
   - ยืนยันด้วย unit test (mock siteverify) เท่านั้น — **ยังไม่ได้เห็น token จริงผ่านด่านนี้** เพราะสคริปต์แก้ Turnstile
     คีย์จริงไม่ได้ (ตั้งใจไม่ bypass) และห้องรอต้อง login → เช็คมือหลัง deploy: เข้าคิวคอนเสิร์ตจริง 1 ครั้ง
-    ต้องเข้าคิวได้ ไม่ใช่จอ "ตรวจพบกิจกรรมผิดปกติ"; ถ้าพัง `BotEvent` จะมี `errorCodes: action-mismatch`/`hostname-mismatch`
+    ต้องเข้าคิวได้ ไม่ใช่จอ "ตรวจพบกิจกรรมผิดปกติ"; ถ้าพัง `bot_events.signals.turnstileErrors` จะมี `action-mismatch`/`hostname-mismatch`/`test-key-on-production` (เก็บจริงตั้งแต่ 2026-08-26 บ่าย — ก่อนหน้านั้นบรรทัดนี้อ้างว่ามีแต่โค้ดไม่ได้เก็บ)
   - ช่วง deploy: แท็บที่เปิดค้างด้วย bundle เก่า (widget ไม่มี action) จะแก้ challenge ไม่ผ่านจนกว่าจะรีเฟรช — ชั่วคราว
   - โดเมน preview ของ Vercel ต้องอยู่ใน hostname allowlist ของ Turnstile ถึงจะ render widget ได้ (เรื่องเดิม ไม่ใช่ของ fix นี้)
+- **ผลเช็คมือหลัง deploy (2026-08-26 บ่าย): ติด challenge วนไม่จบบน prod** — ไม่ใช่โค้ดข้อนี้ผิด แต่ **Vercel Production
+  ตั้ง Turnstile เป็น test key ของ Cloudflare มาตั้งแต่ตั้ง env (43 วัน)** = CAPTCHA ผ่านเสมอโดยไม่ตรวจ (เข้าคิวบน prod ได้ทุกครั้ง
+  ก็เพราะแบบนี้) พอข้อนี้เทียบ action/hostname กับค่าหลอกของ test key → `action-mismatch` ทุกครั้ง (dev mode เดิมดูแค่ "ไม่ได้ตั้ง" secret)
+  แก้ (rev 28): (1) user สลับ env prod เป็นคีย์จริง (2) `lib/turnstile.ts` — test secret ใน development = dev mode (ข้ามเช็คเหมือนไม่ตั้ง),
+  ใน production = ปฏิเสธทันที `test-key-on-production` โดยไม่ยิง Cloudflare + boot-warn ใน `lib/env.ts` ทั้ง site key/secret
+  (3) ห้องรอ: 428 ซ้ำหลังส่ง token → ขึ้น "ยืนยันไม่ผ่าน" + mount widget ใหม่ (เดิมกล่องค้าง "สำเร็จ!" เงียบ ๆ)
+  (4) เก็บ error code ลง `signals.turnstileErrors` ทั้งด่านคิว/ด่านซื้อ · เทส `turnstile.test.ts` +2 · `antibot.test.ts` +2 · `antibot-purchase.test.ts` +1
 - **หลักฐาน**: `tests/unit/turnstile.test.ts` (ใหม่ 14) · `antibot.test.ts` +1 · `antibot-purchase.test.ts` +2 · typecheck 0
 
 ### 3. payerKey fallback ใช้ชื่อผู้โอน — ✅ แก้แล้ว (2026-08-26) แบบ "ธนาคาร:ชื่อ"
