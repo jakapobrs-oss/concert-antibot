@@ -8,6 +8,7 @@ import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
 import { assertVerifiedAdmin } from "@/lib/admin-guard";
+import { parseThaiDateTimeLocal } from "@/lib/local-datetime";
 
 // ตรวจสอบว่าเป็น admin จริง — throw ถ้าไม่ใช่
 // F2 (Codex §4 #2): เช็ค role กับ DB จริง (ไม่เชื่อ JWT ที่ค้างได้ถึง 30 วัน)
@@ -53,6 +54,13 @@ export async function createConcert(formData: FormData) {
   }
 
   const data = parsed.data;
+  // datetime-local จากฟอร์มไม่มี timezone → ต้องตีความเป็นเวลาไทยเอง (server บน Vercel เป็น UTC)
+  //   เดิม new Date(data.eventAt) ทำให้ทุกเวลาเลื่อน +7 ชม. (user-test 2026-08-26) — ดู lib/local-datetime.ts
+  const eventAt = parseThaiDateTimeLocal(data.eventAt);
+  const saleStartAt = parseThaiDateTimeLocal(data.saleStartAt);
+  const saleEndAt = parseThaiDateTimeLocal(data.saleEndAt);
+  if (!eventAt || !saleStartAt || !saleEndAt) throw new Error("วันเวลาไม่ถูกต้อง");
+  if (saleEndAt <= saleStartAt) throw new Error("เวลาปิดขายต้องอยู่หลังเวลาเริ่มขาย");
   // gen slug + กันซ้ำ (เติม timestamp ถ้าซ้ำ)
   let slug = slugify(data.title);
   const existing = await prisma.concert.findUnique({ where: { slug } });
@@ -64,9 +72,9 @@ export async function createConcert(formData: FormData) {
       slug,
       description: data.description,
       venue: data.venue,
-      eventAt: new Date(data.eventAt),
-      saleStartAt: new Date(data.saleStartAt),
-      saleEndAt: new Date(data.saleEndAt),
+      eventAt,
+      saleStartAt,
+      saleEndAt,
       maxTicketsPerUser: data.maxTicketsPerUser,
       status: "DRAFT",
     },
