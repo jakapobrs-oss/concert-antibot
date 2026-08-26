@@ -18,6 +18,21 @@
 
 **ค้าง:** user ตั้ง env 2 ตัวบน Vercel (`node scripts/push-env-to-vercel.mjs SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD`) → push → เช็ค build log มี `🔒 ล็อกบัญชีเดโม admin@local` + `✅ Admin (จาก env)` → ล็อกอินแอดมินใหม่ได้ · session เก่าของ admin@local เข้า /admin ไม่ได้แล้ว (guard เช็ค DB) แต่ยังเป็น user ธรรมดาจน JWT หมดอายุ — อยากตัดทิ้งหมดให้ rotate `NEXTAUTH_SECRET` · สคริปต์ท้องถิ่นที่ล็อกอิน admin@local (`scripts/test-seatmap-ui.ts`, `shoot-design.ts`, `demo-seatmap-walkthrough.ts`) ใช้กับเครื่อง dev เท่านั้น ไม่กระทบ
 
+## [Revision 33 — เปิดจาก URL ของ deployment แล้ว Google sign-in ล้มเป็น "Server error": redirect ทุกโฮสต์ *.vercel.app ไปโฮสต์หลัก] — 2026-08-27
+
+**ที่มา:** หลัง `vercel redeploy` (rev 32) user เปิดเว็บจากลิงก์ที่ CLI พิมพ์ (`concert-antibot-<hash>-…vercel.app`) แล้วกด Google → หน้า Auth.js "Server error — There is a problem with the server configuration" 3 ครั้งติด (02:20 น.)
+Vercel runtime log: `GET /api/auth/callback/google` → `[auth][error] InvalidCheck: pkceCodeVerifier value could not be parsed`
+**กลไก:** cookie PKCE/CSRF ของ Auth.js ถูกตั้งบนโฮสต์ที่เปิด (URL ของ deployment) แต่ Google เด้งกลับมาที่ `NEXTAUTH_URL` (`concert-antibot.vercel.app`) ซึ่งไม่มี cookie นั้น → Auth.js ถือเป็น Configuration error · Turnstile ก็ผูก hostname กับโฮสต์หลักเช่นกัน (เข้าคิวจากโฮสต์อื่นถูกปฏิเสธ) · ยืนยันด้วยเบราว์เซอร์: เปิดโฮสต์ deployment แล้วกด Google → `redirect_uri` ใน URL ของ Google ชี้โฮสต์หลัก
+
+**แก้**
+- `lib/canonical-host.ts` (ใหม่, pure, Edge-safe): `canonicalHostOf(NEXTAUTH_URL)` + `canonicalRedirect()` — production ที่ Host เป็น `*.vercel.app` และไม่ใช่โฮสต์หลัก → URL โฮสต์หลัก path+query เดิม · preview/dev/โดเมนอื่น → ไม่แตะ (กัน redirect วน)
+- `middleware.ts`: ขั้น 0 ก่อนตรวจสิทธิ์ → `308` ไปโฮสต์หลัก (matcher ตัด `/api/*` อยู่แล้ว — cron ของ Vercel ที่เรียกผ่าน URL ของ deployment ไม่โดน)
+- ไม่แตะโค้ด auth — ปัญหาไม่ได้อยู่ที่ rev 32 (EMAIL_VERIFICATION) แม้จะโผล่พร้อมกัน
+
+**หลักฐาน:** `tests/unit/canonical-host.test.ts` 7 เคส → vitest 47 ไฟล์ 608/608 (working tree รวมสาย seed-policy ที่ยังไม่ commit) · tsc 0 · lint 0 error · หลัง deploy: `curl -I https://concert-antibot-<hash>-…vercel.app/login` → 308 Location โฮสต์หลัก
+
+**บทเรียน:** ใช้ `https://concert-antibot.vercel.app` เท่านั้นเวลาเดโม/ส่งลิงก์ — ลิงก์ที่ `vercel redeploy`/`vercel --prod` พิมพ์ออกมาเป็น URL ของ deployment ตอนนี้ redirect ให้อัตโนมัติแล้ว
+
 ## [Revision 32 — สวิตช์ `EMAIL_VERIFICATION=skip`: ส่งงาน/เดโมโดยไม่ต้องมีโดเมนส่งเมล (โค้ดยืนยันอีเมลยังอยู่ครบ แค่ไม่ถูกเรียก)] — 2026-08-27
 
 > rev 31 = seed guard บัญชี admin@local บน deploy ที่โฮสต์ (`lib/seed-policy.ts`, `SEED_ADMIN_EMAIL/PASSWORD`) — ทำคู่ขนานในอีก session ตอนเขียน rev นี้ยังไม่ commit

@@ -4,11 +4,27 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
+import { canonicalHostOf, canonicalRedirect } from "@/lib/canonical-host";
 
 const { auth } = NextAuth(authConfig);
 
+// โฮสต์หลักจาก NEXTAUTH_URL — คำนวณครั้งเดียวตอนโหลด (Edge runtime อ่าน process.env ได้)
+const CANONICAL_HOST = canonicalHostOf(process.env.NEXTAUTH_URL);
+
 export default auth((req) => {
   const { pathname } = req.nextUrl;
+
+  // 0. production ที่เปิดจาก URL ของ deployment (*.vercel.app ที่ไม่ใช่โฮสต์หลัก) → ส่งไปโฮสต์หลักก่อน
+  //    ไม่งั้น cookie ของ Auth.js/Turnstile อยู่คนละโฮสต์กับ callback → Google sign-in ล้มเป็น "Server error"
+  //    (2026-08-27 — ดูเหตุผลเต็มใน lib/canonical-host.ts)
+  const canonical = canonicalRedirect({
+    host: req.headers.get("host"),
+    canonicalHost: CANONICAL_HOST,
+    vercelEnv: process.env.VERCEL_ENV,
+    pathname,
+    search: req.nextUrl.search,
+  });
+  if (canonical) return NextResponse.redirect(canonical, 308);
   const isLoggedIn = !!req.auth;
   const role = (req.auth?.user as { role?: string } | undefined)?.role;
 
