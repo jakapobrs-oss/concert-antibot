@@ -5,19 +5,6 @@
 
 ---
 
-## [Revision 31 — seed บน Vercel เลิกสร้างบัญชีเดโมรหัสสาธารณะ + ล็อกของเดิม; แอดมิน prod มาจาก env] — 2026-08-27
-
-**ที่มา (gap map 2026-08-27 — Critical ข้อเดียวของรายงาน):** `prisma/seed.ts` upsert `admin@local`/`Admin123!` + `user@local`/`Password123!` ทุกครั้งที่รัน และ `vercel.json` buildCommand รัน seed **ทุก deploy** (production และ preview ซึ่งใช้ Neon ตัวเดียวกัน) + repo เป็น PUBLIC → ใครอ่านโค้ดก็ล็อกอินเป็นแอดมิน prod ได้ (ลบคอนเสิร์ต/คืนเงิน/ดูสลิปลูกค้า) — เปิดมาตั้งแต่ deploy แรก (14 ก.ค.)
-
-**แก้**
-- `lib/seed-policy.ts` (ใหม่, pure) — `isHostedDeploy()` (VERCEL/VERCEL_ENV ตั้ง หรือ NODE_ENV=production) + `resolveSeedAccountPolicy()`: เครื่อง dev = เหมือนเดิม (เทสเบราว์เซอร์/สคริปต์ยังใช้ user@local) · โฮสต์ = ไม่สร้างบัญชีเดโม, **ล็อก** admin@local/user@local ที่เคย seed ไว้ (`passwordHash = null` + role USER — ไม่ลบแถวกัน FK; `lib/admin-guard.ts` เช็ค role จาก DB ทุกคำขอ การถอด ADMIN จึงมีผลทันทีแม้ JWT เก่ายังไม่หมดอายุ), แอดมินจริงมาจาก `SEED_ADMIN_EMAIL` + `SEED_ADMIN_PASSWORD` (≥ 12 ตัว) เท่านั้น · ตั้งครึ่งเดียว/รหัสสั้น = ไม่สร้างแอดมิน + เตือน แต่ยังล็อกเดโม (ไม่เปิดช่องกลับ) · ไม่ตั้งเลย = build ผ่านแต่ไม่มีแอดมิน + `⚠️ [SEED]` ใน build log (ตั้งใจไม่ทำให้ build ล้ม — build ล้มไม่ได้ปิดช่องบน deploy เดิม และบล็อกเพื่อนร่วมทีม deploy)
-- `prisma/seed.ts` — ใช้นโยบายข้างบน · ไม่พิมพ์รหัสผ่านลง log · ล็อกแบบ idempotent (ล็อกแล้วข้ามเงียบ) · เลือก `SEED_ADMIN_EMAIL=admin@local` ได้ (ได้รหัสใหม่จาก env ไม่ถูกล็อก) · บัญชีแอดมินจาก env ที่ยังไม่ verified → verified ให้ (ไม่งั้นล็อกอินไม่ได้) · dev upsert เปลี่ยนจาก `update: {}` เป็นรีเซ็ตรหัส+role → `pnpm db:seed` คืนบัญชีเดโมให้ใช้ได้เสมอ
-- `.env.example` + `docs/17` §2 — env 2 ตัวใหม่ + ลำดับ: ตั้ง env บน Vercel **ก่อน** push จะได้ไม่มีช่วงที่ prod ไม่มีแอดมิน
-
-**หลักฐาน:** unit `tests/unit/seed-policy.test.ts` 11/11 (preview = โฮสต์ · รหัสสั้นไม่เปิดช่องกลับ · warning ไม่มีรหัสปน) · ทั้งชุดในทรีขณะนั้น **597/597** (นับรวมงาน `EMAIL_VERIFICATION` ของอีก session ที่ยังไม่ commit — นับใหม่หลัง commit) · tsc 0 · lint 0 error (warn เดิม 1 ที่ prototype) · **จำลองโหมดโฮสต์กับ Postgres local ผ่าน**: `VERCEL=1 pnpm db:seed` → ⚠️ เตือน + 🔒 admin@local/user@local (role USER, hash null) · ใส่ `SEED_ADMIN_*` → `✅ Admin (จาก env)` role ADMIN verified, รหัสไม่โผล่ใน log · `pnpm db:seed` ธรรมดา → บัญชีเดโมกลับมาใช้ได้
-
-**ค้าง:** user ตั้ง env 2 ตัวบน Vercel (`node scripts/push-env-to-vercel.mjs SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD`) → push → เช็ค build log มี `🔒 ล็อกบัญชีเดโม admin@local` + `✅ Admin (จาก env)` → ล็อกอินแอดมินใหม่ได้ · session เก่าของ admin@local เข้า /admin ไม่ได้แล้ว (guard เช็ค DB) แต่ยังเป็น user ธรรมดาจน JWT หมดอายุ — อยากตัดทิ้งหมดให้ rotate `NEXTAUTH_SECRET` · สคริปต์ท้องถิ่นที่ล็อกอิน admin@local (`scripts/test-seatmap-ui.ts`, `shoot-design.ts`, `demo-seatmap-walkthrough.ts`) ใช้กับเครื่อง dev เท่านั้น ไม่กระทบ
-
 ## [Revision 33 — เปิดจาก URL ของ deployment แล้ว Google sign-in ล้มเป็น "Server error": redirect ทุกโฮสต์ *.vercel.app ไปโฮสต์หลัก] — 2026-08-27
 
 **ที่มา:** หลัง `vercel redeploy` (rev 32) user เปิดเว็บจากลิงก์ที่ CLI พิมพ์ (`concert-antibot-<hash>-…vercel.app`) แล้วกด Google → หน้า Auth.js "Server error — There is a problem with the server configuration" 3 ครั้งติด (02:20 น.)
@@ -50,6 +37,19 @@ Vercel runtime log: `GET /api/auth/callback/google` → `[auth][error] InvalidCh
 **หลักฐาน:** unit `email-signup-gate` +2 เคส · `tests/unit/credentials-auth-verify-flag.test.ts` 4 เคส (ไม่ส่ง flag = null / true = null / false = ผ่าน / รหัสผิดยัง null) → vitest ผ่านทั้งชุด (working tree ขณะนั้นรวมสาย seed-policy ของ rev 31 = 46 ไฟล์ 601 เคส) · tsc 0 · lint 0 error
 
 **วิธีเปิดบน prod (ค่าไม่ใช่ secret):** `npx vercel env add EMAIL_VERIFICATION production --value skip --yes` → redeploy · **กลับเป็นปกติ:** `npx vercel env rm EMAIL_VERIFICATION production --yes` → redeploy (default = required)
+
+## [Revision 31 — seed บน Vercel เลิกสร้างบัญชีเดโมรหัสสาธารณะ + ล็อกของเดิม; แอดมิน prod มาจาก env] — 2026-08-27
+
+**ที่มา (gap map 2026-08-27 — Critical ข้อเดียวของรายงาน):** `prisma/seed.ts` upsert `admin@local`/`Admin123!` + `user@local`/`Password123!` ทุกครั้งที่รัน และ `vercel.json` buildCommand รัน seed **ทุก deploy** (production และ preview ซึ่งใช้ Neon ตัวเดียวกัน) + repo เป็น PUBLIC → ใครอ่านโค้ดก็ล็อกอินเป็นแอดมิน prod ได้ (ลบคอนเสิร์ต/คืนเงิน/ดูสลิปลูกค้า) — เปิดมาตั้งแต่ deploy แรก (14 ก.ค.)
+
+**แก้**
+- `lib/seed-policy.ts` (ใหม่, pure) — `isHostedDeploy()` (VERCEL/VERCEL_ENV ตั้ง หรือ NODE_ENV=production) + `resolveSeedAccountPolicy()`: เครื่อง dev = เหมือนเดิม (เทสเบราว์เซอร์/สคริปต์ยังใช้ user@local) · โฮสต์ = ไม่สร้างบัญชีเดโม, **ล็อก** admin@local/user@local ที่เคย seed ไว้ (`passwordHash = null` + role USER — ไม่ลบแถวกัน FK; `lib/admin-guard.ts` เช็ค role จาก DB ทุกคำขอ การถอด ADMIN จึงมีผลทันทีแม้ JWT เก่ายังไม่หมดอายุ), แอดมินจริงมาจาก `SEED_ADMIN_EMAIL` + `SEED_ADMIN_PASSWORD` (≥ 12 ตัว) เท่านั้น · ตั้งครึ่งเดียว/รหัสสั้น = ไม่สร้างแอดมิน + เตือน แต่ยังล็อกเดโม (ไม่เปิดช่องกลับ) · ไม่ตั้งเลย = build ผ่านแต่ไม่มีแอดมิน + `⚠️ [SEED]` ใน build log (ตั้งใจไม่ทำให้ build ล้ม — build ล้มไม่ได้ปิดช่องบน deploy เดิม และบล็อกเพื่อนร่วมทีม deploy)
+- `prisma/seed.ts` — ใช้นโยบายข้างบน · ไม่พิมพ์รหัสผ่านลง log · ล็อกแบบ idempotent (ล็อกแล้วข้ามเงียบ) · เลือก `SEED_ADMIN_EMAIL=admin@local` ได้ (ได้รหัสใหม่จาก env ไม่ถูกล็อก) · บัญชีแอดมินจาก env ที่ยังไม่ verified → verified ให้ (ไม่งั้นล็อกอินไม่ได้) · dev upsert เปลี่ยนจาก `update: {}` เป็นรีเซ็ตรหัส+role → `pnpm db:seed` คืนบัญชีเดโมให้ใช้ได้เสมอ
+- `.env.example` + `docs/17` §2 — env 2 ตัวใหม่ + ลำดับ: ตั้ง env บน Vercel **ก่อน** push จะได้ไม่มีช่วงที่ prod ไม่มีแอดมิน
+
+**หลักฐาน:** unit `tests/unit/seed-policy.test.ts` 11/11 (preview = โฮสต์ · รหัสสั้นไม่เปิดช่องกลับ · warning ไม่มีรหัสปน) · ทั้งชุดหลังรวม rev 32–33 **47 ไฟล์ 608/608** · tsc 0 · lint 0 error (warn เดิม 1 ที่ prototype) · **จำลองโหมดโฮสต์กับ Postgres local ผ่าน**: `VERCEL=1 pnpm db:seed` → ⚠️ เตือน + 🔒 admin@local/user@local (role USER, hash null) · ใส่ `SEED_ADMIN_*` → `✅ Admin (จาก env)` role ADMIN verified, รหัสไม่โผล่ใน log · `pnpm db:seed` ธรรมดา → บัญชีเดโมกลับมาใช้ได้
+
+**ค้าง:** user ตั้ง env 2 ตัวบน Vercel (`node scripts/push-env-to-vercel.mjs SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD`) → push → เช็ค build log มี `🔒 ล็อกบัญชีเดโม admin@local` + `✅ Admin (จาก env)` → ล็อกอินแอดมินใหม่ได้ · session เก่าของ admin@local เข้า /admin ไม่ได้แล้ว (guard เช็ค DB) แต่ยังเป็น user ธรรมดาจน JWT หมดอายุ — อยากตัดทิ้งหมดให้ rotate `NEXTAUTH_SECRET` · สคริปต์ท้องถิ่นที่ล็อกอิน admin@local (`scripts/test-seatmap-ui.ts`, `shoot-design.ts`, `demo-seatmap-walkthrough.ts`) ใช้กับเครื่อง dev เท่านั้น ไม่กระทบ
 
 ## [Revision 30 — production ไม่มี Resend: ปิดรับสมัครด้วยอีเมลชัด ๆ + ไม่พิมพ์ token ลง log + ส่งเมลไม่ออก = ถอนบัญชี] — 2026-08-26
 

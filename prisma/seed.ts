@@ -1,42 +1,90 @@
-// Seed data — 1 admin + 1 demo user + 2 concerts (มี zone/seat ครบ)
+// Seed data — บัญชี (ตามนโยบาย lib/seed-policy.ts) + 2 concerts (มี zone/seat ครบ)
 // รัน: pnpm db:seed
+// บน Vercel รัน "ทุก deploy" ผ่าน vercel.json buildCommand (production + preview ใช้ Neon ตัวเดียวกัน)
+//   → ห้ามให้รหัสสาธารณะในไฟล์นี้หลุดไป DB จริง — ดูกติกาใน lib/seed-policy.ts
 import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
+import { isHostedDeploy, resolveSeedAccountPolicy } from "../lib/seed-policy";
 
 const prisma = new PrismaClient();
 
 async function main() {
   console.log("🌱 Seeding database...");
 
-  // -------- 1. Admin --------
-  const adminPassword = await argon2.hash("Admin123!", { type: argon2.argon2id });
-  const admin = await prisma.user.upsert({
-    where: { email: "admin@local" },
-    update: {},
-    create: {
-      email: "admin@local",
-      passwordHash: adminPassword,
-      name: "Super Admin",
-      role: "ADMIN",
-      emailVerified: new Date(),
-    },
+  // -------- 1–2. บัญชี --------
+  // (2026-08-27) เดิม upsert admin@local/Admin123! + user@local/Password123! ทุกครั้ง — บน repo PUBLIC
+  //   = ใครอ่านโค้ดก็ล็อกอินเป็นแอดมิน prod ได้ → ตอนนี้บัญชีเดโมสร้างเฉพาะเครื่อง dev,
+  //   deploy ที่โฮสต์ล็อกของเดิมและรับแอดมินจริงจาก env เท่านั้น
+  const policy = resolveSeedAccountPolicy({
+    isHosted: isHostedDeploy(process.env),
+    seedAdminEmail: process.env.SEED_ADMIN_EMAIL,
+    seedAdminPassword: process.env.SEED_ADMIN_PASSWORD,
   });
-  console.log(`✅ Admin: ${admin.email}`);
+  for (const warning of policy.warnings) console.warn(`⚠️  [SEED] ${warning}`);
 
-  // -------- 2. Demo user --------
-  const userPassword = await argon2.hash("Password123!", { type: argon2.argon2id });
-  const user = await prisma.user.upsert({
-    where: { email: "user@local" },
-    update: {},
-    create: {
-      email: "user@local",
-      passwordHash: userPassword,
-      name: "ผู้ใช้ทดสอบ",
-      role: "USER",
-      emailVerified: new Date(),
-    },
-  });
-  console.log(`✅ User: ${user.email}`);
+  if (policy.createDemoAccounts) {
+    // เครื่อง dev เท่านั้น — รหัสสาธารณะสำหรับเทสเบราว์เซอร์/สคริปต์ (Admin123! / Password123!)
+    //   update ด้วย = `pnpm db:seed` รีเซ็ตบัญชีเดโมกลับมาใช้ได้เสมอ (เช่นหลังเผลอรันโหมดโฮสต์ในเครื่อง)
+    const adminPassword = await argon2.hash("Admin123!", { type: argon2.argon2id });
+    const admin = await prisma.user.upsert({
+      where: { email: "admin@local" },
+      update: { passwordHash: adminPassword, role: "ADMIN" },
+      create: {
+        email: "admin@local",
+        passwordHash: adminPassword,
+        name: "Super Admin",
+        role: "ADMIN",
+        emailVerified: new Date(),
+      },
+    });
+    console.log(`✅ Admin (dev): ${admin.email}`);
+
+    const userPassword = await argon2.hash("Password123!", { type: argon2.argon2id });
+    const user = await prisma.user.upsert({
+      where: { email: "user@local" },
+      update: { passwordHash: userPassword, role: "USER" },
+      create: {
+        email: "user@local",
+        passwordHash: userPassword,
+        name: "ผู้ใช้ทดสอบ",
+        role: "USER",
+        emailVerified: new Date(),
+      },
+    });
+    console.log(`✅ User (dev): ${user.email}`);
+  } else {
+    console.log("⏭️  deploy ที่โฮสต์: ไม่สร้างบัญชีเดโมรหัสสาธารณะ");
+  }
+
+  // ล็อกบัญชีเดโมที่เคยถูก seed ไว้ใน DB นี้ (idempotent) — ล็อกอินด้วยรหัสไม่ได้ + ถอด ADMIN
+  //   ไม่ลบแถว: อาจมี order/ticket อ้างถึง (FK) · lib/admin-guard.ts เช็ค role จาก DB ทุกคำขอ → มีผลทันที
+  for (const email of policy.lockEmails) {
+    const existing = await prisma.user.findUnique({
+      where: { email },
+      select: { role: true, passwordHash: true },
+    });
+    if (!existing) continue;
+    if (existing.passwordHash === null && existing.role === "USER") continue; // ล็อกไว้แล้ว
+    await prisma.user.update({ where: { email }, data: { passwordHash: null, role: "USER" } });
+    console.log(`🔒 ล็อกบัญชีเดโม ${email} (ไม่มีรหัสผ่าน + role USER)`);
+  }
+
+  // แอดมินจริงจาก env — env เป็นแหล่งความจริง (รหัสถูกตั้งใหม่ตามค่า env ทุก deploy) · ไม่พิมพ์รหัสลง log
+  if (policy.adminFromEnv) {
+    const { email, password } = policy.adminFromEnv;
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    const admin = await prisma.user.upsert({
+      where: { email },
+      update: { passwordHash, role: "ADMIN" },
+      create: { email, passwordHash, name: "Admin", role: "ADMIN", emailVerified: new Date() },
+      select: { email: true, emailVerified: true },
+    });
+    // บัญชีเดิมที่ยังไม่ยืนยันอีเมล (เช่นสมัครแล้วเมลไม่ถึง) → ยืนยันให้ ไม่งั้นล็อกอินไม่ได้แม้เป็น ADMIN
+    if (!admin.emailVerified) {
+      await prisma.user.update({ where: { email }, data: { emailVerified: new Date() } });
+    }
+    console.log(`✅ Admin (จาก env): ${admin.email}`);
+  }
 
   // -------- 3. Demo concert #1 --------
   // (2026-08-26) เลิก deleteMany: พอมี order อ้างถึงคอนเสิร์ตเดโม FK จะพัง (orders_concertId_fkey) → seed ล้ม
