@@ -76,3 +76,6 @@ thesis-book-prep/
 
 # เอกสารส่งต่องานภายในเครื่อง — เก็บ local ไม่เข้า repo (ตกลง 2026-07-16)
 /HANDOFF.md
+
+# ผลรัน user-test (screenshot/รายงาน) — หลักฐานเทส ไม่ใช่โค้ด
+/user-test-runs/
