@@ -126,7 +126,8 @@
 - **แนวทาง**: เขียน Lua script รวม ZRANGEBYSCORE + HSET + ZADD ให้ atomic
 - **ข้อระวัง**: Lua script ซับซ้อนขึ้น, ต้อง test กับ Redis Cluster ด้วย (EVALSHA)
 
-### 7. Ghost token ใน queue ZSET
+### 7. Ghost token ใน queue ZSET — ✅ แก้แล้ว (ตรวจโค้ด 2026-08-27)
+- **หลักฐาน**: `lib/queue.ts` `admitNext()` step 0 `zremrangebyscore(admitted, 0, now)` ล้าง ghost ในชุด admitted ก่อนนับความจุ · step 2.1 กรอง ghost ในคิวรอ (token ที่ hash หมดอายุแต่ member ค้างใน ZSET) แล้ว `zrem` ทิ้ง · `getQueueStatus`/สถิติแอดมิน prune ก่อนนับเช่นกัน (บรรทัด ~429) — ครอบทั้ง 2 ชุดตามที่ข้อนี้กังวล
 - **ไฟล์**: `lib/queue.ts`
 - **ปัญหา**: token ที่หมดอายุ (1 ชม) ยังอยู่ใน `queue:{concertId}:waiting` ZSET
   ทำให้ position แสดงไม่ถูกต้อง (นับ ghost token เป็น slot)
@@ -134,7 +135,8 @@
   หรือ run background job ทุก 5 นาที
 - **ข้อระวัง**: ต้องเก็บ expiresAt ใน ZSET score หรือ hash metadata
 
-### 8. HoldSeats loop ไม่ atomic
+### 8. HoldSeats loop ไม่ atomic — ✅ แก้แล้ว (ตรวจโค้ด 2026-08-27)
+- **หลักฐาน**: `lib/seat-hold.ts` `HOLD_MULTI_SCRIPT` (Lua) ตรวจทุก key ว่าว่าง/เป็นของเราก่อน แล้วค่อย set ทั้งชุดในสคริปต์เดียว — all-or-nothing, คืนรายการที่นั่งที่ชนให้ caller (Codex §2 #8) · race test `scripts/test-seat-hold-atomic.ts`
 - **ไฟล์**: `lib/seat-hold.ts` → `holdSeats()`
 - **ปัญหา**: loop `SET NX` ทีละที่นั่งใน pipeline — ถ้า seat แรก SET ได้ แต่ seat สอง
   ล้มเหลว (ถูก hold ไปแล้ว) → seat แรกค้างอยู่โดยไม่มีคนถือ (จนหมด TTL)

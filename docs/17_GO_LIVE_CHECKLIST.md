@@ -115,3 +115,34 @@
 3. ขอ credentials (§1) → ตั้ง config (§2) → infra (§3)
 4. **N5** admin guard + ตัดสินใจ **N4** (enforce หรือ document)
 5. เปิด soft-launch จำนวนน้อย → ดู log → ค่อยขยาย
+
+---
+
+## 🩺 7. Ops ที่เพิ่มมา (rev 36 — 2026-08-27)
+
+### 7.1 Health check — `GET /api/health`
+- ตอบ `200 {"ok":true,"db":"ok","redis":"ok"}` หรือ `503` เมื่อ Postgres (`SELECT 1`) หรือ Redis (`PING`) ล้ม · ไม่ต้อง auth · ไม่บอกเวอร์ชัน/ข้อความ error · timeout 3 วิ/ตัว · rate-limit 30 ครั้ง/นาที/IP
+- [ ] **ผูก uptime monitor (บัญชี user ทำเอง)**: UptimeRobot (ฟรี, ทุก 5 นาที) หรือ Better Stack → HTTP monitor ไปที่ `https://concert-antibot.vercel.app/api/health` เงื่อนไข "status = 200" แจ้งเตือนทาง Line/อีเมล · ใช้โฮสต์หลักเท่านั้น (rev 33)
+- ทดสอบมือ: `curl -i https://concert-antibot.vercel.app/api/health`
+
+### 7.2 Backup Neon รายวัน — `.github/workflows/backup-neon.yml`
+- รัน 03:30 น. ไทยทุกวัน (+ กดรันมือได้ที่แท็บ Actions): `pg_dump --format=custom` → เข้ารหัส AES-256 (gpg symmetric) → artifact เก็บ 30 วัน
+- ⚠️ repo เป็น **public** → artifact ดาวน์โหลดได้โดยผู้ใช้ GitHub ทุกคนที่ล็อกอิน จึง **เข้ารหัสเสมอ** — ไฟล์ `.gpg` เปิดไม่ได้ถ้าไม่มี passphrase
+- [ ] **ตั้ง GitHub Secrets 2 ตัว (user ทำเอง)** — `gh secret set NEON_DATABASE_URL_UNPOOLED` (วางค่าจาก Vercel env `DATABASE_URL_UNPOOLED` ใน stdin) และ `gh secret set BACKUP_PASSPHRASE` (สร้างด้วย `openssl rand -base64 32` แล้ว **เก็บไว้ที่อื่นด้วย** — หาย = กู้ไม่ได้)
+- [ ] **กดรันมือครั้งแรก** แล้วดูว่า job เขียว + มี artifact `neon-backup-<run id>`
+
+### 7.3 วิธีกู้ (restore) — ซ้อมก่อนใช้จริง
+1. ดาวน์โหลด artifact (Actions → run → Artifacts) แตก zip ได้ `neon-YYYYMMDDTHHMMSSZ.dump.gpg`
+2. ถอดรหัส: `gpg --batch --passphrase "<BACKUP_PASSPHRASE>" --output neon.dump --decrypt neon-….dump.gpg`
+3. **ซ้อมลง Neon branch ใหม่ก่อนเสมอ** (Neon console → Branches → Create branch จาก main แบบ schema-only หรือว่าง) แล้ว `pg_restore --clean --if-exists --no-owner --no-privileges -d "<connection string ของ branch>" neon.dump`
+4. ตรวจ: `psql "<branch url>" -c "select count(*) from users; select count(*) from orders;"` เทียบกับ prod
+5. ของจริง: ชี้ `DATABASE_URL`/`DATABASE_URL_UNPOOLED` บน Vercel ไปที่ branch ที่กู้แล้ว → redeploy (หรือ restore ทับ main ด้วยคำสั่งเดียวกัน — ทำเฉพาะเมื่อแน่ใจ)
+- ต้องใช้ `pg_restore` เวอร์ชัน ≥ Postgres ของ Neon (workflow ใช้ client 17) · dump แบบ custom เลือกกู้บางตารางได้ด้วย `--table`
+
+### 7.4 Error log แบบมี request id — `instrumentation.ts`
+- ทุก error ฝั่ง server ที่หลุดถึง framework ถูก log เป็น JSON บรรทัดเดียว (`kind:"server_error"`, `digest`, `path`, `requestId` = `x-vercel-id`) — ค้นใน Vercel Logs ด้วย `server_error` หรือ digest ที่ผู้ใช้เห็นบนหน้า error
+- ไม่ลง Sentry/บริการ error monitoring (ต้องเพิ่ม dependency + บัญชี — ถามก่อน) — ถ้าจะลงทีหลังใช้ hook เดียวกันนี้ส่งต่อได้
+
+### 7.5 อื่น ๆ
+- `/prototype/*` (ของจำลองตอนออกแบบ) ตอบ 404 บน production ตั้งแต่ rev 36 (`app/prototype/layout.tsx`) — dev/preview ยังเปิดได้
+- `/api/*` ไม่ถูก redirect โฮสต์ (rev 33 เคยเขียนว่า matcher ตัด /api ทั้งหมด — จริง ๆ ตัดแค่ /api/auth; แก้ใน `lib/canonical-host.ts` แล้ว)

@@ -40,6 +40,15 @@ describe("canonicalRedirect", () => {
     expect(canonicalRedirect({ ...base, host: "localhost:3000", vercelEnv: undefined })).toBeNull();
   });
 
+  it("/api/* บนโฮสต์ deployment → null (cron/health/monitor ไม่มี cookie และอาจไม่ตาม 308) — rev 36", () => {
+    expect(
+      canonicalRedirect({ ...base, host: "concert-antibot-abc123-x.vercel.app", pathname: "/api/cron/sweep" })
+    ).toBeNull();
+    expect(
+      canonicalRedirect({ ...base, host: "concert-antibot-abc123-x.vercel.app", pathname: "/api/health" })
+    ).toBeNull();
+  });
+
   it("โดเมนอื่นที่ไม่ใช่ *.vercel.app → null (custom domain ในอนาคตไม่แตะ)", () => {
     expect(canonicalRedirect({ ...base, host: "tickets.example.com" })).toBeNull();
   });

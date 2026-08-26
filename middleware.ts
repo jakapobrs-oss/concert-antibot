@@ -16,7 +16,8 @@ export default auth((req) => {
 
   // 0. production ที่เปิดจาก URL ของ deployment (*.vercel.app ที่ไม่ใช่โฮสต์หลัก) → ส่งไปโฮสต์หลักก่อน
   //    ไม่งั้น cookie ของ Auth.js/Turnstile อยู่คนละโฮสต์กับ callback → Google sign-in ล้มเป็น "Server error"
-  //    (2026-08-27 — ดูเหตุผลเต็มใน lib/canonical-host.ts)
+  //    (2026-08-27 — ดูเหตุผลเต็มใน lib/canonical-host.ts · /api/* ถูกยกเว้นข้างในฟังก์ชัน เพราะ matcher ด้านล่าง
+  //     ตัดแค่ /api/auth — cron /api/cron/sweep และ /api/health ยังผ่าน middleware นี้)
   const canonical = canonicalRedirect({
     host: req.headers.get("host"),
     canonicalHost: CANONICAL_HOST,

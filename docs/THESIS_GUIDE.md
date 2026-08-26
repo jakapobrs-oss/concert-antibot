@@ -47,7 +47,7 @@
 | **trustScore** | คอลัมน์ default 50 — **มีแต่ไม่ถูกใช้ตัดสินใจ** | `prisma/schema.prisma:37` | "Trust Score state machine (Verified→Trusted→Blocked)" — ไม่มีจริง |
 
 ### ❌ สิ่งที่ "ยังไม่ได้ทำ" — ห้ามเขียนในเล่มว่าทำแล้ว
-anti-bot 8 ชั้น · SSE/WebSocket · Postgres SELECT FOR UPDATE · Stripe/Omise · Trust-score state machine · OTP/SMS · ตาราง SeatHold/Report/AuditLog · health endpoint (`/api/health`) · CSP แบบ nonce (⚠️ CSP header **มีแล้ว**ใน `next.config.ts` ตั้งแต่รอบ hardening — ที่ยังไม่ทำคือตัด `'unsafe-inline'` เป็น nonce, ดู `SECURITY_TODO.md` #10) · Puppeteer bot-simulator
+anti-bot 8 ชั้น · SSE/WebSocket · Postgres SELECT FOR UPDATE · Stripe/Omise · Trust-score state machine · OTP/SMS · ตาราง SeatHold/Report/AuditLog · ~~health endpoint (`/api/health`)~~ (ทำแล้ว rev 36 — `app/api/health/route.ts`) · CSP แบบ nonce (⚠️ CSP header **มีแล้ว**ใน `next.config.ts` ตั้งแต่รอบ hardening — ที่ยังไม่ทำคือตัด `'unsafe-inline'` เป็น nonce, ดู `SECURITY_TODO.md` #10) · Puppeteer bot-simulator
 
 > ของพวกนี้เขียนเป็น **"งานในอนาคต (Future Work)"** ได้ แต่ต้องบอกชัดว่า **ยังไม่ทำ**
 

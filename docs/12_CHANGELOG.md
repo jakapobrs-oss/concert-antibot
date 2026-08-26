@@ -5,6 +5,25 @@
 
 ---
 
+## [Revision 36 — Ops: `/api/health` + backup Neon รายวัน (เข้ารหัส) + error log มี request id + ปิด /prototype บน prod + ยกเว้น /api จาก canonical-host] — 2026-08-27
+
+**ที่มา:** gap map 2026-08-27 ขั้น 4 (ops) — user สั่งแบ่งงานให้ session นี้ผ่าน peer (`claude-workspace-83` ทำขั้น 3 = rev 35 คู่ขนาน)
+
+**เพิ่ม**
+- `GET /api/health` (`app/api/health/route.ts` + `lib/health.ts` pure): Postgres `SELECT 1` + Redis `PING` → 200/503 `{ ok, db, redis }` ไม่เปิดเผยรายละเอียด · timeout 3 วิ/ตัว (`withTimeout`) · rate-limit 30/นาที/IP — ถ้า Redis ล่มจน rate-limit ทำงานไม่ได้ ข้ามแล้วรายงาน `redis:"fail"` แทน · docs/17 §7.1 ขั้นผูก UptimeRobot/Better Stack (บัญชี user)
+- `.github/workflows/backup-neon.yml`: pg_dump (client 17 จาก PGDG) `--format=custom --no-owner --no-privileges` → **gpg AES-256 symmetric** → artifact 30 วัน, รัน 03:30 ไทย + manual — **repo เป็น public จึงห้ามอัปโหลด dump เปล่า** · ต้องการ GitHub Secrets `NEON_DATABASE_URL_UNPOOLED` + `BACKUP_PASSPHRASE` (user ตั้ง) · runbook restore + ซ้อมลง Neon branch ใน docs/17 §7.3
+- `instrumentation.ts` `onRequestError`: log JSON `kind:"server_error"` + digest + method/path + `x-vercel-id` (ไม่ log body/cookie) — ไม่ลง Sentry (ต้องเพิ่ม dependency/บัญชี → ถาม user ก่อน)
+- `app/prototype/layout.tsx`: production → `notFound()` (ของจำลองเคยเปิดสาธารณะบน prod)
+- `.env.example` บล็อก ops: `CRON_SECRET` `TRUSTED_PROXY_HOPS` `MAX_INFLIGHT_JOINS` `QUEUE_SYNC_AUDIT` `BOT_SCORE_THRESHOLD` `PER_PAYER_TICKET_LIMIT` `PAYMENTS_RECEIVER_CHECK` `PAYMENTS_FRESHNESS_CHECK` (โค้ดอ่านอยู่แล้วแต่ไม่เคยอยู่ในไฟล์)
+
+**แก้**
+- `lib/canonical-host.ts`: ยกเว้น `/api/*` จาก 308 — rev 33 เขียนว่า "matcher ตัด /api/* อยู่แล้ว" ซึ่ง**ผิด** (matcher ตัดแค่ `/api/auth`) → cron `/api/cron/sweep` ที่ Vercel เรียกผ่าน URL ของ deployment อาจโดน 308 (cron รอบ 07:00 ไทย 27 ส.ค. ยังไม่ถึงตอนแก้) · เทส +1
+- `docs/SECURITY_TODO.md` #7 (ghost token: `admitNext` step 0 + 2.1 + prune ก่อนนับ) และ #8 (`HOLD_MULTI_SCRIPT` Lua all-or-nothing) → ✅ แก้แล้ว พร้อมชี้บรรทัด · `docs/THESIS_GUIDE.md` ถอด health endpoint ออกจากรายการ "ยังไม่ได้ทำ"
+
+**หลักฐาน:** `tests/unit/health.test.ts` 8 เคส + canonical-host +1 → vitest ผ่านทั้งชุด · tsc 0 · lint 0 error · YAML parse ผ่าน · หลัง deploy: `curl -i /api/health` → 200 JSON, `/prototype/queue-runner` → 404, cron รอบถัดไปต้องได้ 200 (ดู runtime log 00:00Z)
+
+**ค้าง (user):** ตั้ง GitHub Secrets 2 ตัว + กดรัน backup ครั้งแรก · ผูก uptime monitor · ซ้อม restore ลง Neon branch 1 ครั้ง
+
 ## [Revision 34 — ขั้น 2 "ความน่าเชื่อถือ": นโยบาย PDPA + ยินยอมตอนสมัคร · เงื่อนไขบัตร · หน้า 404/500/loading · favicon/OG · robots/sitemap] — 2026-08-27
 
 **ที่มา (gap map 2026-08-27 ขั้น 2 — user สั่ง "ถ้าคิดว่าดีหรือจำเป็นทำได้เลย ไม่แน่ใจให้ถาม"):** ระบบเก็บ fingerprint + พฤติกรรมเมาส์/คีย์ + รูปสลิป (เลขบัญชี/ชื่อผู้โอน) + ชื่อผู้ถือบัตร แต่ไม่มีหน้านโยบาย/ข้อกำหนด/การขอความยินยอมเลย (พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล 2562) · ไม่มีหน้า 404/500 ของตัวเอง (หน้าขาวภาษาอังกฤษของ Next) · ไม่มี favicon/รูปตอนแชร์ลิงก์ · ไม่มี robots/sitemap · เงื่อนไขคืนบัตรมีแต่ฝั่งแอดมิน ลูกค้าไม่เคยเห็นก่อนจ่าย

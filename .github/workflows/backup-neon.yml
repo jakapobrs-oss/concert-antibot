@@ -1,0 +1,64 @@
+# Backup Neon (production DB) รายวัน — pg_dump → เข้ารหัส → เก็บเป็น artifact 30 วัน
+#
+# เหตุ (2026-08-26): DB local เคยหายทั้งก้อนโดยไม่มี backup · Neon Free เก็บ point-in-time แค่ ~1 วัน
+# ⚠️ repo นี้เป็น PUBLIC → artifact ของ workflow ดาวน์โหลดได้โดยผู้ใช้ GitHub ที่ล็อกอิน (ทุกคน)
+#    จึง "ห้าม" อัปโหลด dump เปล่า — เข้ารหัส AES-256 ด้วย passphrase ใน Secrets ก่อนเสมอ
+#
+# ต้องตั้ง GitHub Secrets 2 ตัว (Settings → Secrets and variables → Actions) — user ทำเอง:
+#   NEON_DATABASE_URL_UNPOOLED  = connection string แบบ direct (ไม่ผ่าน pooler) ของ Neon production
+#   BACKUP_PASSPHRASE           = ข้อความยาว ๆ สุ่ม (openssl rand -base64 32) — ทำหาย = กู้ backup ไม่ได้
+#   ผ่าน CLI: gh secret set NEON_DATABASE_URL_UNPOOLED   (พิมพ์/วางค่าใน stdin — ไม่โผล่ใน transcript)
+#
+# วิธีกู้ (restore) ซ้อมก่อนใช้จริง — ดู docs/17_GO_LIVE_CHECKLIST.md หัวข้อ "7. Ops"
+name: Backup Neon (daily)
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # 03:30 น. ไทย (UTC+7) — ช่วงเงียบ
+  workflow_dispatch: # กดรันมือได้จากแท็บ Actions
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    name: pg_dump + encrypt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # pg_dump ต้องเวอร์ชัน >= Postgres ของ Neon — ลง client 17 จาก PGDG กันตกรุ่น
+      - name: Install postgresql-client-17
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: Dump + encrypt
+        env:
+          NEON_URL: ${{ secrets.NEON_DATABASE_URL_UNPOOLED }}
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          [ -n "$NEON_URL" ] || { echo "::error::ยังไม่ได้ตั้ง secret NEON_DATABASE_URL_UNPOOLED"; exit 1; }
+          [ -n "$PASSPHRASE" ] || { echo "::error::ยังไม่ได้ตั้ง secret BACKUP_PASSPHRASE"; exit 1; }
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          dump="neon-${stamp}.dump"
+          # --format=custom = บีบอัด + pg_restore เลือกตารางได้ · --no-owner/--no-privileges = กู้ลง role อื่น (Neon branch ใหม่) ได้
+          pg_dump "$NEON_URL" --format=custom --no-owner --no-privileges --file "$dump"
+          # ส่ง passphrase ทาง fd ไม่ใช่ argv (ไม่โผล่ใน ps) · AES256 symmetric
+          printf '%s' "$PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 --output "${dump}.gpg" "$dump"
+          rm -f "$dump"
+          ls -la "${dump}.gpg"
+          echo "BACKUP_FILE=${dump}.gpg" >> "$GITHUB_ENV"
+
+      - name: Upload encrypted artifact (30 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-backup-${{ github.run_id }}
+          path: ${{ env.BACKUP_FILE }}
+          retention-days: 30
+          if-no-files-found: error
