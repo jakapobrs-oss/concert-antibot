@@ -5,6 +5,51 @@
 
 ---
 
+## [Revision 27 — ปิด SECURITY_TODO #2–#4: Turnstile ผูก action+โดเมน · คีย์ผู้จ่าย "ธนาคาร:ชื่อ" · เทียบยอดเป็นสตางค์] — 2026-08-26
+
+### Trigger
+งานค้างข้อ 4.3 ใน HANDOFF — รายการระดับ Medium ที่เหลือใน `docs/SECURITY_TODO.md` (ข้อ 1 ปิดไป rev 22)
+ทำต่อจาก rev 26 บน branch `fix/security-todo-2-4` (ต่อจาก `fix/queue-soldout-exit` ยังไม่ merge)
+
+### การตัดสินใจ (ถูกถามว่า "อันไหนปลอดภัยและใช้ได้จริง")
+- **#2 Turnstile** — ทำทั้ง `action` และ `hostname` แต่ **ไม่เพิ่ม env var** ตามแนวทางเดิม: เทียบ `hostname` ที่ Cloudflare
+  ยืนยันกับ `Host` header ของคำขอนี้แทน → prod ไม่ต้องตั้งอะไร, localhost/Vercel ใช้โค้ดเดียวกัน, ไม่มีทาง misconfig
+  แล้วคนจริงเข้าไม่ได้ทั้งเว็บ · `action` เป็น prop บังคับของ `TurnstileWidget` (TS บังคับ — widget ที่ลืม action
+  จะถูก server ปฏิเสธ) · dev mode (test key) ข้ามเช็ค 2 ข้อ (test key คืนค่าตายตัวของ Cloudflare)
+- **#3 payerKey** — เลือก **A "ธนาคาร:ชื่อ"** ไม่เอา B "ไม่มีเลขบัญชี = ข้าม cap": B ให้ขบวนการบอท "เลือก" ช่องทางจ่าย
+  ที่สลิปไม่โชว์เลขบัญชีแล้วหลุด cap ทั้งขบวน (กู้คืนไม่ได้) ส่วน A ชนกันแล้วอย่างมากคืนเงิน (กู้คืนได้ + มี `REFUND_REQUIRED`)
+  · แนวทางเดิมใน TODO (ใช้ transRef) ใช้ไม่ได้ — unique ต่อธุรกรรม = cap ไม่นับสะสม
+- **#4 สตางค์** — เทียบ `Math.round(x*100)` ทั้งสองฝั่ง, tolerance ยัง 0, ยอดอ่านไม่ได้ = ไม่ตรง (fail-closed)
+
+### ของที่แก้
+- `lib/turnstile.ts` — `verifyTurnstile(token, ip, { action, hostname })` + `normalizeHostname()` (ตัด port/lower/IPv6)
+  · ไม่ตรง = `success:false` + `errorCodes: ["action-mismatch" | "hostname-mismatch"]` → ผู้เรียกนับเป็น fail (+55) path เดิม
+- `lib/turnstile-actions.ts` (ใหม่, pure ใช้ได้ทั้ง client/server) — `queue_join` / `purchase`
+- `components/turnstile-widget.tsx` — prop `action` บังคับ → ส่งเข้า `turnstile.render` · ผู้ใช้ 3 จุด:
+  `waiting-room.tsx` = `queue_join`, `seat-map-svg.tsx` + `seat-map.tsx` = `purchase`
+- `lib/antibot.ts` / `lib/antibot-purchase.ts` — ส่ง action ของด่านตัวเอง + `headers.get("host")`
+- `lib/payer-key.ts` — `senderBank` → fallback `name:<bank>:<ชื่อ>`; ไม่มีธนาคาร → `name:<ชื่อ>` เดิม; มีเลขบัญชี → `acct:` เดิม
+- `lib/easyslip.ts` — map `sender.bank.id` (fallback `short`/`name`) → `senderBank` · `booking.ts` ส่งต่อให้ `computePayerKey`
+- `lib/money.ts` (ใหม่) — `toSatang` / `sameAmount` · `booking.ts submitSlip` ใช้ `sameAmount(verify.amount, order.totalAmount.toString())`
+- ไม่แตะ: schema/migration · env · `order-finalize.ts` · กติกาคะแนน anti-bot
+
+### หลักฐาน
+- unit **570/570 (42 ไฟล์)** — ใหม่: `turnstile.test.ts` 14 · `money.test.ts` 6 · `payer-key` +5 · `easyslip` +1 · `antibot` +1 · `antibot-purchase` +2
+  · typecheck 0 · lint = warning เดิม 1 จุดใน prototype
+- **เทสจับบั๊กของร่างแรกได้จริง**: `toSatang("")` คืน 0 เพราะ `Number("") === 0` → สลิปที่อ่านยอดไม่ได้จะกลายเป็น "0 บาท"
+  (fail-open บนเส้นทางเงิน) → บังคับ string เป็นทศนิยมล้วนก่อนแปลง (ตัด `""`/`"1,500"`/`"1e3"`/`"0x10"`)
+- เบราว์เซอร์จริง (dev server + Postgres/Redis จริง, Turnstile คีย์จริง): `pnpm test:seatmap-buyer` 27/27 ·
+  `pnpm test:purchase-antibot` 7/7 (คนจริงยังซื้อได้ / UA สคริปต์ถูกหยุด / BotEvent ลง DB / ที่นั่งไม่ค้าง)
+- **ยังไม่ได้เห็น token จริงผ่านด่าน action+hostname** — สคริปต์แก้ Turnstile คีย์จริงไม่ได้ (ตั้งใจไม่ bypass) และห้องรอต้อง login
+  (กฎเครื่องมือเบราว์เซอร์: ไม่กรอกรหัสผ่าน) → **เช็คมือ 1 นาทีหลัง deploy**: login → เข้าคิวคอนเสิร์ตที่เปิดขาย → แก้ Turnstile →
+  ต้องเข้าคิวได้ ไม่ใช่จอ "ตรวจพบกิจกรรมผิดปกติ"; ถ้าพัง ดู `BotEvent` ล่าสุด (`errorCodes` จะบอก `action-mismatch`/`hostname-mismatch`)
+
+### ข้อควรรู้ตอน deploy
+- แท็บที่เปิดค้างด้วย bundle เก่า (widget ไม่มี action) จะแก้ challenge ไม่ผ่านจนกว่าจะรีเฟรช — ชั่วคราวช่วง deploy
+- รูปแบบคีย์ fallback ของผู้จ่ายเปลี่ยน (`name:<ชื่อ>` → `name:<bank>:<ชื่อ>`) — prod ยังไม่มีการขายจริง จึงไม่มีแถวเก่าให้ชน
+
+---
+
 ## [Revision 26 — คิวมี "ทางออก" เมื่อบัตรหมด: ไม่ค้างตำแหน่ง 1 ตลอดกาล] — 2026-08-26
 
 ### Trigger

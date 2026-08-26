@@ -40,32 +40,64 @@
   (คนจริงยังซื้อได้ / UA สคริปต์ถูกหยุดไม่ถึง checkout / มี BotEvent ลง DB / ที่นั่งไม่ถูกล็อกค้าง)
   · `pnpm test:seatmap-buyer` 27/27 ยืนยันว่าไม่ทำให้คนซื้อปกติพัง
 
-### 2. Turnstile: ไม่ตรวจ `hostname` และ `action`
-- **ไฟล์**: `lib/antibot.ts` → `verifyTurnstile()`
-- **ปัญหา**: Cloudflare ส่งคืน `hostname` (ชื่อโดเมนที่ widget แสดง) และ `action`
-  (ชื่อที่ set ใน widget) แต่ปัจจุบันไม่ได้ตรวจ → token ที่สร้างบน subdomain อื่น
-  หรือ action อื่นยังผ่านได้
-- **แนวทาง**:
-  ```ts
-  if (result.hostname !== process.env.TURNSTILE_EXPECTED_HOSTNAME) throw ...
-  if (result.action !== "queue_join") throw ...
-  ```
-- **ข้อระวัง**: ต้องตั้ง `data-action` ในทุก widget และเพิ่ม env var
+### 2. Turnstile: ไม่ตรวจ `hostname` และ `action` — ✅ แก้แล้ว (2026-08-26)
+- **ไฟล์**: `lib/turnstile.ts` → `verifyTurnstile(token, ip, expectation)` · `lib/turnstile-actions.ts` (ใหม่, pure)
+  · `components/turnstile-widget.tsx` (prop `action` บังคับ) · `lib/antibot.ts` / `lib/antibot-purchase.ts` (ผู้เรียก)
+- **ปัญหาเดิม**: Cloudflare ส่งคืน `hostname` (โดเมนที่ widget รัน) และ `action` (ชื่อที่ตั้งใน widget)
+  แต่ไม่ได้ตรวจ → token ที่มนุษย์แก้ให้ที่ด่านคิว เอาไปยิงด่านซื้อได้ / token ที่แก้บนโดเมนอื่นยังผ่าน
+- **ที่ทำจริง ต่างจาก "แนวทาง" เดิม — และทำไม**:
+  - `action`: widget ทุกจุดตั้ง `action` (`queue_join` ที่ห้องรอ · `purchase` ที่ผังที่นั่ง 2 ตัว) เป็น prop **บังคับ**
+    ใน `TurnstileWidget` (TypeScript บังคับให้จุดใหม่ต้องระบุ — widget ที่ไม่มี action จะถูก server ปฏิเสธ
+    คนจริงแก้ challenge แล้วไม่ผ่าน) · server เทียบเป๊ะ: ไม่ตรง หรือ Cloudflare ไม่คืน action เลย = `action-mismatch`
+  - `hostname`: **ไม่เพิ่ม env var** `TURNSTILE_EXPECTED_HOSTNAME` ตามแนวทางเดิม แต่เทียบกับ **`Host` header ของคำขอนี้**
+    (normalize: ตัด port / lower-case / IPv6 `[::1]:3000`) — ไม่มีอะไรต้องตั้งบน prod, ใช้ได้ทั้ง `localhost:3000`
+    และ `concert-antibot.vercel.app` โดยไม่ต้องแก้ค่า, ไม่มีทาง misconfig (ตั้ง env ผิด = คนจริงเข้าไม่ได้ทั้งเว็บ)
+    ไม่ทราบ Host (null) = ข้ามเช็คโดเมน แต่ยังเช็ค action
+  - ไม่ผ่าน 2 ข้อนี้ = `success:false` → ผู้เรียกนับเป็น "Turnstile fail" (+55) เหมือน token ปลอม — ไม่มี path ใหม่
+  - **dev mode (test key ของ Cloudflare) ข้ามเช็ค 2 ข้อ** — test key คืน hostname/action ค่าตายตัวของ Cloudflare ไม่ใช่ของเรา
+    (คีย์จริงใน `.env` ของเครื่อง dev → เช็คทำงานบน localhost ด้วย)
+- **ข้อจำกัด / ข้อระวัง**:
+  - ยืนยันด้วย unit test (mock siteverify) เท่านั้น — **ยังไม่ได้เห็น token จริงผ่านด่านนี้** เพราะสคริปต์แก้ Turnstile
+    คีย์จริงไม่ได้ (ตั้งใจไม่ bypass) และห้องรอต้อง login → เช็คมือหลัง deploy: เข้าคิวคอนเสิร์ตจริง 1 ครั้ง
+    ต้องเข้าคิวได้ ไม่ใช่จอ "ตรวจพบกิจกรรมผิดปกติ"; ถ้าพัง `BotEvent` จะมี `errorCodes: action-mismatch`/`hostname-mismatch`
+  - ช่วง deploy: แท็บที่เปิดค้างด้วย bundle เก่า (widget ไม่มี action) จะแก้ challenge ไม่ผ่านจนกว่าจะรีเฟรช — ชั่วคราว
+  - โดเมน preview ของ Vercel ต้องอยู่ใน hostname allowlist ของ Turnstile ถึงจะ render widget ได้ (เรื่องเดิม ไม่ใช่ของ fix นี้)
+- **หลักฐาน**: `tests/unit/turnstile.test.ts` (ใหม่ 14) · `antibot.test.ts` +1 · `antibot-purchase.test.ts` +2 · typecheck 0
 
-### 3. payerKey fallback ใช้ชื่อผู้โอน
-- **ไฟล์**: `lib/order-finalize.ts`
-- **ปัญหา**: ถ้า bank slip ไม่มี promptpay proxy number, fallback ใช้ชื่อผู้โอน
-  เป็น key → คนชื่อเดียวกันอาจชนกัน (จ่ายด้วย slip คนละใบแต่ถูก dedup)
-- **แนวทาง**: บันทึก `transactionRef` จาก EasySlip แทน (unique ต่อ transaction)
-  หรือ composite key `senderName:amount:date`
-- **ข้อระวัง**: EasySlip API ต้องคืน ref เสมอ — ตรวจสอบ response schema ก่อน
+### 3. payerKey fallback ใช้ชื่อผู้โอน — ✅ แก้แล้ว (2026-08-26) แบบ "ธนาคาร:ชื่อ"
+- **ไฟล์**: `lib/payer-key.ts` → `computePayerKey({ senderAccount, senderName, senderBank })`
+  · `lib/easyslip.ts` (map `sender.bank.id` → `senderBank`) · `app/actions/booking.ts` (ส่งต่อ)
+- **ปัญหาเดิม**: สลิปที่ไม่มีเลขบัญชี/พร็อกซีผู้จ่าย fallback ใช้ "ชื่อผู้โอน" เป็นคีย์ per-payer cap
+  → คนชื่อ-นามสกุลซ้ำกันชนคีย์ → ผู้ซื้อจริงคนที่สองโดน `PAYER_LIMIT` ผิดคน (ต้องคืนเงิน)
+- **ที่ทำจริง ต่างจาก "แนวทาง" เดิม — และทำไม**: แนวทางเดิม (ใช้ `transRef`) **ใช้ไม่ได้กับงานนี้**
+  เพราะ transRef unique ต่อธุรกรรม → ทุกสลิปกลายเป็น "ผู้จ่ายคนใหม่" cap ไม่นับสะสม = เท่ากับไม่มี cap
+  (transRef ถูกใช้กันสลิปซ้ำอยู่แล้วที่ `Payment.slipRef UNIQUE` — คนละหน้าที่)
+  ทางเลือกที่ชั่งแล้ว:
+  - **A (เลือก)**: คีย์ `name:<รหัสธนาคารต้นทาง>:<ชื่อ>` — ชื่อเดียวกันคนละธนาคาร = คนละผู้จ่าย;
+    ชื่อเดียวกัน+ธนาคารเดียวกัน+สลิปไม่มีเลขบัญชีเลย ยังชนได้ (ยอมรับ: โอกาสน้อยมาก และผลคือ "คืนเงิน"
+    ซึ่งกู้คืนได้ + มี `REFUND_REQUIRED` ใน DB)
+  - B (ไม่เอา): สลิปไม่มีเลขบัญชี = ข้าม cap — ขบวนการบอท **เลือก** ช่องทางจ่ายที่สลิปไม่โชว์เลขบัญชี
+    แล้วหลุด cap ได้ทั้งขบวน (บอทเลือกได้ เราแก้ทีหลังไม่ได้) → ปล่อยบัตรถึงมือ scalper = กู้คืนไม่ได้
+  - ไม่มี senderBank (สลิปไม่บอก) → รูปแบบเดิม `name:<ชื่อ>` (ยังบังคับ cap) · มีเลขบัญชี → `acct:` เหมือนเดิม
+- **ข้อระวัง**: รูปแบบคีย์ fallback เปลี่ยน — แถว `payments.payerKey` เก่าที่เป็น `name:<ชื่อ>` จะไม่นับรวมกับคีย์ใหม่
+  ของผู้จ่ายเดียวกัน (prod ยังไม่มีการขายจริง = ไม่มีแถวแบบนี้) · ไม่แตะ schema/migration
+- **หลักฐาน**: `tests/unit/payer-key.test.ts` +5 · `easyslip.test.ts` +1 (map `sender.bank.id` → fallback `short`)
 
-### 4. Amount comparison ควรเป็น integer satang
-- **ไฟล์**: `lib/order-finalize.ts`
-- **ปัญหา**: เปรียบเทียบ `slipAmount` (float) กับ `order.totalAmount` (Decimal)
-  อาจมี floating-point drift (เช่น 1500.0 ≠ 1500.0000001)
-- **แนวทาง**: แปลงทั้งสองเป็น integer satang (`Math.round(x * 100)`) ก่อนเปรียบเทียบ
-- **ข้อระวัง**: ต้องตรวจว่า EasySlip ส่งกลับเป็น THB หรือ satang ก่อน
+### 4. Amount comparison ควรเป็น integer satang — ✅ แก้แล้ว (2026-08-26)
+- **ไฟล์**: `lib/money.ts` (ใหม่, pure: `toSatang` / `sameAmount`) · `app/actions/booking.ts` → `submitSlip()`
+  (จุดเทียบยอดจริงอยู่ที่นี่ ไม่ใช่ `order-finalize.ts` ตามที่เขียนไว้เดิม)
+- **ปัญหาเดิม**: `verify.amount !== expectedAmount` เทียบ float (EasySlip) กับ `Number(Decimal.toString())` ตรง ๆ
+  → drift เช่น 1500.0000000001 ≠ 1500 ปฏิเสธคนจ่ายถูกยอด
+- **ที่ทำจริง**: แปลงทั้งสองฝั่งเป็นสตางค์จำนวนเต็ม (`Math.round(x * 100)`) แล้วเทียบ · tolerance ยัง 0 (ต่าง 1 สตางค์ = ไม่ตรง)
+  · ยอดที่ขาด/อ่านไม่ได้ (`undefined`/`NaN`/สตริงไม่ใช่ทศนิยม) = **ไม่ตรง** (fail-closed)
+  · EasySlip คืนหน่วย **บาท** (`data.amount.amount` เช่น 1500) — ตรวจแล้วจาก shape ที่ `lib/easyslip.ts` map อยู่
+- **บั๊กที่เทสจับได้ระหว่างทำ (บันทึกไว้กันทำซ้ำ)**: ร่างแรกใช้ `Number(String(x))` → `Number("") === 0`
+  = สลิปที่อ่านยอดไม่ได้กลายเป็น "0 บาท" (fail-open) → บังคับ string ต้องเป็นทศนิยมล้วน `^-?\d+(\.\d+)?$`
+  (ตัด `""`, `"1,500"`, `"1e3"`, `"0x10"`) ก่อน `Number()`
+- **ข้อระวัง**: ยอดรวม order ตอนสร้าง (`lib/order-finalize.ts` `createOrder…` บวก `Number(price)` เป็น float
+  แล้วเก็บ Decimal(10,2)) ยังเป็น float-sum — ไม่แตะในรอบนี้ (Postgres ปัดเป็น 2 ตำแหน่งตอนเขียน จึงไม่กระทบการเทียบ)
+- **หลักฐาน**: `tests/unit/money.test.ts` (ใหม่ 6 เทส รวมเคส `""`/`"0x10"`/NaN) · `pnpm test:seatmap-buyer` +
+  `pnpm test:purchase-antibot` (เบราว์เซอร์จริง) ยังผ่านหลังแก้
 
 ---
 
