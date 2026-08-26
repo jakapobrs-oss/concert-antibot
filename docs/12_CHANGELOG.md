@@ -5,6 +5,27 @@
 
 ---
 
+## [Revision 29 — ฟอร์มสร้างคอนเสิร์ต: datetime-local ถูกอ่านเป็น UTC → เวลาเลื่อน +7 ชม. (จาก user-test)] — 2026-08-26
+
+### Trigger
+user-test ทุกเส้นทางบน prod ผ่าน Chrome (รายงาน `user-test-runs/2026-08-26-prod-chrome/report.html`): สร้างคอนเสิร์ต 20 ธ.ค. 19:00
+→ แอดมินและลูกค้าเห็น "21 ธันวาคม 2569 เวลา 02:00", ช่วงขาย 16:00 → 23:00
+
+### Root cause
+`app/actions/concert.ts` รับสตริง `YYYY-MM-DDTHH:mm` จาก `<input type="datetime-local">` แล้ว `new Date()` ตรง ๆ — บน Vercel (TZ=UTC)
+ตีความเป็น UTC · ฟอร์มรอบกดบัตรไม่โดนเพราะ `admin-sale-rounds.tsx` แปลงเป็น ISO ฝั่ง client ก่อนส่ง
+
+### สิ่งที่ทำ
+- `lib/local-datetime.ts` (ใหม่, pure): `parseThaiDateTimeLocal()` — ไม่มี TZ → เติม `+07:00`; มี Z/offset → ใช้ตามนั้น; พัง/ว่าง → null
+- `app/actions/concert.ts` ใช้ helper + ฟ้อง "วันเวลาไม่ถูกต้อง" / "เวลาปิดขายต้องอยู่หลังเวลาเริ่มขาย" (เดิมสร้างได้แม้ปิดก่อนเริ่ม)
+- ไม่แก้ข้อมูลเก่า: คอนเสิร์ต #46 (ทดสอบ, ปิดขาย) ยังเก็บเวลาเลื่อนอยู่
+- **ยังไม่แก้** บั๊กอื่นจาก user-test: ตัวกรอง bot-log, ยกเลิกออเดอร์ไม่มี confirm, คอนเสิร์ต 0 โซน ฿∞/กำลังขาย, ปุ่มให้สิทธิ์สมาชิก, validation ภาษาอังกฤษ
+
+### หลักฐาน
+`tests/unit/local-datetime.test.ts` 6 เทส (รวมข้ามวัน + passthrough Z/offset) → unit 43 ไฟล์ 580/580 · typecheck 0
+
+---
+
 ## [Revision 28 — Turnstile บน prod เป็น test key มา 43 วัน: ปฏิเสธชัดเจน + ห้องรอมี feedback + เก็บ error code] — 2026-08-26
 
 ### Trigger
