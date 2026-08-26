@@ -4,7 +4,9 @@
 //   แยกชนิดด้วย identifier ขึ้นต้น "pwreset:" → token ยืนยันอีเมล (identifier = อีเมลล้วน) กับ token รีเซ็ตรหัส
 //   ใช้ข้ามกันไม่ได้: verifyEmail() ปฏิเสธ identifier ที่มี prefix / resetPassword() รับเฉพาะที่มี prefix
 // token: 32 ไบต์สุ่ม (hex 64 ตัว) อายุ 30 นาที ใช้ครั้งเดียว (ลบทุก token ของอีเมลนั้นเมื่อรีเซ็ตสำเร็จ/ขอใหม่)
-import crypto from "node:crypto";
+//
+// ⚠️ ไฟล์นี้ถูก import จาก client component (ฟอร์ม) → ห้ามมี node:crypto/prisma/env ในนี้ (next build จะล้ม
+//   "Reading from node:crypto is not handled by plugins") — ตัวสุ่ม token อยู่ที่ lib/password-reset-token.ts (server-only)
 
 export const RESET_IDENTIFIER_PREFIX = "pwreset:";
 export const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
@@ -31,10 +33,6 @@ export function emailFromResetIdentifier(identifier: string): string | null {
   if (!isResetIdentifier(identifier)) return null;
   const email = identifier.slice(RESET_IDENTIFIER_PREFIX.length);
   return email.length > 0 ? email : null;
-}
-
-export function generateResetToken(): string {
-  return crypto.randomBytes(32).toString("hex");
 }
 
 export function resetTokenExpiry(now: Date = new Date()): Date {

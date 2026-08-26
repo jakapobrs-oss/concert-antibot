@@ -7,11 +7,11 @@ import {
   resetIdentifierFor,
   isResetIdentifier,
   emailFromResetIdentifier,
-  generateResetToken,
   resetTokenExpiry,
   evaluateResetToken,
   checkNewPassword,
 } from "@/lib/password-reset";
+import { generateResetToken } from "@/lib/password-reset-token";
 
 describe("identifier ของ token รีเซ็ต", () => {
   it("ขึ้นต้นด้วย prefix และถอดกลับเป็นอีเมลเดิมได้", () => {

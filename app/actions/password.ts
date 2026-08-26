@@ -18,10 +18,10 @@ import {
   RESET_TOKEN_TTL_MS,
   checkNewPassword,
   evaluateResetToken,
-  generateResetToken,
   resetIdentifierFor,
   resetTokenExpiry,
 } from "@/lib/password-reset";
+import { generateResetToken } from "@/lib/password-reset-token";
 import { sendVerificationToken } from "@/app/actions/auth";
 
 // state ของ useActionState ในฟอร์ม forgot / reset / resend — ข้อความสำเร็จ (กลาง ไม่เปิดเผยว่ามีบัญชี) อยู่ใน lib/password-reset.ts

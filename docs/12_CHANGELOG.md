@@ -35,6 +35,8 @@
 
 **หลักฐาน:** unit `password-reset` 11 + `email-templates` 8 → vitest **51 ไฟล์ 639/639** (รวม health ของ rev 36) · tsc 0 · lint 0 error · Chrome (dev): /reset ด้วย token จริงที่ใส่ใน DB — รหัสไม่ตรง → error ใต้ช่อง ✓ ตรง → `/login?reset=1` ✓ DB: hash เปลี่ยน · `lockedUntil` null · `failedLoginCount` 0 · `emailVerified` set · token ถูกลบ ✓ · ล็อกอินด้วยรหัสใหม่ผ่าน ✓ · ลิงก์ที่ใช้แล้ว/token ยืนยันอีเมลเอามารีเซ็ต → "ลิงก์ใช้ไม่ได้แล้ว" ✓ · /forgot กับอีเมล example.com → ข้อความกลาง + Resend 422 ถูกจับ token ถูกลบ ✓ · `notifyOrderPaid` เรียกกับ id ที่ไม่มี = เงียบ ✓
 
+**hotfix หลัง push แรก (deploy `34dxrztan` ล้ม):** `lib/password-reset.ts` มี `import "node:crypto"` แต่ถูก import จาก client component (ฟอร์ม) → webpack ของ `next build` ล้ม "Reading from node:crypto is not handled by plugins" (Turbopack dev ไม่ฟ้อง, tsc ไม่ฟ้อง) → แยก `generateResetToken` ไป `lib/password-reset-token.ts` (server) · **บทเรียน: รัน `next build` ก่อน push ทุกครั้ง แม้ tsc/vitest ผ่าน** — lib ที่ client import ห้ามมี `node:*`/prisma/env
+
 **ข้อจำกัดบน prod ตอนนี้:** `EMAIL_FROM` ยังเป็น `@resend.dev` → อีเมลรีเซ็ต/ใบเสร็จส่งถึงได้เฉพาะอีเมลเจ้าของบัญชี Resend (เหมือนอีเมลยืนยัน) จนกว่าจะ verify โดเมนจริง — ผู้ใช้อื่นเห็นข้อความกลางแต่ไม่ได้รับเมล (log `🔑 … ไม่สำเร็จ`); ใบเสร็จไม่กระทบตั๋ว (ดูในเว็บได้)
 
 ## [Revision 34 — ขั้น 2 "ความน่าเชื่อถือ": นโยบาย PDPA + ยินยอมตอนสมัคร · เงื่อนไขบัตร · หน้า 404/500/loading · favicon/OG · robots/sitemap] — 2026-08-27
