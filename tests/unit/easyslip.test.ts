@@ -182,6 +182,26 @@ describe("verifySlip — มี key: เรียก EasySlip จริง (mock
     expect(r.senderName).toBe("JOHN DOE");
   });
 
+  it("senderBank map จาก sender.bank.id (fallback short) — ใช้เสริมคีย์ผู้จ่าย (SECURITY_TODO #3)", async () => {
+    const verifySlip = await loadVerifySlip({ isEasySlipConfigured: true, receiverMatch: true });
+    stubFetchJson(
+      okBody({
+        sender: { bank: { id: "004", short: "KBANK", name: "ธนาคารกสิกรไทย" }, account: { name: { th: "สมชาย" } } },
+      })
+    );
+    const r = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
+    expect(r.senderBank).toBe("004");
+
+    stubFetchJson(okBody({ sender: { bank: { short: "SCB" }, account: { name: { th: "สมชาย" } } } }));
+    const r2 = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
+    expect(r2.senderBank).toBe("SCB");
+
+    // สลิปไม่บอกธนาคาร → undefined (payer-key จะใช้รูปแบบ name:<ชื่อ> เดิม)
+    stubFetchJson(okBody());
+    const r3 = await verifySlip({ slipImageBase64: "data:image/png;base64,AAAA", expectedAmount: 1500 });
+    expect(r3.senderBank).toBeUndefined();
+  });
+
   it("receiverAccount fallback ไป bank.account เมื่อไม่มี proxy", async () => {
     const verifySlip = await loadVerifySlip({ isEasySlipConfigured: true, receiverMatch: true });
     stubFetchJson(okBody({ receiver: { account: { bank: { account: "123-4-56789-0" } } } }));

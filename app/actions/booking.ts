@@ -15,6 +15,7 @@ import {
   reserveSeatsForOrder,
 } from "@/lib/order-finalize";
 import { computePayerKey } from "@/lib/payer-key";
+import { sameAmount } from "@/lib/money";
 import { auth } from "@/lib/auth";
 import { holdSeats, releaseSeats } from "@/lib/seat-hold";
 import { findSeatsInConcert } from "@/lib/booking-guards";
@@ -589,11 +590,13 @@ export async function submitSlip(input: {
     return { ok: false, error: verify.error ?? "ตรวจสอบสลิปไม่สำเร็จ" };
   }
 
-  // ตรวจยอดตรงไหม (tolerance 0 — ต้องตรงเป๊ะ)
-  if (verify.amount !== expectedAmount) {
+  // ตรวจยอดตรงไหม (tolerance 0 — ต้องตรงเป๊ะ) — เทียบเป็น "สตางค์จำนวนเต็ม" ทั้งสองฝั่ง (SECURITY_TODO #4)
+  //   ยอดสลิปเป็น float จาก EasySlip / ยอด order เป็น Decimal(10,2) → เทียบ float ตรง ๆ เสี่ยง drift
+  //   (1500.0000000001 ≠ 1500 ทั้งที่ยอดเดียวกัน) · ยอดที่อ่านไม่ได้ (undefined/NaN) = ไม่ตรง (fail-closed)
+  if (!sameAmount(verify.amount, order.totalAmount.toString())) {
     return {
       ok: false,
-      error: `ยอดไม่ตรง: โอนมา ${verify.amount} บาท แต่ต้องชำระ ${expectedAmount} บาท`,
+      error: `ยอดไม่ตรง: โอนมา ${verify.amount ?? "?"} บาท แต่ต้องชำระ ${expectedAmount} บาท`,
     };
   }
 
@@ -613,9 +616,14 @@ export async function submitSlip(input: {
   //     การกันที่นั่งซ้ำพึ่ง unique constraint บน Ticket.seatId + OrderItem.seatId ใน transaction นี้แทน
   // 🛡️ per-payer cap (anti-scalping): สร้างคีย์ "ผู้จ่าย" จากสลิป
   //    ข้ามใน dev-mock (verify.devMode) เพราะไม่มีผู้จ่ายจริง — กัน cap บล็อกตอนทดสอบ/demo
+  //    senderBank ใช้เสริมเฉพาะกรณีสลิปไม่มีเลขบัญชี (SECURITY_TODO #3 — คีย์ "ธนาคาร:ชื่อ" แทน "ชื่อ" ล้วน)
   const payerKey = verify.devMode
     ? null
-    : computePayerKey({ senderAccount: verify.senderAccount, senderName: verify.senderName });
+    : computePayerKey({
+        senderAccount: verify.senderAccount,
+        senderName: verify.senderName,
+        senderBank: verify.senderBank,
+      });
 
   // ออกตั๋ว + mark paid แบบ atomic & race-safe (N1) + เช็ค per-payer cap — ดู lib/order-finalize.ts
   const seatIds = order.items.map((i) => i.seatId);

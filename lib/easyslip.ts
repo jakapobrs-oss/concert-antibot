@@ -16,6 +16,7 @@ export interface SlipVerifyResult {
   amount?: number; // ยอดที่โอนจริง (จากสลิป)
   senderName?: string;
   senderAccount?: string; // เลขบัญชี/พร็อกซีผู้จ่าย (อาจถูก mask) — ใช้ทำ per-payer cap กัน account farming
+  senderBank?: string; // รหัส/ชื่อย่อธนาคารต้นทาง (เช่น "004") — เสริมคีย์ผู้จ่ายเมื่อสลิปไม่มีเลขบัญชี (SECURITY_TODO #3)
   receiverAccount?: string; // เลขบัญชี/พร็อกซีปลายทางที่อ่านได้จากสลิป (อาจถูก mask)
   transAt?: Date; // เวลาที่โอนตามสลิป — ใช้เช็ค freshness (Level 2)
   ref?: string; // transaction ref — ใช้กันสลิปซ้ำ
@@ -113,6 +114,10 @@ async function verifyWithEasySlip(params: {
     //   มัก masked (เช่น xxx-x-x1234-5) แต่เสถียรพอใช้เป็น identity ของบัญชีธนาคารต้นทาง
     const senderAccount: string =
       d.sender?.account?.proxy?.account ?? d.sender?.account?.bank?.account ?? "";
+    // ธนาคารต้นทาง (EasySlip: sender.bank = { id: "004", name, short: "KBANK" }) — รหัส id เสถียรสุด
+    //   ใช้เสริมคีย์ผู้จ่ายเฉพาะกรณีสลิปไม่มีเลขบัญชีเลย (lib/payer-key.ts, SECURITY_TODO #3)
+    const senderBank: string =
+      d.sender?.bank?.id ?? d.sender?.bank?.short ?? d.sender?.bank?.name ?? "";
 
     // 🔒 ชั้นที่ 2: เช็คว่าเงินเข้าบัญชีของเราจริง (กันแนบสลิปที่โอนหาคนอื่น)
     if (env.PAYMENTS_RECEIVER_CHECK) {
@@ -171,6 +176,7 @@ async function verifyWithEasySlip(params: {
       amount: Number(slipAmount),
       senderName,
       senderAccount,
+      senderBank: senderBank ? String(senderBank) : undefined,
       receiverAccount,
       transAt,
       ref,

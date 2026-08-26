@@ -29,6 +29,35 @@ describe("computePayerKey — สร้างคีย์ผู้จ่าย�
   });
 });
 
+describe("computePayerKey — fallback ชื่อ + ธนาคารต้นทาง (SECURITY_TODO #3)", () => {
+  it("ไม่มีเลขบัญชี แต่มีธนาคาร → name:<ธนาคาร>:<ชื่อ> (normalize ทั้งคู่)", () => {
+    expect(computePayerKey({ senderName: "John Doe", senderBank: "004" })).toBe("name:004:john doe");
+    expect(computePayerKey({ senderName: "  JOHN  DOE ", senderBank: " KBANK " })).toBe("name:kbank:john doe");
+  });
+
+  it("ชื่อเดียวกัน คนละธนาคาร → คนละคีย์ (ไม่ชนกันเหมือนเดิม)", () => {
+    const kbank = computePayerKey({ senderName: "สมชาย ใจดี", senderBank: "004" });
+    const scb = computePayerKey({ senderName: "สมชาย ใจดี", senderBank: "014" });
+    expect(kbank).not.toBe(scb);
+  });
+
+  it("มีเลขบัญชี → ใช้ acct: ไม่สนธนาคาร (เลขบัญชีเสถียรกว่า)", () => {
+    expect(computePayerKey({ senderAccount: "xxx-x-x1234-5", senderName: "John", senderBank: "004" })).toBe(
+      "acct:12345"
+    );
+  });
+
+  it("ไม่มีธนาคาร (สลิปไม่บอก) → รูปแบบเดิม name:<ชื่อ> (ยังบังคับ cap ไม่ปล่อยหลุด)", () => {
+    expect(computePayerKey({ senderName: "John Doe", senderBank: "" })).toBe("name:john doe");
+    expect(computePayerKey({ senderName: "John Doe", senderBank: "   " })).toBe("name:john doe");
+    expect(computePayerKey({ senderName: "John Doe", senderBank: null })).toBe("name:john doe");
+  });
+
+  it("มีธนาคารแต่ไม่มีชื่อ → null (ธนาคารอย่างเดียวระบุคนไม่ได้)", () => {
+    expect(computePayerKey({ senderBank: "004" })).toBeNull();
+  });
+});
+
 describe("exceedsPayerLimit — ตัดสินว่าเกินเพดานต่อผู้จ่ายมั้ย", () => {
   it("ยังไม่เกิน (รวมแล้วเท่าลิมิตพอดี) → false", () => {
     expect(exceedsPayerLimit({ priorPaid: 8, requested: 2, limit: 10 })).toBe(false);
