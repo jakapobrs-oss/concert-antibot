@@ -91,6 +91,31 @@ if (isProduction && !isGeminiConfigured) {
   );
 }
 
+// เตือนถ้า production แต่ยังไม่ตั้ง RESEND_API_KEY (readiness audit 2026-08-26)
+//   สมัครด้วยอีเมลถูกปิด (fail-closed ใน app/actions/auth.ts ผ่าน lib/email-signup-gate.ts) — เข้าได้ทาง Google เท่านั้น
+if (isProduction && !isEmailEnabled) {
+  console.error(
+    "🚨 [EMAIL] production แต่ยังไม่ได้ตั้ง RESEND_API_KEY — ปิดรับสมัครด้วยอีเมล (ล็อกอินได้เฉพาะ Google) จนกว่าจะตั้งค่า"
+  );
+}
+
+// เตือนถ้า production ตั้ง Resend แล้วแต่ EMAIL_FROM ใช้จริงไม่ได้ — ผลคือสมัครแล้ว "ส่งอีเมลยืนยันไม่สำเร็จ" ทุกคน
+//   noreply@localhost (default) → Resend ปฏิเสธทุกฉบับ · @resend.dev (sender ทดสอบ) → ส่งได้เฉพาะอีเมลเจ้าของบัญชี Resend
+//   รองรับรูปแบบ "ชื่อ <addr@domain>" ด้วย
+if (isProduction && isEmailEnabled) {
+  const fromDomain = (env.EMAIL_FROM.match(/@([^\s>]+)/)?.[1] ?? "").toLowerCase();
+  if (fromDomain === "localhost") {
+    console.error(
+      "🚨 [EMAIL] EMAIL_FROM ยังเป็นค่า default noreply@localhost บน production — Resend จะปฏิเสธทุกฉบับ ต้องใช้โดเมนที่ verify แล้ว"
+    );
+  } else if (fromDomain.endsWith("resend.dev")) {
+    console.error(
+      "🚨 [EMAIL] EMAIL_FROM เป็น sender ทดสอบของ Resend (@resend.dev) — ส่งได้เฉพาะอีเมลเจ้าของบัญชี Resend " +
+        "ผู้สมัครคนอื่นจะได้ 'ส่งอีเมลยืนยันไม่สำเร็จ' จนกว่าจะ verify โดเมนจริง"
+    );
+  }
+}
+
 // ============================================================
 // Codex §7 — เตือน config ที่ "ปิดการป้องกัน" ได้เงียบ ๆ บน production
 //   (ทั้งหมดเป็น warn ไม่ throw ตาม convention ไฟล์นี้ + scripts/check-env.ts เป็น hard gate ตอน go-live)

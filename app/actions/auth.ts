@@ -11,8 +11,9 @@ import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { clientIpFromXff } from "@/lib/get-ip";
-import { env, isEmailEnabled } from "@/lib/env";
+import { env, isEmailEnabled, isProduction } from "@/lib/env";
 import { sendVerificationEmail } from "@/lib/email";
+import { isEmailSignupOpen, EMAIL_SIGNUP_CLOSED_MESSAGE } from "@/lib/email-signup-gate";
 
 const registerSchema = z
   .object({
@@ -26,6 +27,12 @@ export type RegisterResult =
   | { ok: false; error: string; fieldErrors?: Record<string, string[]> };
 
 export async function registerUser(formData: FormData): Promise<RegisterResult> {
+  // 🚪 production ที่ยังไม่ตั้ง RESEND_API_KEY = ปิดรับสมัครด้วยอีเมล (fail-closed แบบเดียวกับ payment/cron)
+  //   ไม่งั้นได้บัญชีที่ยืนยันไม่ได้ (ลิงก์ไปโผล่ใน log) + "อีเมลนี้ถูกใช้แล้ว" กันเจ้าของจริงสมัครซ้ำ — ดู lib/email-signup-gate.ts
+  if (!isEmailSignupOpen({ isProduction, isEmailEnabled })) {
+    return { ok: false, error: EMAIL_SIGNUP_CLOSED_MESSAGE };
+  }
+
   const raw = {
     email: formData.get("email"),
     password: formData.get("password"),
@@ -67,8 +74,17 @@ export async function registerUser(formData: FormData): Promise<RegisterResult> 
     },
   });
 
-  // ส่ง verification token (ถ้ามี email provider)
-  await sendVerificationToken(email);
+  // ส่ง verification token — ส่งไม่ออก (Resend ปฏิเสธ/เน็ตล่ม) = ถอนบัญชีที่เพิ่งสร้างแล้วบอกให้ลองใหม่
+  //   เดิม "ไม่ rollback" โดยหวังให้ user ขอลิงก์ใหม่ทีหลัง แต่ระบบยังไม่มีปุ่มขอลิงก์ใหม่ → บัญชีตายด้าน
+  //   + อีเมลถูกจองไว้ (สมัครซ้ำไม่ได้) จึงเปลี่ยนเป็น fail-closed: ไม่มีอีเมลยืนยัน = ยังไม่นับว่าสมัครสำเร็จ
+  const sent = await sendVerificationToken(email);
+  if (!sent.ok) {
+    await prisma.$transaction([
+      prisma.verificationToken.deleteMany({ where: { identifier: email } }),
+      prisma.user.delete({ where: { id: user.id } }),
+    ]);
+    return { ok: false, error: "ส่งอีเมลยืนยันไม่สำเร็จ กรุณาลองใหม่อีกครั้ง หรือสมัครด้วย Google" };
+  }
 
   return { ok: true, userId: user.id.toString() };
 }
@@ -92,8 +108,9 @@ export async function registerAction(
   return { error: result.error, fieldErrors: result.fieldErrors };
 }
 
-// ส่ง verification token — ถ้าไม่มี Resend จะ log ใน console
-async function sendVerificationToken(email: string) {
+// ส่ง verification token — dev (ไม่มี Resend) log ลิงก์ใน console; production ส่งจริง
+// คืน { ok } ให้ registerUser ตัดสิน rollback — ไม่ throw เพราะอยากคุมข้อความที่ผู้ใช้เห็นเอง
+async function sendVerificationToken(email: string): Promise<{ ok: boolean }> {
   const token = crypto.randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 ชม
 
@@ -104,22 +121,28 @@ async function sendVerificationToken(email: string) {
   const verifyUrl = `${env.NEXTAUTH_URL}/verify?token=${token}`;
 
   if (!isEmailEnabled) {
+    if (isProduction) {
+      // มาถึงนี่ไม่ควรเกิด (registerUser ปิดรับสมัครไปแล้ว) — กันอีกชั้น: ห้ามพิมพ์ token ลง log ของ prod
+      console.error(`📧 production ไม่มี RESEND_API_KEY — ส่งลิงก์ยืนยันให้ ${email} ไม่ได้`);
+      return { ok: false };
+    }
     // dev mode (ไม่มี RESEND_API_KEY) — log link ให้ user copy เอง
     console.log(`\n📧 [DEV MODE] Verification link สำหรับ ${email}:`);
     console.log(`   ${verifyUrl}\n`);
-    return;
+    return { ok: true };
   }
 
-  // production — ส่งอีเมลจริงผ่าน Resend REST API (lib/email.ts)
+  // ส่งอีเมลจริงผ่าน Resend REST API (lib/email.ts)
   const result = await sendVerificationEmail(email, verifyUrl);
   if (result.ok) {
     console.log(`📧 ส่ง verification email ไป ${email} แล้ว (Resend id: ${result.id})`);
-  } else {
-    // ส่งไม่สำเร็จ (domain ยังไม่ verify / EMAIL_FROM ผิด / เน็ตล่ม) — ตั้งใจ "ไม่" throw
-    // เพราะไม่อยาก rollback การสมัครเพราะระบบเมลล่ม; user ขอลิงก์ยืนยันใหม่ได้ภายหลัง
-    const reason = "error" in result ? result.error : "skipped (RESEND_API_KEY missing)";
-    console.error(`📧 ส่ง verification email ไป ${email} ไม่สำเร็จ: ${reason}`);
+    return { ok: true };
   }
+  // ส่งไม่สำเร็จ (โดเมนยังไม่ verify / EMAIL_FROM เป็น sender ทดสอบ @resend.dev ที่ส่งได้แค่อีเมลเจ้าของบัญชี / เน็ตล่ม)
+  //   log เหตุผล (ไม่มี token) แล้วให้ registerUser ถอนบัญชี — ผู้สมัครได้ข้อความชัดและลองใหม่ได้
+  const reason = "error" in result ? result.error : "skipped (RESEND_API_KEY missing)";
+  console.error(`📧 ส่ง verification email ไป ${email} ไม่สำเร็จ: ${reason}`);
+  return { ok: false };
 }
 
 export async function verifyEmail(token: string): Promise<{ ok: boolean; error?: string }> {

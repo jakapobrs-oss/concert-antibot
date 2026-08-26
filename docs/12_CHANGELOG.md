@@ -5,6 +5,21 @@
 
 ---
 
+## [Revision 30 — production ไม่มี Resend: ปิดรับสมัครด้วยอีเมลชัด ๆ + ไม่พิมพ์ token ลง log + ส่งเมลไม่ออก = ถอนบัญชี] — 2026-08-26
+
+**ที่มา (readiness audit 2026-08-26 ค่ำ):** prod ยังไม่ตั้ง `RESEND_API_KEY` → `app/actions/auth.ts` เข้าโหมด dev พิมพ์ลิงก์ยืนยัน (มี token) ลง console = Vercel runtime log — ผู้สมัครไม่ได้รับอะไร ยืนยันไม่ได้ ล็อกอินไม่ได้ แต่อีเมลถูกจองไว้ ("อีเมลนี้ถูกใช้แล้ว") และระบบไม่มีปุ่มขอลิงก์ใหม่ = บัญชีตายด้าน + token รั่วลง log
+
+**แก้**
+- `lib/email-signup-gate.ts` (ใหม่, pure) — `isEmailSignupOpen({ isProduction, isEmailEnabled })`: production ที่ไม่มี provider = ปิดรับสมัครด้วยอีเมล (fail-closed แบบเดียวกับ payment/cron) · dev/test ยังสมัครได้ ลิงก์โผล่ใน console ตามเดิม
+- `app/actions/auth.ts` — `registerUser` ปฏิเสธก่อนแตะ DB ด้วยข้อความชี้ทาง Google · `sendVerificationToken` คืน `{ ok }`; บน production ไม่พิมพ์ token ลง log · **ส่งไม่ออก (Resend ปฏิเสธ/เน็ตล่ม) → ลบ user + token ที่เพิ่งสร้าง แล้วคืน "ส่งอีเมลยืนยันไม่สำเร็จ กรุณาลองใหม่"** (เดิมตั้งใจไม่ rollback โดยหวังให้ขอลิงก์ใหม่ทีหลัง — แต่ฟีเจอร์นั้นไม่มี)
+- `app/(auth)/register/page.tsx` — ปิดอยู่ → ซ่อนฟอร์ม โชว์กล่องบอกเหตุ + ปุ่มสมัครด้วย Google
+- `lib/env.ts` — boot-warn `[EMAIL]` เมื่อ production ไม่มี `RESEND_API_KEY` · และเมื่อตั้งแล้วแต่ `EMAIL_FROM` เป็น `noreply@localhost` (Resend ปฏิเสธทุกฉบับ) หรือ `@resend.dev` (sender ทดสอบ — ส่งได้เฉพาะอีเมลเจ้าของบัญชี Resend)
+- `scripts/push-env-to-vercel.mjs` (ใหม่) — ก๊อปค่าจาก `.env` ขึ้น Vercel โดยไม่พิมพ์ค่าออกจอ/ลง transcript (`node scripts/push-env-to-vercel.mjs PROMPTPAY_ID EASYSLIP_API_KEY …`) — เครื่องมือปิด blocker env จ่ายเงิน/อีเมลบน prod
+
+**หลักฐาน:** unit `tests/unit/email-signup-gate.test.ts` 4 เคส → vitest **44 ไฟล์ 584/584** · tsc 0 · lint 0 error
+
+**ค้าง:** user ใส่ env จริงบน prod (`PROMPTPAY_ID` · `EASYSLIP_API_KEY` · `PAYMENTS_RECEIVER_NAME` · `RESEND_API_KEY` · `EMAIL_FROM`) แล้ว redeploy · โดเมนผู้ส่งจริงสำหรับ Resend (ตอนนี้ `.env` ใช้ `@resend.dev` = ส่งได้แค่อีเมลเจ้าของบัญชี พอสำหรับเดโม) · ปุ่ม "ขอลิงก์ยืนยันใหม่" ยังไม่มี
+
 ## [Revision 29 — ฟอร์มสร้างคอนเสิร์ต: datetime-local ถูกอ่านเป็น UTC → เวลาเลื่อน +7 ชม. (จาก user-test)] — 2026-08-26
 
 ### Trigger

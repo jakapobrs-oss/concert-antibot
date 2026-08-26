@@ -25,13 +25,16 @@
 | บริการ | env ที่ต้องตั้ง | ขอจาก | ผลถ้าไม่ตั้งบน production |
 |---|---|---|---|
 | **Cloudflare Turnstile** | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | dash.cloudflare.com → Turnstile | H1 fail-closed → **block ผู้ใช้จริงทุกคน** |
-| **Resend** (อีเมล) | `RESEND_API_KEY`, `EMAIL_FROM` (โดเมนที่ verify แล้ว) | resend.com | สมัครได้แต่ไม่ส่งเมลยืนยัน (โค้ดส่งจริงแล้ว รอแค่ key) |
+| **Resend** (อีเมล) | `RESEND_API_KEY`, `EMAIL_FROM` (โดเมนที่ verify แล้ว) | resend.com | **ปิดรับสมัครด้วยอีเมล** (rev 30 fail-closed — ล็อกอินได้เฉพาะ Google) + boot-warn `[EMAIL]` |
 | **Google OAuth** (optional) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | console.cloud.google.com | ปุ่ม Google login ปิดเงียบ (credentials login ยังใช้ได้) |
 | **EasySlip** | `EASYSLIP_API_KEY` (rotate ตาม §0) | easyslip.com | payment fail-closed (ปฏิเสธทุกการจ่าย) |
 | **PromptPay** | `PROMPTPAY_ID` (เบอร์/เลขบัตรที่รับเงิน) | บัญชีพร้อมเพย์ของคุณ | สร้าง QR + ตรวจ receiver ไม่ได้ |
+| **ชื่อบัญชีผู้รับ** | `PAYMENTS_RECEIVER_NAME` (ชื่อไทย,ชื่ออังกฤษ ตามที่ปรากฏบนสลิป คั่นด้วยจุลภาค) | ชื่อบัญชีพร้อมเพย์ของคุณ | สลิปที่เลขปลายทางถูก mask เหลือ 4 หลักท้าย ตรวจชื่อไม่ได้ (Codex #1 ชั้นเสริม) + boot-warn |
 
 > Google redirect URI: ตั้งใน Google Console เป็น `https://<โดเมนจริง>/api/auth/callback/google`
 > EMAIL_FROM ต้องเป็นโดเมนที่ verify ใน Resend แล้ว ไม่งั้นส่งไม่ออก (`noreply@localhost` ใช้ได้แค่ dev)
+> `onboarding@resend.dev` (sender ทดสอบของ Resend) ส่งได้เฉพาะอีเมลเจ้าของบัญชี Resend — พอสำหรับเดโมด้วยบัญชีตัวเอง แต่ผู้สมัครคนอื่นจะได้ "ส่งอีเมลยืนยันไม่สำเร็จ" (rev 30 ถอนบัญชีให้ลองใหม่ ไม่ทิ้งบัญชีตายด้าน)
+> ใส่ค่าจาก `.env` ขึ้น Vercel โดยไม่พิมพ์ค่าออกจอ: `node scripts/push-env-to-vercel.mjs PROMPTPAY_ID EASYSLIP_API_KEY PAYMENTS_RECEIVER_NAME RESEND_API_KEY EMAIL_FROM` แล้ว `npx vercel redeploy <url deploy ล่าสุด>` (env มีผลเมื่อ deploy ใหม่เท่านั้น)
 
 ---
 
