@@ -5,6 +5,23 @@
 
 ---
 
+## [Revision 34 — ขั้น 2 "ความน่าเชื่อถือ": นโยบาย PDPA + ยินยอมตอนสมัคร · เงื่อนไขบัตร · หน้า 404/500/loading · favicon/OG · robots/sitemap] — 2026-08-27
+
+**ที่มา (gap map 2026-08-27 ขั้น 2 — user สั่ง "ถ้าคิดว่าดีหรือจำเป็นทำได้เลย ไม่แน่ใจให้ถาม"):** ระบบเก็บ fingerprint + พฤติกรรมเมาส์/คีย์ + รูปสลิป (เลขบัญชี/ชื่อผู้โอน) + ชื่อผู้ถือบัตร แต่ไม่มีหน้านโยบาย/ข้อกำหนด/การขอความยินยอมเลย (พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล 2562) · ไม่มีหน้า 404/500 ของตัวเอง (หน้าขาวภาษาอังกฤษของ Next) · ไม่มี favicon/รูปตอนแชร์ลิงก์ · ไม่มี robots/sitemap · เงื่อนไขคืนบัตรมีแต่ฝั่งแอดมิน ลูกค้าไม่เคยเห็นก่อนจ่าย
+
+**ทำ (ไม่แตะ schema/migration — เวลาที่ยอมรับ = `User.createdAt` เพราะสมัครไม่ผ่านถ้าไม่ติ๊ก)**
+- **กฎหมาย/PDPA**: `app/(public)/{privacy,terms,ticket-terms}/page.tsx` + โครง `components/legal-page.tsx` (หัวเวที + สารบัญ + ตาราง) · เนื้อหาเขียนจากสิ่งที่โค้ดทำจริง (schema `BotEvent/BehaviorSession/Payment/Ticket`, ผู้ประมวลผล Vercel/Neon/Upstash/Cloudflare/EasySlip/Resend/Google, retention เขียนตามจริงว่ายังไม่ลบอัตโนมัติ) · ตัวเลขดึงจาก env ผ่าน `lib/legal-info.ts` (ล็อกที่นั่ง 5 นาที / คืนบัตรก่อนงาน 24 ชม. / อายุบัญชีผู้ถือ) · `REFUND_DAYS=14` + `DATA_CONTROLLER_NAME` เป็นค่าตั้งต้นรอทีมยืนยัน · env ใหม่ `SUPPORT_EMAIL` (optional — ไม่ตั้ง = หน้านโยบายชี้ไปแชตช่วยเหลือ ไม่ใส่อีเมลปลอม)
+- **ความยินยอม**: checkbox ใน `components/register-form.tsx` (required) + **server ตรวจซ้ำ** ใน `registerUser` ก่อนแตะ DB/rate-limit (`lib/consent.ts` pure: `hasAcceptedTerms` รับ on/true/1/yes เท่านั้น) · ใต้ปุ่ม Google แจ้งว่าการกดถือเป็นการยอมรับ (OAuth ไม่มีฟอร์มให้ติ๊ก) · หน้า queue แจ้งเก็บ fingerprint/พฤติกรรม ณ จุดที่เริ่มเก็บ · checkout มีบรรทัดเงื่อนไขบัตร + ลิงก์ก่อนปุ่มยืนยัน · ฟุตเตอร์เพิ่มคอลัมน์ "นโยบาย"
+- **หน้า error**: `app/not-found.tsx` (LED 404 + ปุ่มดูคอนเสิร์ต/หน้าแรก — ใช้กับทุก `notFound()` ในระบบ) · `app/error.tsx` (client boundary + `digest` เป็นรหัสอ้างอิง + ปุ่มลองใหม่) · `app/global-error.tsx` (สไตล์ inline ล้วน เพราะ layout อาจเป็นตัวพัง; `<a>` ตั้งใจให้โหลดหน้าใหม่ทั้งหน้า) · `loading.tsx` skeleton ใน concerts / [slug] / checkout
+- **ไอคอน + แชร์ลิงก์**: `app/{icon,apple-icon,opengraph-image}.tsx` วาดจากโค้ดด้วย `next/og` (`app/brand-mark.tsx` = โลโก้ตั๋วเดียวกับหัวเว็บ ไม่มีไฟล์ binary) · `metadataBase`(NEXTAUTH_URL) / `openGraph` / `twitter` ใน layout · `generateMetadata` ต่อคอนเสิร์ต (ชื่อ + สถานที่/วัน, โปสเตอร์เป็น og:image) · `app/robots.ts` (กัน index /admin /api /account /checkout /verify /prototype /concerts/*/queue|seats) + `app/sitemap.ts` (revalidate 1 ชม.)
+
+**กับดักที่เจอ**: Satori ไม่รับสีทึบใน `background` shorthand ("Invalid background image: #171010") → แยก `backgroundColor`/`backgroundImage` · ข้อความในรูป OG เป็นอังกฤษเพราะฟอนต์ตั้งต้นของ Satori ไม่มีอักษรไทย (โหลดฟอนต์ไทยตอน build = พึ่งเน็ตภายนอก เสี่ยง build ล้ม) ชื่อไทยอยู่ใน og:title/description · **dev server ค้าง**: เขียนไฟล์ใหม่หลายไฟล์พร้อมกันแล้ว `icon.tsx` import `brand-mark.tsx` ที่ยังไม่มี → static worker ของ `next dev --turbo` ตาย 2 ครั้ง → `/concerts/[slug]` 500 "Jest worker … exceeding retry limit" ถาวรจนรีสตาร์ท (prod build ไม่กระทบ)
+
+**หลักฐาน**: unit `tests/unit/consent.test.ts` 6 เคส → vitest **48 ไฟล์ 614/614** · tsc 0 · lint 0 error · `next build` ผ่าน (26/26 static — icon/apple-icon/opengraph-image/robots/sitemap prerender ได้) · dev: /privacy /terms /ticket-terms 200 · 404 ภาษาไทย · /icon 64px + /apple-icon 180px + /opengraph-image 1200×630 PNG · robots/sitemap ถูกต้อง · /register มี checkbox + หมายเหตุ Google · og:title/description ต่อคอนเสิร์ต · เทสสมัครผ่านเบราว์เซอร์: ดูบรรทัดถัดไป
+- เบราว์เซอร์ (Chrome, dev): ถอด `required` ของ checkbox ด้วย JS แล้วส่งฟอร์ม → server ตอบ "กรุณายอมรับข้อกำหนด…" ใต้ checkbox (aria-invalid) ไม่สร้างบัญชี ✓ · ติ๊กแล้วส่ง → ผ่านด่านยินยอม สร้าง user แล้วไปต่อขั้นส่งอีเมล (local: Resend sandbox 422 → rev 30 ถอนบัญชีตามออกแบบ — ไม่เกี่ยวกับ rev นี้) ✓
+
+**ค้าง / ถาม user**: `SUPPORT_EMAIL` ใช้อีเมลไหน · `REFUND_DAYS` 14 วันใช่ไหม · จะให้ cron ลบ `BotEvent`/`BehaviorSession` เก่าอัตโนมัติไหม (นโยบายเขียนตามจริงว่ายังไม่ลบ — ล้างแล้วหลักฐานสถิติในเล่มหาย) · มีโลโก้จริงแทน text-mark ไหม
+
 ## [Revision 33 — เปิดจาก URL ของ deployment แล้ว Google sign-in ล้มเป็น "Server error": redirect ทุกโฮสต์ *.vercel.app ไปโฮสต์หลัก] — 2026-08-27
 
 **ที่มา:** หลัง `vercel redeploy` (rev 32) user เปิดเว็บจากลิงก์ที่ CLI พิมพ์ (`concert-antibot-<hash>-…vercel.app`) แล้วกด Google → หน้า Auth.js "Server error — There is a problem with the server configuration" 3 ครั้งติด (02:20 น.)
