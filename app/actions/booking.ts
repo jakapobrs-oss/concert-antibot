@@ -5,8 +5,10 @@
 // ============================================================
 // flow: holdAndCreateOrder → (แสดง QR) → submitSlip → (verify) → issue tickets
 import { z } from "zod";
+import { after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { notifyOrderPaid } from "@/lib/order-notify";
 import {
   finalizePaidOrder,
   cancelPendingOrder,
@@ -646,6 +648,8 @@ export async function submitSlip(input: {
     // คืนความจุคิวทันที (capacity-aware self-refill): ผู้ใช้ได้ตั๋วแล้ว ออกจากห้องเลือกที่นั่งถาวร
     //   → เปิดช่องให้คิวถัดไปเข้าไม่ต้องรอ admit TTL หมด. best-effort — พลาดก็ไม่กระทบผลการจ่าย
     await releaseAdmittedByUser(order.concertId.toString(), userId).catch(() => {});
+    // 📧 ใบเสร็จ/ตั๋วทางอีเมล (rev 35) — รันหลังตอบ client แล้ว (after) ไม่เพิ่ม latency และล้มก็ไม่กระทบผลการจ่าย
+    after(() => notifyOrderPaid(order.id));
     return { ok: true, ticketCount: result.ticketCount };
   }
 

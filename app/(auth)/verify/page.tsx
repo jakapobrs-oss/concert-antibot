@@ -33,6 +33,12 @@ export default async function VerifyPage({
             ยืนยันไม่สำเร็จ
           </h1>
           <p className="mt-2 text-sm text-fg-faint">{result.error}</p>
+          {/* ลิงก์หมดอายุ/ใช้ไปแล้ว → ขอใหม่ได้เอง (rev 35) แทนที่จะติดค้างสมัครซ้ำไม่ได้ */}
+          <p className="mt-3 text-sm text-fg-dim">
+            <Link href="/verify/resend" className="font-semibold text-brand-300 hover:underline">
+              ขอลิงก์ยืนยันใหม่
+            </Link>
+          </p>
         </>
       )}
 

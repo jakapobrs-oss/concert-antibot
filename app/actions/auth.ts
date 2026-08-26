@@ -15,6 +15,7 @@ import { env, isEmailEnabled, isEmailVerificationRequired, isProduction } from "
 import { sendVerificationEmail } from "@/lib/email";
 import { isEmailSignupOpen, EMAIL_SIGNUP_CLOSED_MESSAGE } from "@/lib/email-signup-gate";
 import { hasAcceptedTerms, CONSENT_FIELD, CONSENT_REQUIRED_MESSAGE } from "@/lib/consent";
+import { isResetIdentifier } from "@/lib/password-reset";
 
 const registerSchema = z
   .object({
@@ -129,7 +130,8 @@ export async function registerAction(
 
 // ส่ง verification token — dev (ไม่มี Resend) log ลิงก์ใน console; production ส่งจริง
 // คืน { ok } ให้ registerUser ตัดสิน rollback — ไม่ throw เพราะอยากคุมข้อความที่ผู้ใช้เห็นเอง
-async function sendVerificationToken(email: string): Promise<{ ok: boolean }> {
+// export ให้ app/actions/password.ts ใช้ตอน "ขอลิงก์ยืนยันใหม่" (rev 35)
+export async function sendVerificationToken(email: string): Promise<{ ok: boolean }> {
   const token = crypto.randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 ชม
 
@@ -167,6 +169,8 @@ async function sendVerificationToken(email: string): Promise<{ ok: boolean }> {
 export async function verifyEmail(token: string): Promise<{ ok: boolean; error?: string }> {
   const record = await prisma.verificationToken.findUnique({ where: { token } });
   if (!record) return { ok: false, error: "Token ไม่ถูกต้อง" };
+  // token รีเซ็ตรหัสผ่าน (identifier ขึ้นต้น pwreset:) ใช้ยืนยันอีเมลไม่ได้ — คนละหน้าที่ (lib/password-reset.ts)
+  if (isResetIdentifier(record.identifier)) return { ok: false, error: "Token ไม่ถูกต้อง" };
   if (record.expires < new Date()) return { ok: false, error: "Token หมดอายุแล้ว" };
 
   await prisma.$transaction([

@@ -4,6 +4,7 @@
 // ตั้งใจ "ไม่" ใช้ Resend SDK — เรียก REST ตรงด้วย fetch เพื่อไม่เพิ่ม dependency
 // (ทั้งโปรเจกต์ส่งอีเมลแค่จุดเดียว = verification ใช้ REST พอ ไม่ต้องลาก SDK + types เข้ามา)
 import { env, isEmailEnabled } from "@/lib/env";
+import { buildOrderPaidEmail, buildPasswordResetEmail, type OrderPaidEmailInput } from "@/lib/email-templates";
 
 export type SendEmailInput = {
   to: string;
@@ -82,4 +83,23 @@ export async function sendVerificationEmail(
   `.trim();
   const text = `ยืนยันอีเมลสำหรับ ${appName}: ${verifyUrl} (หมดอายุใน 24 ชม.)`;
   return sendEmail({ to, subject, html, text });
+}
+
+// ลืมรหัสผ่าน (rev 35) — เนื้อหาอยู่ใน lib/email-templates.ts (pure, มี unit test)
+export async function sendPasswordResetEmail(
+  to: string,
+  resetUrl: string,
+  ttlMinutes: number,
+): Promise<SendEmailResult> {
+  const content = buildPasswordResetEmail({ appName: env.APP_NAME, resetUrl, ttlMinutes });
+  return sendEmail({ to, ...content });
+}
+
+// ใบเสร็จ/ยืนยันคำสั่งซื้อหลังจ่ายสำเร็จ (rev 35) — ไม่มี QR ในอีเมล (ดูเหตุผลใน email-templates.ts)
+export async function sendOrderPaidEmail(
+  to: string,
+  data: Omit<OrderPaidEmailInput, "appName">,
+): Promise<SendEmailResult> {
+  const content = buildOrderPaidEmail({ appName: env.APP_NAME, ...data });
+  return sendEmail({ to, ...content });
 }

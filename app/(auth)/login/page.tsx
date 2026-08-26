@@ -8,13 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthTabs } from "@/components/auth-tabs";
 import { GoogleSignInButton } from "@/components/google-signin-button";
+import { isEmailVerificationRequired } from "@/lib/env";
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ callbackUrl?: string; error?: string; registered?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; error?: string; registered?: string; reset?: string }>;
 }) {
-  const { callbackUrl, error, registered } = await searchParams;
+  const { callbackUrl, error, registered, reset } = await searchParams;
 
   return (
     <div className="animate-fade-in-up">
@@ -37,10 +38,28 @@ export default async function LoginPage({
           )}
         </div>
       )}
+      {reset && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-success/25 bg-success/10 p-3 text-sm text-success">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+          <span>ตั้งรหัสผ่านใหม่แล้ว — เข้าสู่ระบบด้วยรหัสใหม่ได้เลย</span>
+        </div>
+      )}
       {error && (
         <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-danger/25 bg-danger/10 p-3 text-sm text-danger">
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          <span>เข้าสู่ระบบไม่สำเร็จ — ตรวจสอบอีเมลหรือรหัสผ่านอีกครั้ง</span>
+          <span>
+            เข้าสู่ระบบไม่สำเร็จ — ตรวจสอบอีเมลหรือรหัสผ่านอีกครั้ง
+            {/* สาเหตุที่พบบ่อยนอกจากรหัสผิด: ยังไม่กดลิงก์ยืนยันอีเมล (เฉพาะโหมดบังคับยืนยัน) — ให้ทางไปขอลิงก์ใหม่ */}
+            {isEmailVerificationRequired && (
+              <>
+                {" "}
+                · ยังไม่ได้ยืนยันอีเมล?{" "}
+                <Link href="/verify/resend" className="font-semibold underline underline-offset-2">
+                  ขอลิงก์ยืนยันใหม่
+                </Link>
+              </>
+            )}
+          </span>
         </div>
       )}
 
@@ -58,7 +77,12 @@ export default async function LoginPage({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password">รหัสผ่าน</Label>
+          <div className="flex items-baseline justify-between">
+            <Label htmlFor="password">รหัสผ่าน</Label>
+            <Link href="/forgot" className="text-xs text-fg-faint underline-offset-2 hover:text-fg hover:underline">
+              ลืมรหัสผ่าน?
+            </Link>
+          </div>
           <Input
             id="password"
             name="password"
