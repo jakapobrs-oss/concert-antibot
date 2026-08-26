@@ -24,6 +24,7 @@ const {
   botEventCreate,
   queueTokenCreate,
   saleRoundFindMany,
+  seatCount,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   checkRateLimit: vi.fn(),
@@ -37,6 +38,8 @@ const {
   queueTokenCreate: vi.fn(),
   // Phase 2.1: route เรียกด่านรอบพรีเซล — คืน [] = คอนเสิร์ตนี้ไม่มีรอบ (พฤติกรรมเดิม ไม่กระทบเทสชุดนี้)
   saleRoundFindMany: vi.fn(),
+  // ประตูคิวเช็ค "บัตรหมด" ทุกคอนเสิร์ต (รวมไม่มีรอบ) → route นับที่นั่งเสมอ — คืนค่ามีที่นั่ง = ไม่กระทบเทสชุดนี้
+  seatCount: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
@@ -52,6 +55,7 @@ vi.mock("@/lib/prisma", () => ({
     queueToken: { create: queueTokenCreate },
     behaviorSession: { findFirst: behaviorFindFirst, upsert: behaviorUpsert },
     saleRound: { findMany: saleRoundFindMany },
+    seat: { count: seatCount },
   },
 }));
 
@@ -74,6 +78,7 @@ describe("§3 join — behavior escalation (loop fix + poison scope)", () => {
     checkRateLimit.mockResolvedValue({ allowed: true });
     concertFindUnique.mockResolvedValue({ status: "ON_SALE" });
     saleRoundFindMany.mockResolvedValue([]); // ไม่มีรอบพรีเซล → ด่านรอบปล่อยผ่าน
+    seatCount.mockResolvedValue(100); // ยังมีที่นั่ง → ประตู "บัตรหมด" ปล่อยผ่าน
     joinQueue.mockResolvedValue({ token: "tok", deduped: false, bucket: 0, random: 0 });
     botEventCreate.mockResolvedValue({});
     queueTokenCreate.mockResolvedValue({});

@@ -26,7 +26,8 @@
     "test:seatmap-buyer": "tsx scripts/test-seatmap-buyer.ts",
     "test:sale-round": "tsx scripts/test-sale-round.ts",
     "test:purchase-antibot": "tsx scripts/test-purchase-antibot.ts",
-    "test:e2e": "playwright test",
+    "test:queue-soldout-ui": "tsx scripts/test-queue-soldout-ui.ts",
+    "test:e2e": "tsx scripts/e2e-booking.ts",
     "test:load": "k6 run tests/load/queue.js"
   },
   "prisma": {
