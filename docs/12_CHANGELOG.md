@@ -24,6 +24,19 @@
 
 **ค้าง (user):** ตั้ง GitHub Secrets 2 ตัว + กดรัน backup ครั้งแรก · ผูก uptime monitor · ซ้อม restore ลง Neon branch 1 ครั้ง
 
+## [Revision 35 — ขั้น 3 "ฟีเจอร์ที่หาย": ลืมรหัสผ่าน · ขอลิงก์ยืนยันใหม่ · อีเมลใบเสร็จ/ตั๋วหลังจ่าย] — 2026-08-27
+
+**ที่มา (gap map 2026-08-27 ขั้น 3):** ไม่มี "ลืมรหัสผ่าน" (บัญชีอีเมลที่ลืมรหัส = เข้าไม่ได้ตลอดไป) · ไม่มีปุ่มขอลิงก์ยืนยันใหม่ (ค้างจาก rev 30) · จ่ายเงินเสร็จไม่ได้รับอีเมลอะไรเลย (`lib/email.ts` มีแค่อีเมลยืนยันตัวตน)
+
+**ทำ (ไม่แตะ schema — token รีเซ็ตใช้ตาราง `VerificationToken` เดิม แยกชนิดด้วย identifier `pwreset:<email>`)**
+- **ลืมรหัสผ่าน**: `lib/password-reset.ts` (pure: prefix/อายุ 30 นาที/กติการหัส ≥ 8 เท่าตอนสมัคร/`evaluateResetToken`) · `app/actions/password.ts` — `requestPasswordResetAction` (rate-limit IP 5/15 นาที + อีเมล 3/ชม., ตอบข้อความกลางเสมอ ไม่บอกว่ามีบัญชี, บัญชี Google ล้วนไม่ออก token, ส่งไม่ออก = ลบ token ทิ้ง) · `peekResetToken` (หน้า /reset เช็คก่อนโชว์ฟอร์ม ไม่ consume) · `resetPasswordAction` (ใช้ครั้งเดียว: ลบทุก token รีเซ็ตของอีเมล + **ปลดล็อกบัญชีที่ถูกล็อกจากการเดารหัส** + ถือว่ายืนยันอีเมลแล้วถ้ายังไม่เคย → redirect `/login?reset=1`) · หน้า `app/(auth)/{forgot,reset}/` + `components/{forgot-password,reset-password}-form.tsx` · ลิงก์ "ลืมรหัสผ่าน?" ที่ช่องรหัสหน้า login · `verifyEmail()` ปฏิเสธ token รีเซ็ต (ใช้ข้ามชนิดไม่ได้)
+- **ขอลิงก์ยืนยันใหม่**: `resendVerificationAction` (โหมด skip = บอกว่าไม่ต้องยืนยัน; ส่งเฉพาะบัญชีรหัสผ่านที่ยังไม่ verified, ลบ token เก่าก่อน) · หน้า `app/(auth)/verify/resend/` · ลิงก์จากหน้า /verify ที่ล้ม + จากกล่อง error หน้า login (เฉพาะโหมดบังคับยืนยัน) · `sendVerificationToken` ใน auth.ts เปลี่ยนเป็น export
+- **อีเมลหลังจ่าย**: `lib/email-templates.ts` (pure, escape HTML ทุกค่าจากผู้ใช้: ใบเสร็จ + รีเซ็ตรหัส) · `lib/email.ts` เพิ่ม `sendPasswordResetEmail`/`sendOrderPaidEmail` · `lib/order-notify.ts` `notifyOrderPaid(orderId)` (ดึง order+tickets+ที่นั่ง+ผู้ถือ, ข้ามบัญชี `@local`, dev ไม่มี Resend = log) · `submitSlip` เรียกผ่าน `after()` ของ Next หลังตอบ client — ไม่เพิ่ม latency และล้มก็ไม่กระทบผลการจ่าย · **ตั้งใจไม่ใส่ QR ในอีเมล** (อีเมลส่งต่อกันได้ = แชร์บัตรได้) ใส่ลิงก์หน้าตั๋วของฉันแทน
+
+**หลักฐาน:** unit `password-reset` 11 + `email-templates` 8 → vitest **51 ไฟล์ 639/639** (รวม health ของ rev 36) · tsc 0 · lint 0 error · Chrome (dev): /reset ด้วย token จริงที่ใส่ใน DB — รหัสไม่ตรง → error ใต้ช่อง ✓ ตรง → `/login?reset=1` ✓ DB: hash เปลี่ยน · `lockedUntil` null · `failedLoginCount` 0 · `emailVerified` set · token ถูกลบ ✓ · ล็อกอินด้วยรหัสใหม่ผ่าน ✓ · ลิงก์ที่ใช้แล้ว/token ยืนยันอีเมลเอามารีเซ็ต → "ลิงก์ใช้ไม่ได้แล้ว" ✓ · /forgot กับอีเมล example.com → ข้อความกลาง + Resend 422 ถูกจับ token ถูกลบ ✓ · `notifyOrderPaid` เรียกกับ id ที่ไม่มี = เงียบ ✓
+
+**ข้อจำกัดบน prod ตอนนี้:** `EMAIL_FROM` ยังเป็น `@resend.dev` → อีเมลรีเซ็ต/ใบเสร็จส่งถึงได้เฉพาะอีเมลเจ้าของบัญชี Resend (เหมือนอีเมลยืนยัน) จนกว่าจะ verify โดเมนจริง — ผู้ใช้อื่นเห็นข้อความกลางแต่ไม่ได้รับเมล (log `🔑 … ไม่สำเร็จ`); ใบเสร็จไม่กระทบตั๋ว (ดูในเว็บได้)
+
 ## [Revision 34 — ขั้น 2 "ความน่าเชื่อถือ": นโยบาย PDPA + ยินยอมตอนสมัคร · เงื่อนไขบัตร · หน้า 404/500/loading · favicon/OG · robots/sitemap] — 2026-08-27
 
 **ที่มา (gap map 2026-08-27 ขั้น 2 — user สั่ง "ถ้าคิดว่าดีหรือจำเป็นทำได้เลย ไม่แน่ใจให้ถาม"):** ระบบเก็บ fingerprint + พฤติกรรมเมาส์/คีย์ + รูปสลิป (เลขบัญชี/ชื่อผู้โอน) + ชื่อผู้ถือบัตร แต่ไม่มีหน้านโยบาย/ข้อกำหนด/การขอความยินยอมเลย (พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล 2562) · ไม่มีหน้า 404/500 ของตัวเอง (หน้าขาวภาษาอังกฤษของ Next) · ไม่มี favicon/รูปตอนแชร์ลิงก์ · ไม่มี robots/sitemap · เงื่อนไขคืนบัตรมีแต่ฝั่งแอดมิน ลูกค้าไม่เคยเห็นก่อนจ่าย
