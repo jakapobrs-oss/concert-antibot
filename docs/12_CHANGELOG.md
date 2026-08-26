@@ -16,6 +16,8 @@
 
 **หลักฐาน:** tsc 0 · lint 0 error · `next build` local ผ่าน · prod /privacy โชว์อีเมลแอดมิน (เช็คหลัง deploy)
 
+**เพิ่ม (backup-neon รันแรก):** user ตั้ง secrets `NEON_DATABASE_URL_UNPOOLED` + `BACKUP_PASSPHRASE` แล้ว → รัน workflow มือครั้งแรกล้ม "pg_dump: aborting because of server version mismatch (server 17.11, pg_dump 16.15)" — runner Ubuntu 24.04 มี `/usr/bin/pg_dump` เป็น wrapper ที่เลือก 16 แม้ลง client 17 แล้ว → แก้ `.github/workflows/backup-neon.yml` เรียก `/usr/lib/postgresql/17/bin/pg_dump` ตรง ๆ (+ เช็คว่ามีไฟล์) แล้วรันซ้ำ
+
 ## [Revision 37 — CI รัน lint + next build · แก้ Medium 4 ข้อจาก user-test 26 ส.ค.] — 2026-08-27
 
 **ที่มา:** deploy 34dxrztan (rev 35) ล้มที่ webpack ทั้งที่ tsc/vitest ผ่าน — CI ไม่เคยรัน `next build` · user-test 2026-08-26 เหลือ Medium 4 ข้อที่ยังไม่แก้

@@ -34,20 +34,24 @@ jobs:
           sudo apt-get install -y -qq postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y -qq postgresql-client-17
-          pg_dump --version
+          # ⚠️ ห้ามเรียก pg_dump เฉย ๆ: /usr/bin/pg_dump เป็น wrapper ของ Debian ที่เลือกเวอร์ชัน 16 (ค่า default ของ runner)
+          #    → "aborting because of server version mismatch" (Neon = 17) ทั้งที่ลง 17 แล้ว — รันแรก 2026-08-27 ล้มด้วยเหตุนี้
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Dump + encrypt
         env:
           NEON_URL: ${{ secrets.NEON_DATABASE_URL_UNPOOLED }}
           PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          PG_DUMP: /usr/lib/postgresql/17/bin/pg_dump
         run: |
           set -euo pipefail
           [ -n "$NEON_URL" ] || { echo "::error::ยังไม่ได้ตั้ง secret NEON_DATABASE_URL_UNPOOLED"; exit 1; }
           [ -n "$PASSPHRASE" ] || { echo "::error::ยังไม่ได้ตั้ง secret BACKUP_PASSPHRASE"; exit 1; }
+          [ -x "$PG_DUMP" ] || { echo "::error::ไม่พบ $PG_DUMP (postgresql-client-17 ลงไม่สำเร็จ?)"; exit 1; }
           stamp="$(date -u +%Y%m%dT%H%M%SZ)"
           dump="neon-${stamp}.dump"
           # --format=custom = บีบอัด + pg_restore เลือกตารางได้ · --no-owner/--no-privileges = กู้ลง role อื่น (Neon branch ใหม่) ได้
-          pg_dump "$NEON_URL" --format=custom --no-owner --no-privileges --file "$dump"
+          "$PG_DUMP" "$NEON_URL" --format=custom --no-owner --no-privileges --file "$dump"
           # ส่ง passphrase ทาง fd ไม่ใช่ argv (ไม่โผล่ใน ps) · AES256 symmetric
           printf '%s' "$PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
             --symmetric --cipher-algo AES256 --output "${dump}.gpg" "$dump"
