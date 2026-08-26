@@ -137,7 +137,10 @@
 3. **ซ้อมลง Neon branch ใหม่ก่อนเสมอ** (Neon console → Branches → Create branch จาก main แบบ schema-only หรือว่าง) แล้ว `pg_restore --clean --if-exists --no-owner --no-privileges -d "<connection string ของ branch>" neon.dump`
 4. ตรวจ: `psql "<branch url>" -c "select count(*) from users; select count(*) from orders;"` เทียบกับ prod
 5. ของจริง: ชี้ `DATABASE_URL`/`DATABASE_URL_UNPOOLED` บน Vercel ไปที่ branch ที่กู้แล้ว → redeploy (หรือ restore ทับ main ด้วยคำสั่งเดียวกัน — ทำเฉพาะเมื่อแน่ใจ)
-- ต้องใช้ `pg_restore` เวอร์ชัน ≥ Postgres ของ Neon (workflow ใช้ client 17) · dump แบบ custom เลือกกู้บางตารางได้ด้วย `--table`
+- **Neon ของโปรเจกต์นี้คือ Postgres 17** (รันจริง 2026-08-27: server 17.11) → `pg_dump`/`pg_restore` ต้องเป็นรุ่น 17 ขึ้นไป ไม่งั้น "aborting because of server version mismatch"
+  - Ubuntu/runner: `/usr/bin/pg_dump` เป็น wrapper ของ Debian ที่เลือกรุ่น 16 แม้ลง client 17 แล้ว → เรียก `/usr/lib/postgresql/17/bin/pg_restore` ตรง ๆ (workflow แก้แล้วเป็นแบบนี้)
+  - Windows: ลง PostgreSQL 17 (เลือกเฉพาะ Command Line Tools ก็ได้) แล้วใช้ `C:\Program Files\PostgreSQL\17\bin\pg_restore.exe` · เช็คด้วย `pg_restore --version`
+- dump แบบ custom เลือกกู้บางตารางได้ด้วย `--table`
 
 ### 7.4 Error log แบบมี request id — `instrumentation.ts`
 - ทุก error ฝั่ง server ที่หลุดถึง framework ถูก log เป็น JSON บรรทัดเดียว (`kind:"server_error"`, `digest`, `path`, `requestId` = `x-vercel-id`) — ค้นใน Vercel Logs ด้วย `server_error` หรือ digest ที่ผู้ใช้เห็นบนหน้า error
