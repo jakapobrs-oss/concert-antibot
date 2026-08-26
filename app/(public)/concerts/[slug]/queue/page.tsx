@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import { SiteHeader } from "@/components/site-header";
 import { WaitingRoom } from "@/components/waiting-room";
 import { getTurnstileSiteKey } from "@/lib/turnstile";
+import { deriveDisplayStatus } from "@/lib/concert-display";
 import { SetChatContext } from "@/components/chat-context";
 
 export const dynamic = "force-dynamic";
@@ -20,10 +21,31 @@ export default async function QueuePage({
 
   const concert = await prisma.concert.findUnique({
     where: { slug },
-    select: { id: true, title: true, status: true },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      saleStartAt: true,
+      saleEndAt: true,
+      _count: { select: { zones: true } },
+    },
   });
 
   if (!concert) notFound();
+
+  // เปิดห้องรอเฉพาะที่ขายอยู่จริง (มีโซน + ในช่วงขาย) — status ON_SALE ที่ไม่มีโซนเคยพาเข้าคิวแล้วเจอ "บัตรหมด" (user-test #40)
+  const display = deriveDisplayStatus({
+    status: concert.status,
+    saleStartAt: concert.saleStartAt,
+    saleEndAt: concert.saleEndAt,
+    zoneCount: concert._count.zones,
+  });
+  const closedMessage: Record<Exclude<typeof display, "ON_SALE">, string> = {
+    SOLD_OUT: "บัตรหมดแล้ว",
+    SCHEDULED: "คอนเสิร์ตนี้ยังไม่เปิดขาย",
+    ENDED: "ปิดการขายแล้ว",
+    NOT_READY: "คอนเสิร์ตนี้ยังไม่พร้อมขาย — รอประกาศโซนและราคา",
+  };
 
   // 💳 ถ้า user มี order ค้างชำระอยู่ ไม่ต้องต่อคิวใหม่ — ชี้ทางกลับไปจ่ายให้จบ
   // เคสจริง: กด back จากหน้าชำระเงิน สิทธิ์ผ่านคิว (5 นาที) หมดพอดี โดนเด้งมาหน้านี้
@@ -72,7 +94,7 @@ export default async function QueuePage({
         )}
 
         <div className="animate-fade-in-up relative overflow-hidden rounded-2xl border border-fg/10 bg-ink-850 px-6 py-10 shadow-lg sm:px-10">
-          {concert.status === "ON_SALE" ? (
+          {display === "ON_SALE" ? (
             <WaitingRoom
               concertId={concert.id.toString()}
               slug={slug}
@@ -81,13 +103,13 @@ export default async function QueuePage({
           ) : (
             <p className="text-center text-fg-faint">
               {/* บัตรหมด ≠ ยังไม่เปิดขาย — สถานะ SOLD_OUT ถูกติดอัตโนมัติหลังออกตั๋ว (docs/23 §3) */}
-              {concert.status === "SOLD_OUT" ? "บัตรหมดแล้ว" : "คอนเสิร์ตนี้ยังไม่เปิดขาย"}
+              {closedMessage[display as Exclude<typeof display, "ON_SALE">]}
             </p>
           )}
         </div>
 
         {/* แจ้งการเก็บข้อมูลกันบอท ณ จุดที่เริ่มเก็บจริง (fingerprint + พฤติกรรมเมาส์/คีย์เริ่มใน WaitingRoom) — PDPA */}
-        {concert.status === "ON_SALE" && (
+        {display === "ON_SALE" && (
           <p className="relative mt-4 text-center text-xs leading-relaxed text-fg-faint">
             ระหว่างอยู่ในห้องรอ ระบบเก็บลายนิ้วมือเบราว์เซอร์และรูปแบบการขยับเมาส์/กดคีย์ (เป็นตัวเลขสรุป ไม่เก็บสิ่งที่พิมพ์)
             เพื่อคัดกรองบอท —{" "}

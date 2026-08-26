@@ -37,12 +37,18 @@ jobs:
       - name: Typecheck (tsc --noEmit)
         run: pnpm typecheck
 
+      # lint error (ไม่ใช่ warning) ทำให้ next build ล้ม — จับตั้งแต่ตรงนี้ (rev 37)
+      - name: Lint (next lint)
+        run: pnpm lint
+
       - name: Unit tests (vitest run)
         run: pnpm test:run
 
   # งานที่ 2: integration test เรื่องเงิน (N1/N3 race + per-payer cap) กับ Postgres จริง
+  #   + next build ของจริง (rev 37): tsc/vitest/turbopack dev ไม่จับ error ของ webpack เช่น client component
+  #   import lib ที่มี node:crypto (deploy 34dxrztan ล้มด้วยเหตุนี้) — build ต้องมี DB เพราะ sitemap.ts prerender query concerts
   integration:
-    name: Integration Tests (Postgres)
+    name: Integration Tests (Postgres) + Build
     runs-on: ubuntu-latest
 
     services:
@@ -60,12 +66,23 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # Redis ให้ module ที่สร้าง client ตอน import ไม่ค้างรอ connect ระหว่าง build/prerender
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/concert_antibot
       # DIRECT_URL = connection ตรง (ไม่ผ่าน pooler) ที่ schema.prisma ต้องใช้ตอน migrate deploy
       #   บน CI ไม่มี pooler → ชี้ DB เดียวกับ DATABASE_URL (ขาดตัวนี้ = Prisma P1012 ทำ job นี้แดงมาตั้งแต่ 2026-07-09)
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/concert_antibot
+      REDIS_URL: redis://localhost:6379
       # dummy secret (>=32 ตัว) ให้ lib/env.ts ผ่าน — ไม่ใช่ของจริง
       NEXTAUTH_SECRET: ci_dummy_secret_at_least_32_characters_long_xx
 
@@ -93,3 +110,7 @@ jobs:
 
       - name: Race + per-payer cap integration test
         run: pnpm test:race
+
+      # build เดียวกับที่ Vercel รัน (ยกเว้น migrate/seed) — env ที่ขาดบน CI แค่ boot-warn ไม่ throw (lib/env.ts)
+      - name: Production build (next build)
+        run: pnpm exec next build

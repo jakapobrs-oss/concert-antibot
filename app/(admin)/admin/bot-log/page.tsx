@@ -2,7 +2,6 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
-import { Button } from "@/components/ui/button";
 import { getBotEvents, getBehaviorStats } from "@/lib/admin-stats";
 
 export const dynamic = "force-dynamic";
@@ -78,20 +77,33 @@ export default async function BotLogPage({
           )}
         </div>
 
-        {/* filter */}
+        {/* filter — เป็น <Link> ที่แต่งเหมือนปุ่มโดยตรง (เดิม <Link><Button/></Link> = button ซ้อนใน a
+            กดแล้ว URL ไม่เปลี่ยน — user-test 2026-08-26 #72) */}
         <div className="mb-4 flex flex-wrap gap-2">
-          <Link href="/admin/bot-log">
-            <Button size="sm" variant={!filterAction ? "primary" : "outline"}>ทั้งหมด</Button>
-          </Link>
-          <Link href="/admin/bot-log?action=ALLOW">
-            <Button size="sm" variant={filterAction === "ALLOW" ? "primary" : "outline"}>ผ่าน</Button>
-          </Link>
-          <Link href="/admin/bot-log?action=CHALLENGE">
-            <Button size="sm" variant={filterAction === "CHALLENGE" ? "primary" : "outline"}>ท้าทาย</Button>
-          </Link>
-          <Link href="/admin/bot-log?action=BLOCK">
-            <Button size="sm" variant={filterAction === "BLOCK" ? "primary" : "outline"}>บล็อก</Button>
-          </Link>
+          {(
+            [
+              { value: undefined, label: "ทั้งหมด", href: "/admin/bot-log" },
+              { value: "ALLOW", label: "ผ่าน", href: "/admin/bot-log?action=ALLOW" },
+              { value: "CHALLENGE", label: "ท้าทาย", href: "/admin/bot-log?action=CHALLENGE" },
+              { value: "BLOCK", label: "บล็อก", href: "/admin/bot-log?action=BLOCK" },
+            ] as const
+          ).map((f) => {
+            const active = filterAction === f.value;
+            return (
+              <Link
+                key={f.label}
+                href={f.href}
+                aria-current={active ? "page" : undefined}
+                className={`inline-flex h-9 items-center justify-center rounded-md px-3.5 font-display text-sm font-medium transition-colors ${
+                  active
+                    ? "bg-brand-600 text-white shadow-glow-brand"
+                    : "border border-fg/20 text-fg hover:border-fg/40 hover:bg-fg/5"
+                }`}
+              >
+                {f.label}
+              </Link>
+            );
+          })}
         </div>
 
         {/* event table */}

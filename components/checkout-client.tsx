@@ -32,6 +32,8 @@ export function CheckoutClient({
   const [error, setError] = useState<string | null>(null);
   const [slipBase64, setSlipBase64] = useState<string | null>(null);
   const [slipName, setSlipName] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(() =>
     Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
   );
@@ -79,9 +81,23 @@ export function CheckoutClient({
     }
   }
 
+  // ยกเลิกคำสั่งซื้อ = 2 จังหวะ (กดครั้งแรกถามยืนยัน) เพราะกดพลาด = เสียที่นั่งที่แย่งมาได้ทันที (user-test #102)
+  //   สำเร็จ → หน้าคอนเสิร์ตโชว์แถบ "ยกเลิกแล้ว" ผ่าน ?cancelled=1 (เดิมเด้งกลับเงียบ ๆ)
   async function handleCancel() {
-    await cancelOrder(orderId);
-    router.push(`/concerts/${concertSlug}`);
+    if (!confirmCancel) {
+      setConfirmCancel(true);
+      return;
+    }
+    setCancelling(true);
+    setError(null);
+    const res = await cancelOrder(orderId);
+    if (res.ok) {
+      router.push(`/concerts/${concertSlug}?cancelled=1`);
+    } else {
+      setCancelling(false);
+      setConfirmCancel(false);
+      setError("ยกเลิกไม่สำเร็จ — คำสั่งซื้อนี้อาจถูกชำระหรือหมดอายุไปแล้ว ลองรีเฟรชหน้า");
+    }
   }
 
   if (secondsLeft <= 0) {
@@ -211,9 +227,25 @@ export function CheckoutClient({
         >
           {submitting ? "กำลังตรวจสอบสลิป…" : "ยืนยันการชำระเงิน"}
         </Button>
-        <Button variant="ghost" className="w-full" onClick={handleCancel} disabled={submitting}>
-          ยกเลิกคำสั่งซื้อ
-        </Button>
+        {confirmCancel ? (
+          <div className="space-y-2.5 rounded-lg border border-danger/25 bg-danger/10 p-3 text-sm">
+            <p className="text-danger">
+              ยกเลิกคำสั่งซื้อนี้? ที่นั่ง {seatLabels.join(", ")} จะถูกปล่อยให้คนอื่นทันที และต้องเข้าคิวใหม่ถ้าอยากจองอีก
+            </p>
+            <div className="flex gap-2">
+              <Button variant="danger" className="flex-1" onClick={handleCancel} loading={cancelling} disabled={cancelling}>
+                ยืนยันยกเลิก
+              </Button>
+              <Button variant="ghost" className="flex-1" onClick={() => setConfirmCancel(false)} disabled={cancelling}>
+                กลับไปชำระ
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="ghost" className="w-full" onClick={handleCancel} disabled={submitting}>
+            ยกเลิกคำสั่งซื้อ
+          </Button>
+        )}
       </div>
     </div>
   );

@@ -35,9 +35,10 @@ export function GrantMembershipForm() {
     setMsg(null);
     const res = await grantMembershipByEmail({ email, days });
     if (res.ok) {
+      // ไม่เรียก router.refresh() ซ้ำ — server action เรียก revalidatePath("/admin/memberships") อยู่แล้ว
+      //   refresh ซ้อนกัน 2 รอบติด ๆ ทำให้ฟอร์มถูก re-render จนข้อความผลลัพธ์หาย/ช่องว่างเปล่า (user-test 2026-08-26 #35)
       setMsg({ ok: true, text: res.message });
       setEmail("");
-      router.refresh();
     } else {
       setMsg({ ok: false, text: res.error });
     }

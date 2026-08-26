@@ -23,6 +23,7 @@ export default async function ConcertsPage() {
     venue: c.venue,
     eventAt: c.eventAt.toISOString(),
     saleStartAt: c.saleStartAt.toISOString(),
+    saleEndAt: c.saleEndAt.toISOString(),
     status: c.status,
     coverImageUrl: c.coverImageUrl,
     zones: c.zones.map((z) => ({ price: z.price.toString() })),

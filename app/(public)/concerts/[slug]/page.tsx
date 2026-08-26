@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { MapPin, CalendarDays, Ticket, Music2, ArrowRight, Clock, ShieldCheck } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { formatTHB, formatThaiDate } from "@/lib/format";
+import { deriveDisplayStatus } from "@/lib/concert-display";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { Button } from "@/components/ui/button";
@@ -43,10 +44,14 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function ConcertDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ cancelled?: string }>;
 }) {
   const { slug } = await params;
+  // ?cancelled=1 = เพิ่งยกเลิกคำสั่งซื้อจากหน้าชำระเงิน → บอกผลชัด ๆ (เดิมเด้งกลับเงียบ — user-test #102)
+  const { cancelled } = await searchParams;
 
   const concert = await prisma.concert.findUnique({
     where: { slug },
@@ -62,11 +67,19 @@ export default async function ConcertDetailPage({
 
   if (!concert) notFound();
 
-  const isOnSale = concert.status === "ON_SALE";
-  const saleNotYet = concert.status === "SCHEDULED";
+  // สถานะที่แสดง = status ใน DB เทียบกับความจริง (มีโซนไหม / อยู่ในช่วงขายไหม) — lib/concert-display.ts (user-test #40)
+  const display = deriveDisplayStatus({
+    status: concert.status,
+    saleStartAt: concert.saleStartAt,
+    saleEndAt: concert.saleEndAt,
+    zoneCount: concert.zones.length,
+  });
+  const isOnSale = display === "ON_SALE";
+  const saleNotYet = display === "SCHEDULED";
   // 🎫 Phase 2.3: บัตรหมดถูกประกาศอัตโนมัติตอนออกตั๋วใบสุดท้าย (lib/sold-out.ts) —
   //   แยกป้าย "บัตรหมด" ออกจาก "จบงานแล้ว" เพราะผู้ใช้ต้องทำต่างกัน (รอรอบคืนบัตร vs ไม่ต้องรอ)
-  const isSoldOut = concert.status === "SOLD_OUT";
+  const isSoldOut = display === "SOLD_OUT";
+  const notReady = display === "NOT_READY";
 
   const zonesSummary = concert.zones
     .map((z) => `- ${z.name}: ${Number(z.price).toLocaleString()} บาท (เหลือ ${z._count.seats} ที่นั่ง)`)
@@ -118,7 +131,8 @@ export default async function ConcertDetailPage({
             )}
             {saleNotYet && <Badge tone="info">เร็ว ๆ นี้</Badge>}
             {isSoldOut && <Badge tone="danger">บัตรหมดแล้ว (SOLD OUT)</Badge>}
-            {!isOnSale && !saleNotYet && !isSoldOut && <Badge tone="neutral">ปิดการขาย</Badge>}
+            {notReady && <Badge tone="neutral">ยังไม่พร้อมขาย</Badge>}
+            {!isOnSale && !saleNotYet && !isSoldOut && !notReady && <Badge tone="neutral">ปิดการขาย</Badge>}
           </div>
 
           <h1
@@ -146,6 +160,14 @@ export default async function ConcertDetailPage({
       </section>
 
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10">
+        {cancelled && (
+          <div
+            role="status"
+            className="mb-6 rounded-lg border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning"
+          >
+            ยกเลิกคำสั่งซื้อแล้ว — ที่นั่งถูกปล่อยคืนเข้าระบบ ถ้าต้องการจองอีกครั้งให้เข้าคิวใหม่
+          </div>
+        )}
         <div className="grid gap-8 lg:grid-cols-[1fr_300px]">
           {/* รายละเอียด + โซน */}
           <div className="space-y-10">
@@ -240,6 +262,10 @@ export default async function ConcertDetailPage({
                 ) : isSoldOut ? (
                   <div className="rounded-lg border border-danger/25 bg-danger/10 px-4 py-3 text-center text-sm font-medium text-danger">
                     บัตรหมดแล้ว (SOLD OUT)
+                  </div>
+                ) : notReady ? (
+                  <div className="rounded-lg bg-fg/10 px-4 py-3 text-center text-sm text-fg-dim">
+                    ยังไม่พร้อมขาย — รอประกาศโซนและราคา
                   </div>
                 ) : (
                   <div className="rounded-lg bg-fg/10 px-4 py-3 text-center text-sm text-fg-dim">

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { MapPin, Music2 } from "lucide-react";
 import { formatTHB, formatThaiDateParts } from "@/lib/format";
+import { deriveDisplayStatus, minZonePrice, DISPLAY_STATUS_LABEL } from "@/lib/concert-display";
 import { Badge } from "@/components/ui/badge";
 import { EqBars } from "@/components/eq-bars";
 
@@ -17,17 +18,26 @@ interface Concert {
   venue: string;
   eventAt: Date;
   saleStartAt: Date;
+  saleEndAt: Date;
   status: string;
   coverImageUrl: string | null;
   zones: Zone[];
 }
 
 export function ConcertCard({ concert }: { concert: Concert }) {
-  // หาราคาต่ำสุดจากทุก zone (ราคาเริ่มต้น)
-  const minPrice = Math.min(...concert.zones.map((z) => Number(z.price.toString())));
-  const isOnSale = concert.status === "ON_SALE";
-  const isUpcoming = concert.status === "SCHEDULED";
-  const isSoldOut = concert.status === "SOLD_OUT";
+  // ราคาเริ่มต้น — null เมื่อยังไม่มีโซน (เดิม Math.min ของ [] = Infinity โชว์ "฿∞" — user-test #40)
+  const minPrice = minZonePrice(concert.zones);
+  // สถานะที่แสดงเทียบความจริง (โซน/ช่วงขาย) ไม่ใช่เชื่อ status ใน DB อย่างเดียว — lib/concert-display.ts
+  const display = deriveDisplayStatus({
+    status: concert.status,
+    saleStartAt: concert.saleStartAt,
+    saleEndAt: concert.saleEndAt,
+    zoneCount: concert.zones.length,
+  });
+  const isOnSale = display === "ON_SALE";
+  const isUpcoming = display === "SCHEDULED";
+  const isSoldOut = display === "SOLD_OUT";
+  const isClosed = display === "ENDED" || display === "NOT_READY";
   const date = formatThaiDateParts(concert.eventAt);
 
   return (
@@ -75,6 +85,11 @@ export function ConcertCard({ concert }: { concert: Concert }) {
               เต็มแล้ว
             </Badge>
           )}
+          {isClosed && (
+            <Badge tone="neutral" className="border border-fg/15 bg-ink-deep/80 backdrop-blur-sm">
+              {DISPLAY_STATUS_LABEL[display]}
+            </Badge>
+          )}
         </div>
 
         {/* ป้ายวันที่แบบปฏิทินบัตรคอนเสิร์ต มุมล่างซ้าย */}
@@ -97,10 +112,14 @@ export function ConcertCard({ concert }: { concert: Concert }) {
         <div className="flex items-end justify-between border-t border-fg/10 pt-3">
           <div>
             <span className="text-xs text-fg-faint">เริ่มต้น</span>
-            <p className="text-led text-lg font-bold text-spot-300">{formatTHB(minPrice)}</p>
+            {minPrice === null ? (
+              <p className="text-sm font-medium text-fg-faint">รอประกาศราคา</p>
+            ) : (
+              <p className="text-led text-lg font-bold text-spot-300">{formatTHB(minPrice)}</p>
+            )}
           </div>
           <span className="font-display text-sm font-medium text-brand-300 transition-transform group-hover:translate-x-0.5">
-            {isSoldOut ? "ดูรายละเอียด" : "จองตั๋ว"} →
+            {isOnSale ? "จองตั๋ว" : "ดูรายละเอียด"} →
           </span>
         </div>
       </div>

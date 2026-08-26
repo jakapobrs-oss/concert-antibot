@@ -20,6 +20,7 @@ export type BrowseConcert = {
   venue: string;
   eventAt: string;
   saleStartAt: string;
+  saleEndAt: string;
   status: string;
   coverImageUrl: string | null;
   zones: { price: string }[];
@@ -91,6 +92,7 @@ export function ConcertBrowser({ concerts }: { concerts: BrowseConcert[] }) {
                 venue: c.venue,
                 eventAt: new Date(c.eventAt),
                 saleStartAt: new Date(c.saleStartAt),
+                saleEndAt: new Date(c.saleEndAt),
                 status: c.status,
                 coverImageUrl: c.coverImageUrl,
                 zones: c.zones,
