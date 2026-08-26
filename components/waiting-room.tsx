@@ -58,6 +58,11 @@ export function WaitingRoom({
   const [error, setError] = useState<string | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [needChallenge, setNeedChallenge] = useState(false);
+  // 428 ซ้ำ "หลังส่ง token แล้ว" = server ไม่รับ token (verify ไม่ผ่าน / ผิดด่าน / คีย์ผิด)
+  //   เดิม setNeedChallenge(true) ซ้ำไม่เปลี่ยนอะไร → กล่องค้าง "สำเร็จ!" ไม่มี feedback (พบจริงบน prod 2026-08-26)
+  //   challengeKey เปลี่ยน = mount widget ใหม่ (token ของ Turnstile ใช้ได้ครั้งเดียว ต้องขอใหม่)
+  const [challengeError, setChallengeError] = useState<string | null>(null);
+  const [challengeKey, setChallengeKey] = useState(0);
   // "ไม่มีคิวให้รอ" — บัตรหมด / ยังไม่เปิดขาย / ยังไม่ถึงรอบ: ทางออกคือกลับหน้าคอนเสิร์ต ไม่ใช่เข้าคิวใหม่ (วนลูป)
   const [closed, setClosed] = useState<{ title: string; message: string } | null>(null);
   const tokenRef = useRef<string | null>(null);
@@ -145,6 +150,10 @@ export function WaitingRoom({
         }
         // CHALLENGE — ต้องทำ Turnstile ก่อน
         if (res.status === 428) {
+          if (turnstileToken) {
+            setChallengeError("ยืนยันไม่ผ่าน กรุณาทำเครื่องหมายใหม่อีกครั้ง");
+            setChallengeKey((k) => k + 1);
+          }
           setNeedChallenge(true);
           return;
         }
@@ -158,6 +167,7 @@ export function WaitingRoom({
         const { token } = await res.json();
         tokenRef.current = token;
         setNeedChallenge(false);
+        setChallengeError(null);
         stoppedRef.current = false;
         await poll(); // poll() จะ schedule รอบถัดไปเอง (backoff ตามตำแหน่ง)
       } catch {
@@ -260,7 +270,13 @@ export function WaitingRoom({
         </div>
         <h2 className="font-display text-xl font-semibold text-fg">ยืนยันว่าคุณไม่ใช่บอท</h2>
         <p className="text-sm text-fg-dim">กรุณาทำเครื่องหมายด้านล่างเพื่อเข้าคิว</p>
+        {challengeError && (
+          <p role="alert" className="text-sm text-danger">
+            {challengeError}
+          </p>
+        )}
         <TurnstileWidget
+          key={challengeKey}
           siteKey={turnstileSiteKey}
           action="queue_join"
           onVerify={(token) => attemptJoin(token)}

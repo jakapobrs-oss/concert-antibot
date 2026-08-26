@@ -56,6 +56,25 @@ if (isProduction && isTurnstileConfigured && !env.TURNSTILE_SITE_KEY) {
   );
 }
 
+// เตือนถ้า production ตั้งคีย์ Turnstile เป็น "test key" ของ Cloudflare (พบจริง 2026-08-26 — prod ใช้ test key มา 43 วัน)
+//   secret test = siteverify ผ่านเสมอ → CAPTCHA ปิดอยู่เงียบ ๆ (lib/turnstile.ts ปฏิเสธบน production แล้ว: test-key-on-production)
+//   site key test = widget ขึ้นป้ายแดง "for testing only" และ token ที่ได้ verify กับ secret จริงไม่ผ่าน
+//   test key ทั้งชุดขึ้นต้น 1x0000 (ผ่านเสมอ) / 2x0000 (บล็อกเสมอ) / 3x0000 (บังคับ interactive)
+const TURNSTILE_TEST_SECRET = "1x0000000000000000000000000000000AA";
+const TURNSTILE_TEST_KEY_PREFIXES = ["1x0000", "2x0000", "3x0000"];
+if (isProduction && env.TURNSTILE_SECRET_KEY === TURNSTILE_TEST_SECRET) {
+  console.error(
+    "🚨 [ANTI-BOT] TURNSTILE_SECRET_KEY บน production เป็น test key ของ Cloudflare — " +
+      "ระบบจะปฏิเสธ Turnstile ทุกคำขอ (test-key-on-production) จนกว่าจะใส่ secret จริง"
+  );
+}
+if (isProduction && TURNSTILE_TEST_KEY_PREFIXES.some((prefix) => env.TURNSTILE_SITE_KEY?.startsWith(prefix))) {
+  console.error(
+    "🚨 [ANTI-BOT] TURNSTILE_SITE_KEY บน production เป็น test key ของ Cloudflare — " +
+      "widget จะขึ้นป้าย 'for testing only' และ token จะ verify ไม่ผ่าน = ผู้ใช้เข้าคิวไม่ได้"
+  );
+}
+
 // เตือนถ้า production แต่ยังไม่ตั้ง CRON_SECRET (Codex §5 #1 / G1)
 //   /api/cron/sweep จะ fail-closed (503) จนกว่าจะตั้ง — กัน endpoint กวาด order เปลือยหลุด deploy
 if (isProduction && !env.CRON_SECRET) {

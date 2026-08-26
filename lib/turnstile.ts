@@ -77,13 +77,24 @@ export async function verifyTurnstile(
   expectation?: TurnstileExpectation
 ): Promise<TurnstileResult> {
   const realSecret = process.env.TURNSTILE_SECRET_KEY;
-  const devMode = !realSecret;
+  // ตั้ง secret เป็น test key ของ Cloudflare "ตรง ๆ" = ก็คือ dev mode (siteverify ผ่านเสมอ + คืน hostname/action ค่าตายตัว)
+  //   ก่อน 2026-08-26 devMode ดูแค่ "ไม่ได้ตั้ง" → ใครใส่ test secret ไว้จะโดนเช็ค action/hostname (SECURITY_TODO #2)
+  //   กับค่าหลอกของ Cloudflare = action-mismatch ทุกครั้ง → คนจริงติด challenge วนไม่จบ (พบจริงบน prod)
+  const usingTestSecret = realSecret === DEV_SECRET;
+  const devMode = !realSecret || usingTestSecret;
 
   // 🔒 fail-closed: production แต่ไม่ได้ตั้ง secret จริง = misconfig
   //    ห้าม fallback ไป test key (always-pass) เพราะจะเท่ากับ "ปิด CAPTCHA เงียบ ๆ" บน production
   //    คืน fail เพื่อให้ assessRequest ดันคะแนนขึ้น (CHALLENGE/BLOCK) แทนการปล่อยผ่าน
   if (!realSecret && isProduction) {
     return { success: false, devMode, errorCodes: ["not-configured"] };
+  }
+
+  // 🔒 production แต่ secret เป็น test key = CAPTCHA ปิดอยู่เงียบ ๆ (ผ่านเสมอ) — ปฏิเสธชัดเจนด้วย error code ของเราเอง
+  //    ไม่ยิง Cloudflare · ผู้เรียกนับเป็น "fail" → ผู้ใช้ติด challenge จนกว่า operator จะใส่คีย์จริง (ดีกว่าปล่อยบอทผ่านเงียบ ๆ)
+  //    พบจริง 2026-08-26: prod ใช้ test key มา 43 วันโดยไม่มีใครรู้ (เข้าคิวได้ทุกครั้งก็เพราะแบบนี้) — มี boot-warn คู่กันใน lib/env.ts
+  if (usingTestSecret && isProduction) {
+    return { success: false, devMode: false, errorCodes: ["test-key-on-production"] };
   }
 
   const secret = realSecret || DEV_SECRET;

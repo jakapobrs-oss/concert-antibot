@@ -41,6 +41,7 @@ describe("assessPurchase — token ต้องเป็นของด่าน
     verifyTurnstileMock.mockResolvedValue({ success: false, devMode: false, errorCodes: ["action-mismatch"] });
     const r = await assessPurchase({ userAgent: REAL_UA, headers: realBrowserHeaders(), turnstileToken: "tok" });
     expect(r.signals.turnstile).toBe("fail");
+    expect(r.signals.turnstileErrors).toEqual(["action-mismatch"]); // ลง bot_events.signals ให้แอดมินเห็นสาเหตุ
     expect(r.score).toBe(55);
     expect(r.action).toBe("CHALLENGE");
   });

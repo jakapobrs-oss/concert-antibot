@@ -21,6 +21,8 @@ import { TURNSTILE_ACTIONS } from "@/lib/turnstile-actions";
 
 export interface PurchaseSignals {
   turnstile: "pass" | "fail" | "dev-pass" | "not-required";
+  // error code จาก verifyTurnstile เมื่อ fail — มีเฉพาะตอน fail (เหมือน BotSignals ของด่านคิว)
+  turnstileErrors?: string[];
   userAgent: "ok" | "suspicious" | "bot" | "empty";
   headers: "complete" | "incomplete";
   behavior: "ok" | "likely-bot";
@@ -61,6 +63,7 @@ export async function assessPurchase(params: {
   // --- สัญญาณ 1: Turnstile (ไม่บังคับ) ---
   let turnstileSignal: PurchaseSignals["turnstile"] = "not-required";
   let turnstilePassed = false;
+  let turnstileErrors: string[] | undefined;
   if (params.turnstileToken) {
     // SECURITY_TODO #2: token ต้องแก้จาก widget ของด่านซื้อ (action) บนโดเมนที่คำขอนี้ยิงมา (Host)
     //   token ที่มนุษย์แก้ให้ที่ด่านคิวแล้วสคริปต์เอามาใช้ตรงนี้ = action-mismatch → นับเป็น "fail" (+55)
@@ -74,6 +77,7 @@ export async function assessPurchase(params: {
     } else {
       turnstileSignal = "fail";
       score += TURNSTILE_FAIL_SCORE;
+      turnstileErrors = ts.errorCodes;
     }
   }
 
@@ -111,6 +115,7 @@ export async function assessPurchase(params: {
       headers: hdr.label,
       behavior: behaviorSignal,
       history: historySignal,
+      ...(turnstileErrors?.length ? { turnstileErrors } : {}),
     },
   };
 }

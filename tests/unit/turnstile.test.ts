@@ -148,3 +148,33 @@ describe("normalizeHostname — ทำ Host header ให้เทียบก�
     expect(normalizeHostname("   ")).toBe("");
   });
 });
+
+describe("verifyTurnstile — ตั้ง secret เป็น test key ของ Cloudflare ตรง ๆ (พบจริงบน prod 2026-08-26)", () => {
+  const TEST_SECRET = "1x0000000000000000000000000000000AA";
+  // Cloudflare ตอบ test key ด้วยค่าตายตัวของเขา — ไม่ใช่ action/hostname ของเรา
+  const TEST_KEY_RESPONSE = { success: true, hostname: "example.com", action: "", "error-codes": [] };
+
+  it("production → ปฏิเสธทันที test-key-on-production โดยไม่ยิง Cloudflare (ห้ามปล่อย CAPTCHA ปิดเงียบ ๆ)", async () => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("TURNSTILE_SECRET_KEY", TEST_SECRET);
+    const { verifyTurnstile } = await import("@/lib/turnstile");
+    const fetchMock = stubSiteverify(TEST_KEY_RESPONSE);
+    const r = await verifyTurnstile("tok", undefined, { action: "queue_join", hostname: HOST });
+    expect(r.success).toBe(false);
+    expect(r.devMode).toBe(false);
+    expect(r.errorCodes).toEqual(["test-key-on-production"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("development → นับเป็น dev mode: ข้ามเช็ค action/hostname แล้วผ่านตาม Cloudflare (เดิมโดน action-mismatch ทั้งที่เป็น test key)", async () => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("TURNSTILE_SECRET_KEY", TEST_SECRET);
+    const { verifyTurnstile } = await import("@/lib/turnstile");
+    stubSiteverify(TEST_KEY_RESPONSE);
+    const r = await verifyTurnstile("tok", undefined, { action: "queue_join", hostname: HOST });
+    expect(r.success).toBe(true);
+    expect(r.devMode).toBe(true);
+  });
+});

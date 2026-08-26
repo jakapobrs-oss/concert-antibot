@@ -250,3 +250,27 @@ describe("ANTIBOT_CONFIG — สัญญา threshold ที่ระบบใ�
     expect(ANTIBOT_CONFIG).toEqual({ CHALLENGE_THRESHOLD: 40, BLOCK_THRESHOLD: 70 });
   });
 });
+
+describe("assessRequest — เก็บ error code ของ Turnstile ลง signals (วินิจฉัยจาก bot_events ได้)", () => {
+  it("verify ไม่ผ่าน → signals.turnstileErrors = error code ที่ verifyTurnstile คืน", async () => {
+    mockedVerify.mockResolvedValue({ success: false, devMode: false, errorCodes: ["action-mismatch"] });
+    const result = await assessRequest({
+      turnstileToken: "tok",
+      userAgent: CHROME_UA,
+      headers: completeHeaders(),
+      fingerprintHash: "fp-abc123",
+    });
+    expect(result.signals.turnstile).toBe("fail");
+    expect(result.signals.turnstileErrors).toEqual(["action-mismatch"]);
+  });
+
+  it("ผ่าน → ไม่มี key turnstileErrors (ไม่ใส่ของว่างลง DB)", async () => {
+    const result = await assessRequest({
+      turnstileToken: "tok",
+      userAgent: CHROME_UA,
+      headers: completeHeaders(),
+      fingerprintHash: "fp-abc123",
+    });
+    expect("turnstileErrors" in result.signals).toBe(false);
+  });
+});

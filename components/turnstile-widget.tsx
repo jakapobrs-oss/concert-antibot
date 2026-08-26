@@ -11,6 +11,7 @@ declare global {
     turnstile?: {
       render: (el: HTMLElement, opts: TurnstileOptions) => string;
       reset: (widgetId?: string) => void;
+      remove?: (widgetId?: string) => void;
     };
     onTurnstileLoad?: () => void;
   }
@@ -77,6 +78,18 @@ export function TurnstileWidget({
       }
     }
   }, [siteKey, onVerify, action, size]);
+
+  // ถอด widget ออกจาก Turnstile ตอน unmount (เช่น parent เปลี่ยน key เพื่อขอ token ใหม่หลังยืนยันไม่ผ่าน)
+  //   แยกจาก effect บนโดยตั้งใจ — ถ้าผูก deps เดียวกัน onVerify เปลี่ยน identity (fingerprint โหลดเสร็จ)
+  //   จะถอด/สร้าง widget ใหม่กลางคันตอนผู้ใช้กำลังติ๊ก
+  useEffect(() => {
+    return () => {
+      if (widgetIdRef.current) {
+        window.turnstile?.remove?.(widgetIdRef.current);
+        widgetIdRef.current = null;
+      }
+    };
+  }, []);
 
   return <div ref={ref} className="flex justify-center" />;
 }

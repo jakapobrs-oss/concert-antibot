@@ -22,6 +22,9 @@ export type BotAction = "ALLOW" | "CHALLENGE" | "BLOCK";
 
 export interface BotSignals {
   turnstile: "pass" | "fail" | "dev-pass" | "missing";
+  // error code จาก verifyTurnstile เมื่อ fail (action-mismatch / hostname-mismatch / test-key-on-production / ของ Cloudflare)
+  //   มีเฉพาะตอน fail — ลง bot_events.signals ให้วินิจฉัยจากหลังบ้านได้ (ก่อน 2026-08-26 เอกสารอ้างว่ามี แต่โค้ดไม่ได้เก็บ)
+  turnstileErrors?: string[];
   userAgent: "ok" | "suspicious" | "bot" | "empty";
   headers: "complete" | "incomplete";
   fingerprint: "present" | "missing";
@@ -85,6 +88,7 @@ export async function assessRequest(params: {
     hostname: params.headers.get("host"),
   });
   let turnstileSignal: BotSignals["turnstile"];
+  let turnstileErrors: string[] | undefined;
   if (!params.turnstileToken) {
     turnstileSignal = "missing";
     score += 40; // ไม่ส่ง token เลย → เข้าเกณฑ์ challenge
@@ -94,6 +98,7 @@ export async function assessRequest(params: {
   } else {
     turnstileSignal = "fail";
     score += 55; // Turnstile fail → น่าจะบอท
+    turnstileErrors = ts.errorCodes;
   }
 
   // --- Signal 2: User-Agent ---
@@ -126,6 +131,7 @@ export async function assessRequest(params: {
       userAgent: uaResult.label,
       headers: headerResult.label,
       fingerprint: fpSignal,
+      ...(turnstileErrors?.length ? { turnstileErrors } : {}),
     },
   };
 }
