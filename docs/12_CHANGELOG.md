@@ -5,6 +5,19 @@
 
 ---
 
+## [Revision 37 — CI รัน lint + next build · แก้ Medium 4 ข้อจาก user-test 26 ส.ค.] — 2026-08-27
+
+**ที่มา:** deploy 34dxrztan (rev 35) ล้มที่ webpack ทั้งที่ tsc/vitest ผ่าน — CI ไม่เคยรัน `next build` · user-test 2026-08-26 เหลือ Medium 4 ข้อที่ยังไม่แก้
+
+**ทำ**
+- **CI** (`.github/workflows/ci.yml`): job verify เพิ่ม `pnpm lint` · job integration เพิ่ม service Redis + `REDIS_URL` และ step `pnpm exec next build` หลัง migrate (build ต้องมี DB เพราะ `app/sitemap.ts` prerender query concerts; env ที่ขาดบน CI แค่ boot-warn ไม่ throw)
+- **#72 Bot log ตัวกรองไม่ทำงาน** — `<Link><Button/></Link>` (button ซ้อนใน a) กดแล้ว URL ไม่เปลี่ยน → เปลี่ยนเป็น `<Link>` ที่แต่งเหมือนปุ่มโดยตรง (`app/(admin)/admin/bot-log/page.tsx`)
+- **#102 ยกเลิกคำสั่งซื้อไม่มี confirm/ไม่บอกผล** — `components/checkout-client.tsx` กดครั้งแรกโชว์กล่องยืนยัน (บอกที่นั่งที่จะหลุด) → ยืนยัน → ไป `/concerts/<slug>?cancelled=1` ซึ่งหน้ารายละเอียดโชว์แถบ "ยกเลิกคำสั่งซื้อแล้ว ที่นั่งถูกปล่อยคืน"; ยกเลิกไม่สำเร็จ = ข้อความ error แทนเด้งเงียบ (ยังไม่แก้: การ์ดออเดอร์ที่ยกเลิกแสดงที่นั่ง "—" เพราะ OrderItem ถูกลบตอนยกเลิกตามออกแบบ F3)
+- **#40 คอนเสิร์ต "A" ฿∞ / กำลังขาย** — `lib/concert-display.ts` (pure): `deriveDisplayStatus()` เทียบ status ใน DB กับความจริง (ไม่มีโซน = **ยังไม่พร้อมขาย** · เลย `saleEndAt` = **ปิดการขาย** · ก่อน `saleStartAt` = เร็ว ๆ นี้) + `minZonePrice()` คืน null เมื่อไม่มีโซน → การ์ดโชว์ "รอประกาศราคา" · ใช้ทั้งการ์ด (`concert-card.tsx` + ส่ง `saleEndAt` ผ่าน `concert-browser`/`concerts/page.tsx`) · หน้ารายละเอียด (ป้าย + แผง CTA) · หน้าคิว (เปิดห้องรอเฉพาะขายอยู่จริง ไม่งั้นบอกเหตุผลตรง ๆ แทน "บัตรหมดแล้ว")
+- **#35 ปุ่ม "ให้สิทธิ์" ครั้งแรกเงียบ** — `GrantMembershipForm` เรียก `router.refresh()` ซ้อนกับ `revalidatePath` ของ server action → refresh 2 รอบติดกันทำให้ผลลัพธ์หาย/ช่องว่าง → ตัด `router.refresh()` ออก (action revalidate ให้อยู่แล้ว)
+
+**หลักฐาน:** unit `concert-display` 8 → vitest **52 ไฟล์ 647/647** · tsc 0 · lint 0 error · `next build` local ผ่าน · CI รอบแรกหลัง push ต้องเขียวทั้ง 2 job (มี build แล้ว)
+
 ## [Revision 36 — Ops: `/api/health` + backup Neon รายวัน (เข้ารหัส) + error log มี request id + ปิด /prototype บน prod + ยกเว้น /api จาก canonical-host] — 2026-08-27
 
 **ที่มา:** gap map 2026-08-27 ขั้น 4 (ops) — user สั่งแบ่งงานให้ session นี้ผ่าน peer (`claude-workspace-83` ทำขั้น 3 = rev 35 คู่ขนาน)
