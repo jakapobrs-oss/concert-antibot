@@ -56,7 +56,10 @@ export async function GET(req: NextRequest) {
           //   (เดิมนับแค่ว่างแล้วให้ admitNext คืน 0 เงียบ ๆ → คนในคิวค้างตำแหน่ง 1 ไม่มีทางออก)
           const availability = await getConcertAvailability(concertId);
           seatsLeft = availability.available;
-          await recordSeatAvailability(concertId, availability);
+          // บันทึก snapshot แยกจากการนับ — ถ้า Redis SET พลาด ห้ามทำให้รอบนี้เสียเพดานที่นั่ง (seatsLeft) ไปด้วย
+          await recordSeatAvailability(concertId, availability).catch((e) =>
+            console.error("[queue] บันทึก snapshot ที่นั่งไม่สำเร็จ", e)
+          );
         } catch {
           // นับที่นั่งไม่ได้ (เช่น concertId ไม่ใช่เลข/DB ล่ม) → พึ่ง cap อย่างเดียว
           // ยังปลอดภัยเพราะ seat-hold (SET NX) กัน double-book ที่ชั้นเลือกที่นั่งอยู่แล้ว

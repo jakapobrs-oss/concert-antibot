@@ -93,7 +93,8 @@ export default async function SeatsPage({
         <SiteHeader />
         <main className="mx-auto max-w-2xl px-4 py-16 text-center">
           <h1 className="mb-2 font-display text-xl font-semibold text-fg">
-            ยังไม่ถึงรอบของคุณ
+            {/* บัตรหมด ≠ ยังไม่ถึงรอบ — ด่านนี้ปฏิเสธด้วยเหตุบัตรหมดได้ทุกคอนเสิร์ต (docs/23 §8) */}
+            {entry.reason === "SOLD_OUT" ? "บัตรหมดแล้ว" : "ยังไม่ถึงรอบของคุณ"}
           </h1>
           <p className="mb-4 text-sm text-fg-faint">{entryDenyMessage(entry)}</p>
           <Link

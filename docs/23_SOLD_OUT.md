@@ -136,5 +136,5 @@ soldOut   = available = 0  และ  held = 0
 - ทิศทางเดียว ON_SALE→SOLD_OUT ของ `syncSoldOutStatus` **ไม่เปลี่ยน** — snapshot เป็นแค่สัญญาณให้คนในคิว ไม่ใช่การประกาศสถานะคอนเสิร์ต
 
 พิสูจน์: `scripts/test-queue-soldout.ts` (Redis จริง 9 เช็ค: ไม่มี snapshot ยังรอ / หมด → SOLD_OUT / ไม่ถูกเตะ / TTL / เต็มชั่วคราว / ที่นั่งกลับมา → ADMITTED / ADMITTED ไม่โดนเตะ) ·
-`pnpm test:queue-soldout-ui` (เบราว์เซอร์จริง: ประตูปฏิเสธด้วย "บัตรหมดแล้ว" + ปุ่มกลับ ไม่ใช่จอบอท — ขั้น "ระหว่างรอ" บนจอต้องผ่าน Turnstile ของห้องรอ จึงข้ามเมื่อ dev ใช้คีย์จริง, รันครบเมื่อใช้ test key ของ Cloudflare) ·
+`pnpm test:queue-soldout-ui` (เบราว์เซอร์จริง: ประตูปฏิเสธด้วย "บัตรหมดแล้ว" + ปุ่มกลับ ไม่ใช่จอบอท — ขั้น "ระหว่างรอ" บนจอต้องผ่าน Turnstile ของห้องรอ จึงข้ามเมื่อ dev ใช้คีย์จริง — คาดว่ารันครบเมื่อใช้ test key ของ Cloudflare แต่ยังไม่ได้ลอง) ·
 `tests/unit/queue-soldout-gate.test.ts` (ประตูไม่มีรอบ 4 เคส)

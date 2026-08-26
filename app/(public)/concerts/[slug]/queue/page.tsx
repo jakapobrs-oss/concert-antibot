@@ -79,7 +79,10 @@ export default async function QueuePage({
               turnstileSiteKey={getTurnstileSiteKey()}
             />
           ) : (
-            <p className="text-center text-fg-faint">คอนเสิร์ตนี้ยังไม่เปิดขาย</p>
+            <p className="text-center text-fg-faint">
+              {/* บัตรหมด ≠ ยังไม่เปิดขาย — สถานะ SOLD_OUT ถูกติดอัตโนมัติหลังออกตั๋ว (docs/23 §3) */}
+              {concert.status === "SOLD_OUT" ? "บัตรหมดแล้ว" : "คอนเสิร์ตนี้ยังไม่เปิดขาย"}
+            </p>
           )}
         </div>
       </main>
