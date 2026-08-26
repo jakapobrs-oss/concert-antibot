@@ -1,5 +1,6 @@
 // Concert detail page — รายละเอียด + ปุ่มไปหน้าคิว (โทนเวทีมืด)
 // hero ใช้โปสเตอร์เป็นฉากหลังเบลอ + ข้อมูลเป็นชิปอ่านง่าย
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MapPin, CalendarDays, Ticket, Music2, ArrowRight, Clock, ShieldCheck } from "lucide-react";
@@ -15,6 +16,30 @@ import { SaleRoundPanel } from "@/components/sale-round-panel";
 import { Countdown } from "@/components/countdown";
 
 export const revalidate = 60;
+
+// พรีวิวตอนแชร์ลิงก์งานนี้ — ชื่องาน + สถานที่/วัน + โปสเตอร์เป็น og:image (ไม่มีโปสเตอร์ → รูปตั้งต้นของเว็บ)
+//   query แยกเล็ก ๆ (select 4 ฟิลด์) ไม่รวมกับ query หลักของหน้า เพราะ Next เรียก generateMetadata แยกจาก page
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  const concert = await prisma.concert.findUnique({
+    where: { slug },
+    select: { title: true, venue: true, eventAt: true, coverImageUrl: true },
+  });
+  if (!concert) return { title: "ไม่พบคอนเสิร์ต" };
+
+  const description = `${concert.venue} · ${formatThaiDate(concert.eventAt)} — จองบัตรผ่านคิวสุ่มที่เป็นธรรม กันบอท`;
+  return {
+    title: concert.title,
+    description,
+    openGraph: {
+      title: concert.title,
+      description,
+      type: "website",
+      ...(concert.coverImageUrl ? { images: [{ url: concert.coverImageUrl, alt: concert.title }] } : {}),
+    },
+    twitter: { card: "summary_large_image", title: concert.title, description },
+  };
+}
 
 export default async function ConcertDetailPage({
   params,
