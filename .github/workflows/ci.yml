@@ -63,6 +63,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/concert_antibot
+      # DIRECT_URL = connection ตรง (ไม่ผ่าน pooler) ที่ schema.prisma ต้องใช้ตอน migrate deploy
+      #   บน CI ไม่มี pooler → ชี้ DB เดียวกับ DATABASE_URL (ขาดตัวนี้ = Prisma P1012 ทำ job นี้แดงมาตั้งแต่ 2026-07-09)
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/concert_antibot
       # dummy secret (>=32 ตัว) ให้ lib/env.ts ผ่าน — ไม่ใช่ของจริง
       NEXTAUTH_SECRET: ci_dummy_secret_at_least_32_characters_long_xx
 
