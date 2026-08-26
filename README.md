@@ -77,14 +77,14 @@ pnpm check:env           # ตรวจว่า env ครบสำหรับ
 
 | ชุด | คำสั่ง | ล่าสุด (2026-08-27) |
 |---|---|---|
-| Unit — Vitest, mock ล้วน | `pnpm test:run` | ✅ **51 ไฟล์ · 639 เคส** |
+| Unit — Vitest, mock ล้วน | `pnpm test:run` | ✅ **52 ไฟล์ · 647 เคส** (ตัวเลขล่าสุดดูใน [`CLAUDE.md`](CLAUDE.md) › Test layout) |
 | Race / concurrency กับ Postgres + Redis จริง | `pnpm test:race` (+ `scripts/test-*.ts`) | ✅ 22/22 |
 | เบราว์เซอร์จริง (ผังแอดมิน 43 · ผู้ซื้อ 27 · รอบพรีเซล 10 · ด่านบอทตอนซื้อ 7 · ห้องรอตอนบัตรหมด 5) | `pnpm test:seatmap` ฯลฯ | ✅ |
 | Adversarial self-test — บอท Playwright ยิงระบบตัวเอง | `scripts/attack-bot.ts` (localhost) | 0/1 ได้ตั๋ว (ตายที่ประตูคิว) |
 | Load — k6 | `pnpm test:load` | ตามต้องการ |
 | Typecheck / Lint | `pnpm typecheck` · `pnpm lint` | 0 error |
 
-CI (`.github/workflows/ci.yml`) รัน typecheck + unit ทุก push และ race test กับ Postgres จริง
+CI (`.github/workflows/ci.yml`) รัน typecheck + lint + unit ทุก push และ race test + `next build` กับ Postgres/Redis จริง
 
 ---
 
