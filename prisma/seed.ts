@@ -21,7 +21,7 @@ async function main() {
       emailVerified: new Date(),
     },
   });
-  console.log(`✅ Admin: ${admin.email} / Admin123!`);
+  console.log(`✅ Admin: ${admin.email}`);
 
   // -------- 2. Demo user --------
   const userPassword = await argon2.hash("Password123!", { type: argon2.argon2id });
@@ -36,104 +36,116 @@ async function main() {
       emailVerified: new Date(),
     },
   });
-  console.log(`✅ User: ${user.email} / Password123!`);
+  console.log(`✅ User: ${user.email}`);
 
   // -------- 3. Demo concert #1 --------
-  await prisma.concert.deleteMany({ where: { slug: { in: ["bts-bangkok-2026", "ed-sheeran-bkk-2026"] } } });
-
-  const concert1 = await prisma.concert.create({
-    data: {
-      title: "BTS World Tour Bangkok 2026",
-      slug: "bts-bangkok-2026",
-      description: "คอนเสิร์ตยิ่งใหญ่ที่สุดแห่งปี — กลับมาเจอ ARMY อีกครั้ง!",
-      coverImageUrl: null,
-      venue: "ราชมังคลากีฬาสถาน",
-      eventAt: new Date("2026-08-15T19:00:00+07:00"),
-      saleStartAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // เริ่มขายเมื่อวาน
-      saleEndAt: new Date("2026-08-14T23:59:59+07:00"),
-      maxTicketsPerUser: 4,
-      status: "ON_SALE",
-      zones: {
-        create: [
-          {
-            name: "VIP",
-            description: "ที่นั่งหน้าสุด + meet & greet",
-            price: 8500,
-            totalSeats: 20,
-            color: "#dc2626",
-          },
-          {
-            name: "R1",
-            description: "ที่นั่งโซนหน้า",
-            price: 5500,
-            totalSeats: 30,
-            color: "#f59e0b",
-          },
-          {
-            name: "R2",
-            description: "ที่นั่งโซนกลาง",
-            price: 3500,
-            totalSeats: 30,
-            color: "#10b981",
-          },
-        ],
+  // (2026-08-26) เลิก deleteMany: พอมี order อ้างถึงคอนเสิร์ตเดโม FK จะพัง (orders_concertId_fkey) → seed ล้ม
+  //   → `next build` บน Vercel ล้มทั้ง deploy · และการล้างเดโมทุก deploy ทำให้ออเดอร์/ที่นั่งบน prod หายโดยไม่ตั้งใจ
+  //   จึงสร้างเฉพาะเมื่อยังไม่มี slug นั้น (idempotent) — อยากรีเซ็ตเดโมให้ลบจากหน้าแอดมิน/DB เอง
+  const hasBts = await prisma.concert.findUnique({ where: { slug: "bts-bangkok-2026" }, select: { id: true } });
+  if (hasBts) {
+    console.log("⏭️  Concert bts-bangkok-2026 มีอยู่แล้ว — ข้าม");
+  } else {
+    const concert1 = await prisma.concert.create({
+      data: {
+        title: "BTS World Tour Bangkok 2026",
+        slug: "bts-bangkok-2026",
+        description: "คอนเสิร์ตยิ่งใหญ่ที่สุดแห่งปี — กลับมาเจอ ARMY อีกครั้ง!",
+        coverImageUrl: null,
+        venue: "ราชมังคลากีฬาสถาน",
+        eventAt: new Date("2026-08-15T19:00:00+07:00"),
+        saleStartAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // เริ่มขายเมื่อวาน
+        saleEndAt: new Date("2026-08-14T23:59:59+07:00"),
+        maxTicketsPerUser: 4,
+        status: "ON_SALE",
+        zones: {
+          create: [
+            {
+              name: "VIP",
+              description: "ที่นั่งหน้าสุด + meet & greet",
+              price: 8500,
+              totalSeats: 20,
+              color: "#dc2626",
+            },
+            {
+              name: "R1",
+              description: "ที่นั่งโซนหน้า",
+              price: 5500,
+              totalSeats: 30,
+              color: "#f59e0b",
+            },
+            {
+              name: "R2",
+              description: "ที่นั่งโซนกลาง",
+              price: 3500,
+              totalSeats: 30,
+              color: "#10b981",
+            },
+          ],
+        },
       },
-    },
-    include: { zones: true },
-  });
+      include: { zones: true },
+    });
 
-  // สร้าง seat ทั้งหมดให้ทุก zone
-  for (const zone of concert1.zones) {
-    const rows = ["A", "B", "C", "D", "E"];
-    const seatsPerRow = Math.ceil(zone.totalSeats / rows.length);
-    const seats: { zoneId: bigint; rowLabel: string; seatNumber: number }[] = [];
-    let count = 0;
-    for (const row of rows) {
-      for (let n = 1; n <= seatsPerRow && count < zone.totalSeats; n++) {
-        seats.push({ zoneId: zone.id, rowLabel: row, seatNumber: n });
-        count++;
+    // สร้าง seat ทั้งหมดให้ทุก zone
+    for (const zone of concert1.zones) {
+      const rows = ["A", "B", "C", "D", "E"];
+      const seatsPerRow = Math.ceil(zone.totalSeats / rows.length);
+      const seats: { zoneId: bigint; rowLabel: string; seatNumber: number }[] = [];
+      let count = 0;
+      for (const row of rows) {
+        for (let n = 1; n <= seatsPerRow && count < zone.totalSeats; n++) {
+          seats.push({ zoneId: zone.id, rowLabel: row, seatNumber: n });
+          count++;
+        }
       }
+      await prisma.seat.createMany({ data: seats });
     }
-    await prisma.seat.createMany({ data: seats });
+    console.log(`✅ Concert: ${concert1.title} (${concert1.zones.length} zones)`);
   }
-  console.log(`✅ Concert: ${concert1.title} (${concert1.zones.length} zones)`);
+
 
   // -------- 4. Demo concert #2 --------
-  const concert2 = await prisma.concert.create({
-    data: {
-      title: "Ed Sheeran Live in Bangkok 2026",
-      slug: "ed-sheeran-bkk-2026",
-      description: "พบกับ Ed Sheeran ในคอนเสิร์ตครั้งแรกในไทย!",
-      venue: "อิมแพ็ค อารีน่า เมืองทองธานี",
-      eventAt: new Date("2026-10-20T20:00:00+07:00"),
-      saleStartAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // เริ่มขายอีก 7 วัน
-      saleEndAt: new Date("2026-10-19T23:59:59+07:00"),
-      maxTicketsPerUser: 2,
-      status: "SCHEDULED",
-      zones: {
-        create: [
-          { name: "STANDING", description: "ยืน", price: 3000, totalSeats: 50, color: "#3b82f6" },
-          { name: "SEATED", description: "นั่ง", price: 4500, totalSeats: 30, color: "#8b5cf6" },
-        ],
+  const hasEd = await prisma.concert.findUnique({ where: { slug: "ed-sheeran-bkk-2026" }, select: { id: true } });
+  if (hasEd) {
+    console.log("⏭️  Concert ed-sheeran-bkk-2026 มีอยู่แล้ว — ข้าม");
+  } else {
+    const concert2 = await prisma.concert.create({
+      data: {
+        title: "Ed Sheeran Live in Bangkok 2026",
+        slug: "ed-sheeran-bkk-2026",
+        description: "พบกับ Ed Sheeran ในคอนเสิร์ตครั้งแรกในไทย!",
+        venue: "อิมแพ็ค อารีน่า เมืองทองธานี",
+        eventAt: new Date("2026-10-20T20:00:00+07:00"),
+        saleStartAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // เริ่มขายอีก 7 วัน
+        saleEndAt: new Date("2026-10-19T23:59:59+07:00"),
+        maxTicketsPerUser: 2,
+        status: "SCHEDULED",
+        zones: {
+          create: [
+            { name: "STANDING", description: "ยืน", price: 3000, totalSeats: 50, color: "#3b82f6" },
+            { name: "SEATED", description: "นั่ง", price: 4500, totalSeats: 30, color: "#8b5cf6" },
+          ],
+        },
       },
-    },
-    include: { zones: true },
-  });
+      include: { zones: true },
+    });
 
-  for (const zone of concert2.zones) {
-    const rows = ["A", "B", "C"];
-    const seatsPerRow = Math.ceil(zone.totalSeats / rows.length);
-    const seats: { zoneId: bigint; rowLabel: string; seatNumber: number }[] = [];
-    let count = 0;
-    for (const row of rows) {
-      for (let n = 1; n <= seatsPerRow && count < zone.totalSeats; n++) {
-        seats.push({ zoneId: zone.id, rowLabel: row, seatNumber: n });
-        count++;
+    for (const zone of concert2.zones) {
+      const rows = ["A", "B", "C"];
+      const seatsPerRow = Math.ceil(zone.totalSeats / rows.length);
+      const seats: { zoneId: bigint; rowLabel: string; seatNumber: number }[] = [];
+      let count = 0;
+      for (const row of rows) {
+        for (let n = 1; n <= seatsPerRow && count < zone.totalSeats; n++) {
+          seats.push({ zoneId: zone.id, rowLabel: row, seatNumber: n });
+          count++;
+        }
       }
+      await prisma.seat.createMany({ data: seats });
     }
-    await prisma.seat.createMany({ data: seats });
+    console.log(`✅ Concert: ${concert2.title} (${concert2.zones.length} zones)`);
   }
-  console.log(`✅ Concert: ${concert2.title} (${concert2.zones.length} zones)`);
 
   console.log("\n🎉 Done!");
 }
