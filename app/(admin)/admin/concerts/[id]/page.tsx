@@ -1,7 +1,7 @@
 // Admin — รายละเอียดคอนเสิร์ต + จัดการโซน/ที่นั่ง (เบื้องต้น, โทนเวทีมืด)
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Map } from "lucide-react";
+import { Map, Pencil } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { formatTHB, formatThaiDate } from "@/lib/format";
 import { SiteHeader } from "@/components/site-header";
@@ -137,6 +137,11 @@ export default async function AdminConcertDetailPage({
 
         {/* ทางลัดไปงานตั้งค่าของคอนเสิร์ตนี้ — ผังที่นั่ง + รอบกดบัตร (Phase 2) */}
         <div className="mb-6 flex flex-wrap gap-2">
+          <Link href={`/admin/concerts/${id}/edit`}>
+            <Button variant="outline" size="sm" leftIcon={<Pencil className="size-4" />}>
+              แก้ไขข้อมูล
+            </Button>
+          </Link>
           <Link href={`/admin/concerts/${id}/seatmap`}>
             <Button variant="outline" size="sm" leftIcon={<Map className="size-4" />}>
               จัดผังที่นั่งจากรูป

@@ -28,7 +28,12 @@ const statusLabel: Record<string, string> = {
   ENDED: "จบงาน",
 };
 
-export default async function AdminConcertsPage() {
+export default async function AdminConcertsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ deleted?: string }>;
+}) {
+  const { deleted } = await searchParams;
   const concerts = await prisma.concert.findMany({
     include: { _count: { select: { zones: true } } },
     orderBy: { createdAt: "desc" },
@@ -59,6 +64,15 @@ export default async function AdminConcertsPage() {
             <Button leftIcon={<Plus className="size-4" />}>สร้างใหม่</Button>
           </Link>
         </div>
+
+        {deleted === "1" && (
+          <p
+            role="status"
+            className="mb-4 rounded-lg border border-success/25 bg-success/10 px-4 py-3 text-sm text-success"
+          >
+            ลบคอนเสิร์ตแล้ว
+          </p>
+        )}
 
         {concerts.length === 0 ? (
           <p className="py-12 text-center text-fg-faint">ยังไม่มีคอนเสิร์ต</p>
@@ -111,6 +125,9 @@ export default async function AdminConcertsPage() {
                         <Button size="sm" variant="outline" type="submit">ปิดขาย</Button>
                       </form>
                     )}
+                    <Link href={`/admin/concerts/${c.id.toString()}/edit`}>
+                      <Button size="sm" variant="ghost">แก้ไข</Button>
+                    </Link>
                     <Link href={`/concerts/${c.slug}`}>
                       <Button size="sm" variant="ghost">ดูหน้าเว็บ</Button>
                     </Link>

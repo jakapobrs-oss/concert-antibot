@@ -14,6 +14,16 @@ const DATETIME_LOCAL = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/;
 
 export const THAI_OFFSET = "+07:00";
 
+// แปลง Date → ค่าสำหรับ <input type="datetime-local"> ตามเวลาไทย ("YYYY-MM-DDTHH:mm") — คู่กลับของ parseThaiDateTimeLocal
+//   ใช้เติมค่าเริ่มต้นในฟอร์มแก้ไข (rev 41) — ไม่พึ่ง TZ ของเครื่อง server เช่นกัน
+export function toThaiDateTimeLocal(date: Date): string {
+  const shifted = new Date(date.getTime() + 7 * 60 * 60 * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${shifted.getUTCFullYear()}-${p(shifted.getUTCMonth() + 1)}-${p(shifted.getUTCDate())}T${p(
+    shifted.getUTCHours()
+  )}:${p(shifted.getUTCMinutes())}`;
+}
+
 export function parseThaiDateTimeLocal(value: string | null | undefined): Date | null {
   const v = (value ?? "").trim();
   if (!v) return null;
