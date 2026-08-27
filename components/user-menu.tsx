@@ -4,16 +4,17 @@
 // ปิดเมื่อคลิกข้างนอก / กด Escape / เลือกเมนู — เข้าถึงด้วยคีย์บอร์ดได้
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Ticket, Receipt, BadgeCheck, LayoutDashboard, LogOut } from "lucide-react";
+import { ChevronDown, Ticket, Receipt, BadgeCheck, LayoutDashboard, ScanLine, LogOut } from "lucide-react";
 
 interface Props {
   name: string;
   email?: string | null;
   isAdmin: boolean;
+  isStaff: boolean; // STAFF หรือ ADMIN — เห็นเมนู "จุดเช็คอิน" (rev 42)
   signOutAction: () => Promise<void>;
 }
 
-export function UserMenu({ name, email, isAdmin, signOutAction }: Props) {
+export function UserMenu({ name, email, isAdmin, isStaff, signOutAction }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -89,6 +90,15 @@ export function UserMenu({ name, email, isAdmin, signOutAction }: Props) {
             >
               สมาชิก
             </MenuLink>
+            {isStaff && (
+              <MenuLink
+                href="/staff/checkin"
+                icon={<ScanLine className="size-4" />}
+                onClick={() => setOpen(false)}
+              >
+                จุดเช็คอิน
+              </MenuLink>
+            )}
             {isAdmin && (
               <MenuLink
                 href="/admin"

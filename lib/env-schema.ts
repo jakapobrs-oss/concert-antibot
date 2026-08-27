@@ -103,6 +103,10 @@ export const envSchema = z.object({
   //   พอคนข้างในจ่ายเสร็จ/หมดเวลา → คืนความจุ (self-refill). ควรตั้ง >= QUEUE_BATCH_SIZE
   QUEUE_ADMIT_CAP: z.coerce.number().int().positive().default(200),
   SEAT_HOLD_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+  // กรอบเวลาที่จุดสแกน (/staff/checkin) รับตั๋วของงานนั้น — นับจากเวลาแสดง (rev 42 audit: กันตั๋วงานอื่น/งานจบแล้ว)
+  //   เปิดสแกนได้ก่อนเวลาแสดง N ชม. · ปิดสแกน M ชม. หลังเวลาแสดง (งานเลื่อน/ประตูเปิดช้า ปรับที่ env ไม่ต้องแก้โค้ด)
+  CHECKIN_OPEN_BEFORE_HOURS: z.coerce.number().min(0).default(12),
+  CHECKIN_CLOSE_AFTER_HOURS: z.coerce.number().min(0).default(6),
   BOT_SCORE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
 
   // per-payer ticket cap — จำนวนตั๋วสูงสุดที่ "1 บัญชีผู้จ่าย" ซื้อได้ต่อ 1 คอนเสิร์ต (ข้ามทุก app account)

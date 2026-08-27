@@ -1,6 +1,6 @@
 // Admin dashboard (Phase 8) — สถิติรวม + anti-bot + queue + ลิงก์ไปรายงาน (โทนเวทีมืด)
 import Link from "next/link";
-import { Music2, Flame, Users, Ticket, ShieldCheck, BarChart3, ScanLine, Undo2, Gauge, BadgeCheck } from "lucide-react";
+import { Music2, Flame, Users, Ticket, ShieldCheck, BarChart3, ScanLine, Undo2, Gauge, BadgeCheck, UserCog } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { EqBars } from "@/components/eq-bars";
@@ -166,9 +166,14 @@ export default async function AdminDashboard() {
               Sales Report
             </Button>
           </Link>
-          <Link href="/admin/checkin">
+          <Link href="/staff/checkin">
             <Button variant="outline" leftIcon={<ScanLine className="size-4" />}>
               เช็คอินหน้างาน
+            </Button>
+          </Link>
+          <Link href="/admin/staff">
+            <Button variant="outline" leftIcon={<UserCog className="size-4" />}>
+              เจ้าหน้าที่หน้างาน
             </Button>
           </Link>
           <Link href="/admin/refunds">

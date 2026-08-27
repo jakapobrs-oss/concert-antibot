@@ -27,6 +27,25 @@ export function currentEntryCode(qrSecret: string, now = Date.now()): { code: st
   };
 }
 
+// ชุด code ของ window ปัจจุบัน + อีก (count-1) window ถัดไป (rev 42 — หน้าตั๋วขอล่วงหน้า)
+// ทำไม: หน้างานคนแน่น เน็ตมือถือมักหาย ถ้าต้องขอ code ใหม่ทุก 30 วิ QR จะตายภายใน ~1 นาที
+//   → client ถือ QR ล่วงหน้า ENTRY_PREFETCH_WINDOWS ช่วง (5 นาที) แล้วหมุนเองแม้ออฟไลน์
+//   ยังกันแคปหน้าจอได้เหมือนเดิม (ภาพเดียวมีแค่ code ของช่วงนั้น) — แค่หน้าต่างที่ client รู้ล่วงหน้ากว้างขึ้นเป็น 5 นาที
+//   qrSecret ยังไม่ออกจาก server เหมือนเดิม
+export const ENTRY_PREFETCH_WINDOWS = 10;
+
+export function entryCodeBatch(
+  qrSecret: string,
+  count = ENTRY_PREFETCH_WINDOWS,
+  now = Date.now(),
+): { startIndex: number; msLeft: number; codes: string[] } {
+  const n = Math.max(1, Math.min(count, ENTRY_PREFETCH_WINDOWS)); // เพดานแข็ง — ห้ามขอทั้งวัน
+  const idx = Math.floor(now / ENTRY_CODE_WINDOW_MS);
+  const codes: string[] = [];
+  for (let i = 0; i < n; i++) codes.push(entryCodeForWindow(qrSecret, idx + i));
+  return { startIndex: idx, msLeft: ENTRY_CODE_WINDOW_MS - (now % ENTRY_CODE_WINDOW_MS), codes };
+}
+
 // ตรวจ code ตอนสแกนเข้างาน — ยอมรับ ±1 window กัน clock skew/กดตอนรอยต่อ
 // เทียบแบบ timing-safe กันเดา code จากเวลาตอบ
 export function verifyEntryCode(qrSecret: string, code: string, now = Date.now()): boolean {

@@ -1,10 +1,11 @@
-// Edge middleware — protect /admin/* + /account/*
+// Edge middleware — protect /admin/* + /staff/* + /account/*
 // ❗ ใช้ authConfig (edge-safe) เท่านั้น — ไม่ import lib/auth.ts ที่ลาก argon2 เข้า Edge runtime
 //    NextAuth(authConfig).auth ตรวจ session JWT ได้โดยไม่ต้องมี Credentials provider
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import { authConfig } from "@/auth.config";
 import { canonicalHostOf, canonicalRedirect } from "@/lib/canonical-host";
+import { decideRouteAccess } from "@/lib/route-access";
 
 const { auth } = NextAuth(authConfig);
 
@@ -29,29 +30,16 @@ export default auth((req) => {
   const isLoggedIn = !!req.auth;
   const role = (req.auth?.user as { role?: string } | undefined)?.role;
 
-  // public paths — ไม่ต้อง check
-  const publicPaths = ["/", "/login", "/register", "/verify", "/concerts"];
-  const isPublic = publicPaths.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-  if (isPublic) return NextResponse.next();
-
-  // admin paths — ต้อง role = ADMIN
-  if (pathname.startsWith("/admin")) {
-    if (!isLoggedIn) {
-      const url = new URL("/login", req.url);
-      url.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(url);
-    }
-    if (role !== "ADMIN") {
-      return NextResponse.redirect(new URL("/", req.url));
-    }
-  }
-
-  // /account/* — ต้อง login (ไม่ต้อง admin)
-  if (pathname.startsWith("/account") && !isLoggedIn) {
+  // กติกา role ต่อเส้นทางอยู่ใน lib/route-access.ts (pure — มี unit test):
+  //   /admin/* = ADMIN · /staff/* = ล็อกอิน (role ตัดสินที่ layout กับ DB) · /account/* = ล็อกอิน · ที่เหลือสาธารณะ (rev 42)
+  //   ชั้นนี้อ่าน role จาก JWT (ค้างได้ถึง 30 วัน) — layout + server action เช็ค DB จริงซ้ำอีกชั้น
+  const decision = decideRouteAccess({ pathname, isLoggedIn, role });
+  if (decision.kind === "login") {
     const url = new URL("/login", req.url);
     url.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(url);
   }
+  if (decision.kind === "home") return NextResponse.redirect(new URL("/", req.url));
 
   return NextResponse.next();
 });

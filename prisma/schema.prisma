@@ -52,6 +52,8 @@ model User {
   orders             Order[]
   queueTokens        QueueToken[]
   tickets            Ticket[]
+  // บัตรที่ user นี้ (STAFF/ADMIN) เป็นคนสแกนเช็คอิน — audit หน้างาน (rev 42)
+  checkedInTickets   Ticket[]               @relation("TicketCheckedInBy")
   // named ticket: รายการที่นั่งที่ user นี้ถูกตั้งเป็น "ผู้ถือ" (อาจซื้อโดยคนอื่น)
   heldItems          OrderItem[]            @relation("ItemHolder")
   // คำขอคืนบัตรที่เงินต้องคืนให้ user นี้ (ผู้ซื้อ)
@@ -73,6 +75,8 @@ model User {
 enum UserRole {
   USER
   ADMIN
+  // เจ้าหน้าที่หน้างาน — ทำได้อย่างเดียวคือสแกนเช็คอิน (/staff/checkin) ไม่เห็นหน้าแอดมินอื่น (rev 42)
+  STAFF
 }
 
 // NextAuth v5 — OAuth link (Google)
@@ -351,15 +355,18 @@ model Ticket {
   holderName  String    @default("")
   // check-in กันใช้ซ้ำ: 1 บัตรสแกนเข้าได้ครั้งเดียว
   checkedInAt DateTime?
+  // ใครเป็นคนสแกน (STAFF/ADMIN) — audit หน้างาน ว่าบัตรใบนี้ผ่านจุดสแกนของใคร (rev 42)
+  checkedInById BigInt?
   // secret สำหรับ dynamic QR (HMAC หมุนตามเวลา) — ห้ามส่งไป client เด็ดขาด
   qrSecret    String    @default("")
   // คืนบัตรเข้าระบบแล้ว (ที่นั่งกลับเข้า pool) — ตั๋วใบนี้ใช้เข้างานไม่ได้อีก
   returnedAt  DateTime?
 
-  order  Order         @relation(fields: [orderId], references: [id])
-  seat   Seat          @relation(fields: [seatId], references: [id])
-  user   User          @relation(fields: [userId], references: [id])
-  return TicketReturn?
+  order       Order         @relation(fields: [orderId], references: [id])
+  seat        Seat          @relation(fields: [seatId], references: [id])
+  user        User          @relation(fields: [userId], references: [id])
+  checkedInBy User?         @relation("TicketCheckedInBy", fields: [checkedInById], references: [id])
+  return      TicketReturn?
 
   @@index([userId])
   @@index([orderId])

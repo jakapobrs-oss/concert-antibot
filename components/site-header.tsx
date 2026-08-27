@@ -15,6 +15,7 @@ export async function SiteHeader() {
     | undefined;
   const isLoggedIn = !!user;
   const isAdmin = user?.role === "ADMIN";
+  const isStaff = isAdmin || user?.role === "STAFF"; // เมนูจุดเช็คอิน (rev 42) — role จาก JWT ใช้แค่โชว์เมนู หน้าจริงเช็ค DB อีกชั้น
 
   // server action สำหรับออกจากระบบ — ส่งให้ client component (UserMenu)
   async function signOutAction() {
@@ -59,6 +60,7 @@ export async function SiteHeader() {
                 name={user.name || "ผู้ใช้"}
                 email={user.email}
                 isAdmin={isAdmin}
+                isStaff={isStaff}
                 signOutAction={signOutAction}
               />
             </div>

@@ -28,6 +28,7 @@
     "test:sale-round": "tsx scripts/test-sale-round.ts",
     "test:purchase-antibot": "tsx scripts/test-purchase-antibot.ts",
     "test:queue-soldout-ui": "tsx scripts/test-queue-soldout-ui.ts",
+    "test:staff-checkin": "tsx scripts/test-staff-checkin.ts",
     "test:e2e": "tsx scripts/e2e-booking.ts",
     "test:load": "k6 run tests/load/queue.js"
   },
@@ -57,6 +58,7 @@
     "next": "15.5.20",
     "next-auth": "5.0.0-beta.25",
     "promptpay-qr": "0.5.0",
+    "qr-scanner": "1.4.2",
     "qrcode": "1.5.4",
     "react": "19.0.0",
     "react-dom": "19.0.0",
