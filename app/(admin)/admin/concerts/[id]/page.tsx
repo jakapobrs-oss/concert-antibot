@@ -8,6 +8,7 @@ import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { updateConcertStatus } from "@/app/actions/concert";
+import { publicStatusHint } from "@/lib/concert-display";
 import { AdminSaleRounds, type AdminRoundView } from "@/components/admin-sale-rounds";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,16 @@ export default async function AdminConcertDetailPage({
 
   if (!concert) notFound();
 
+  // ป้ายที่ตั้ง vs สิ่งที่ผู้ชมเห็นจริง (lib/concert-display) — null = ตรงกัน
+  //   เหตุ 2026-08-27: แอดมินเห็น "กำลังขาย" แต่หน้าเว็บกดเข้าไม่ได้ แล้วเดาว่า "คงยังไม่ถึงเวลา"
+  const publicHint = publicStatusHint({
+    status: concert.status,
+    saleStartAt: concert.saleStartAt,
+    saleEndAt: concert.saleEndAt,
+    eventAt: concert.eventAt,
+    zoneCount: concert.zones.length,
+  });
+
   const rounds: AdminRoundView[] = concert.saleRounds.map((r) => ({
     id: r.id.toString(),
     name: r.name,
@@ -101,6 +112,7 @@ export default async function AdminConcertDetailPage({
             <p className="mt-1 text-fg-faint">
               {concert.venue} · {formatThaiDate(concert.eventAt)}
             </p>
+            {publicHint && <p className="mt-1 text-sm text-warning">⚠ {publicHint}</p>}
           </div>
           {concert.status !== "ON_SALE" ? (
             <form

@@ -27,7 +27,7 @@
 | **Cloudflare Turnstile** | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | dash.cloudflare.com → Turnstile | H1 fail-closed → **block ผู้ใช้จริงทุกคน** |
 | **Resend** (อีเมล) | `RESEND_API_KEY`, `EMAIL_FROM` (โดเมนที่ verify แล้ว) | resend.com | **ปิดรับสมัครด้วยอีเมล** (rev 30 fail-closed — ล็อกอินได้เฉพาะ Google) + boot-warn `[EMAIL]` |
 | **Google OAuth** (optional) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | console.cloud.google.com | ปุ่ม Google login ปิดเงียบ (credentials login ยังใช้ได้) |
-| **EasySlip** | `EASYSLIP_API_KEY` (rotate ตาม §0) | easyslip.com | payment fail-closed (ปฏิเสธทุกการจ่าย) |
+| **EasySlip** | `EASYSLIP_API_KEY` (rotate ตาม §0) — ⚠️ **แอปฟรีมีวันหมดอายุ (~7 วัน) + โควต้า 50 ครั้ง**: หมดอายุ = ทุกสลิปถูกปฏิเสธด้วย `application_expired` (เคยเกิดเงียบ ๆ 10 มิ.ย.–27 ส.ค. 2026) → เช็คการ์ด "ตรวจสลิปอัตโนมัติ" ในแดชบอร์ดแอดมิน หรือ `curl -H "Authorization: Bearer $KEY" https://developer.easyslip.com/api/v1/me` ก่อนเปิดขายทุกครั้ง | easyslip.com | payment fail-closed (ปฏิเสธทุกการจ่าย) |
 | **PromptPay** | `PROMPTPAY_ID` (เบอร์/เลขบัตรที่รับเงิน) | บัญชีพร้อมเพย์ของคุณ | สร้าง QR + ตรวจ receiver ไม่ได้ |
 | **ชื่อบัญชีผู้รับ** | `PAYMENTS_RECEIVER_NAME` (ชื่อไทย,ชื่ออังกฤษ ตามที่ปรากฏบนสลิป คั่นด้วยจุลภาค) | ชื่อบัญชีพร้อมเพย์ของคุณ | สลิปที่เลขปลายทางถูก mask เหลือ 4 หลักท้าย ตรวจชื่อไม่ได้ (Codex #1 ชั้นเสริม) + boot-warn |
 | **อีเมลติดต่อ PDPA** (optional, rev 34) | `SUPPORT_EMAIL` | อีเมลของทีม/โครงการ (ไม่ควรเป็นอีเมลส่วนตัวถ้าจะเปิดสาธารณะนาน) | หน้า `/privacy` บอกให้ติดต่อผ่านแชตช่วยเหลือในเว็บแทน — ใช้ได้ แต่คำขอสิทธิ์ PDPA ควรมีอีเมลรับเรื่องที่ตอบกลับได้ภายใน 30 วัน |

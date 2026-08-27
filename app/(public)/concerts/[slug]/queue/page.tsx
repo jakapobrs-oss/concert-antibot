@@ -27,6 +27,7 @@ export default async function QueuePage({
       status: true,
       saleStartAt: true,
       saleEndAt: true,
+      eventAt: true,
       _count: { select: { zones: true } },
     },
   });
@@ -38,6 +39,7 @@ export default async function QueuePage({
     status: concert.status,
     saleStartAt: concert.saleStartAt,
     saleEndAt: concert.saleEndAt,
+    eventAt: concert.eventAt,
     zoneCount: concert._count.zones,
   });
   const closedMessage: Record<Exclude<typeof display, "ON_SALE">, string> = {

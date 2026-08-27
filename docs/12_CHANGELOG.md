@@ -5,6 +5,25 @@
 
 ---
 
+## [Revision 39 — โอนจริงครั้งแรกบน prod: แอป EasySlip หมดอายุแต่ระบบโทษ "สลิปไม่ถูกต้อง" · คอนเสิร์ตชื่อไทยล้วนได้ slug ว่าง กดเข้าไม่ได้ทั้งที่ขึ้น "กำลังขาย"] — 2026-08-27
+
+**ที่มา:** user เทสโอนจริง 2 บาทเข้าคอน `test` (#47) → "ตรวจสอบสลิปไม่สำเร็จ — สลิปอาจไม่ถูกต้อง" ทั้งที่สลิปถูกทุกอย่าง · สร้างคอน "คอนพี่เจี๊ยบ" (#48) แล้วขึ้น "กำลังขาย" แต่กดจากหน้ารายการแล้วเด้งกลับหน้าเดิม (user เดาว่า "คงยังไม่ถึงเวลา")
+
+**ต้นเหตุ (พิสูจน์แล้ว ไม่ใช่เดา)**
+1. **EasySlip แอปหมดอายุ** — `GET /api/v1/me` ด้วยคีย์จริง → `{"application":"Concert","maxQuota":50,"expiredAt":"2026-06-10T20:19:03+07:00"}` (แอปฟรีอายุ ~7 วันจากวันสร้าง 3 มิ.ย. rev 16) · `POST /verify` ทุกรูปแบบ (JSON/multipart) → `{"status":403,"message":"application_expired"}` · `lib/easyslip.ts` เดิม map ทุก non-200 เป็น "สลิปอาจไม่ถูกต้อง" และ**ไม่ log `data.message`** → Vercel log ของ `POST /checkout/5` มีแค่ boot-warn ไล่ไม่ได้ · หมายเหตุ: `.env.example` เขียน "500/เดือนฟรี" แต่แอปจริงโควต้า 50
+2. **slug ว่าง** — `slugify()` ใน `app/actions/concert.ts` ตัดทุกอักขระนอก `[A-Za-z0-9_]` → ชื่อไทยล้วนได้ `""` (prod HTML: `{"id":"48","title":"คอนพี่เจี๊ยบ","slug":""}`) → การ์ด `<Link href="/concerts/">` ถูก Next normalize เป็น `/concerts` = หน้ารายการเดิม; ปุ่ม "ดูหน้าเว็บ" ในแอดมินก็ชี้ `/concerts` เหมือนกัน · **ไม่ใช่เรื่องเวลา** (saleStartAt 09:00 ผ่านแล้ว มี 6 โซน 1,042 ที่นั่ง ไม่มีรอบ)
+   - พลอยเจอ: `deriveDisplayStatus` ไม่ดู `eventAt` → #48 งาน 10:00 วันนี้ แต่ saleEndAt พรุ่งนี้ = ขึ้น "กำลังขาย" ทั้งวันหลังงานจบ · แถบตัววิ่งหน้าแรก + ตัวนับ "กำลังขาย" หน้ารายการยังใช้ status ดิบ (คอน "A" ไม่มีโซนโผล่ในแถบ "กำลังขาย — A") · หน้าแอดมินโชว์ป้ายที่ตั้ง (ON_SALE = "กำลังขาย") โดยไม่บอกว่าผู้ชมเห็นอะไร
+
+**ทำ**
+- `lib/easyslip.ts`: map รหัส error เป็น 2 กลุ่ม — `EASYSLIP_SYSTEM_ERRORS` (unauthorized/application_expired/quota_exceeded/…) → "ระบบตรวจสอบสลิปขัดข้องชั่วคราว ไม่ใช่ความผิดของสลิปคุณ — ติดต่อผู้ดูแล (รหัส: …)" · `EASYSLIP_SLIP_ERRORS` (invalid_image/slip_not_found/duplicate_slip/image_size_too_large/slip_pending/…) → บอกวิธีแก้ที่ผู้ใช้ทำได้ · `console.error("[PAYMENT][EASYSLIP] … code=…")` ทุกครั้ง + `errorCode` ใน result · ส่งรูปเป็น **multipart ฟิลด์ `file` ไบนารี** (`decodeSlipImage` ตัด prefix data URL) แทน JSON `{image}` ตามเอกสาร v1 · `AbortSignal.timeout(20s)` · `fetchEasySlipAccountStatus()` (/me → expiredAt/daysLeft/quota ไม่ throw) + `easySlipHealthWarnings()`
+- แดชบอร์ดแอดมิน (`app/(admin)/admin/page.tsx`): การ์ด "ตรวจสลิปอัตโนมัติ (EasySlip)" แดง (หมดอายุ/คีย์ใช้ไม่ได้/ไม่ตั้ง) · เหลือง (เหลือ ≤7 วัน หรือโควต้า ≤10) · เขียว + วิธีต่ออายุ; ใส่ใน context ของ Gemini ด้วย · `instrumentation.ts` `register()` เตือน `🚨 [PAYMENT][EASYSLIP]` ตอน cold start บน production (best-effort ไม่บล็อก boot)
+- `lib/slug.ts` (pure, ใหม่): `slugifyTitle` (พฤติกรรมเดิมสำหรับอังกฤษ) + `resolveConcertSlug` — ไทยล้วน → `concert-<id>` · ชื่อซ้ำ → `<slug>-<id>` (deterministic แทน timestamp) · `createConcert` สร้างใน `$transaction` (slug ชั่วคราว → ตั้งจริงจาก id) · migration `20260827031500_fix_empty_concert_slug` ซ่อมแถว slug ว่างเป็น `concert-<id>` (#48 → `/concerts/concert-48`; รันเองตอน deploy ผ่าน buildCommand)
+- `lib/concert-display.ts`: รับ `eventAt` (optional) — วันงานผ่านแล้ว = ENDED ทุกสถานะ · `publicStatusHint()` → หน้าแอดมิน list + detail โชว์ "⚠ ผู้ชมเห็นเป็น 'เร็ว ๆ นี้' — เปิดขาย …" เมื่อป้ายที่ตั้งกับที่ผู้ชมเห็นไม่ตรงกัน · ส่ง `eventAt` จากการ์ด/หน้ารายละเอียด/หน้าคิว · หน้าแรก (ticker) + หน้ารายการ (ตัวนับหัวเรื่อง) ใช้ derived status
+
+**ค้าง user (โค้ดทำแทนไม่ได้):** ต่ออายุ/สร้างแอป EasySlip ใหม่ที่ easyslip.com → ใส่คีย์ใหม่ลง `.env` → `node scripts/push-env-to-vercel.mjs EASYSLIP_API_KEY` → redeploy → โอนจริง 1 ครั้ง · ⚠️ รูปแบบ multipart ยัง**ไม่ได้พิสูจน์กับคีย์ที่ใช้ได้** (คีย์หมดอายุตอบ 403 ก่อนอ่าน body) — ถ้าหลังต่ออายุยังไม่ผ่าน ดูรหัสใน Vercel log `[PAYMENT][EASYSLIP]` (ตอนนี้มีให้ดูแล้ว) · `pnpm db:deploy` บนเครื่อง dev ให้ migration ใหม่ลง local (session นี้ถูก classifier บล็อก)
+
+**หลักฐาน:** unit **54 ไฟล์ 669/669** (ใหม่: `slug` 7 · `easyslip-errors` 9 · `concert-display` +5) · tsc 0 · lint 0 error · `next build` local ผ่าน · ต้นเหตุยืนยันจากการยิง EasySlip จริง (`/me` + `/verify` 4 รูปแบบ) และ HTML/JSON ของ prod
+
 ## [Revision 38 — คำตอบทีม: ช่องทางติดต่อ PDPA = อีเมลแอดมิน · คืนเงิน 14 วันยืนยัน · ไม่ลบ log อัตโนมัติ · LICENSE สงวนลิขสิทธิ์] — 2026-08-27
 
 **ที่มา:** คำถามค้างจาก rev 34 — user ตอบ 27 ส.ค.: (1) ติดต่อผ่านเมลแอดมินได้เลย (2) คืนเงิน 14 วัน ใช่ (3) ไม่ลบ log บอทอัตโนมัติ (4) สงวนสิทธิ์ไว้ก่อน อาจเปลี่ยนทีหลัง (5) โลโก้ใช้ text-mark ตั๋วแดงต่อ

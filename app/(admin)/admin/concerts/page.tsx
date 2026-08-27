@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { updateConcertStatus } from "@/app/actions/concert";
+import { publicStatusHint } from "@/lib/concert-display";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,21 @@ export default async function AdminConcertsPage() {
     include: { _count: { select: { zones: true } } },
     orderBy: { createdAt: "desc" },
   });
+
+  // ป้าย "กำลังขาย" ที่แอดมินตั้ง กับสิ่งที่ผู้ชมเห็นจริง (โซน/ช่วงขาย/วันงาน) ต่างกันได้ — บอกไว้ตรงนี้เลย
+  //   เหตุ 2026-08-27: แอดมินเห็น "กำลังขาย" แต่หน้าเว็บกดเข้าไม่ได้ แล้วเดาว่า "คงยังไม่ถึงเวลา"
+  const hints = new Map(
+    concerts.map((c) => [
+      c.id.toString(),
+      publicStatusHint({
+        status: c.status,
+        saleStartAt: c.saleStartAt,
+        saleEndAt: c.saleEndAt,
+        eventAt: c.eventAt,
+        zoneCount: c._count.zones,
+      }),
+    ])
+  );
 
   return (
     <>
@@ -69,6 +85,9 @@ export default async function AdminConcertsPage() {
                     <p className="mt-0.5 text-sm text-fg-faint">
                       {c.venue} · {formatThaiDate(c.eventAt)} · {c._count.zones} โซน
                     </p>
+                    {hints.get(c.id.toString()) && (
+                      <p className="mt-1 text-xs text-warning">⚠ {hints.get(c.id.toString())}</p>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">

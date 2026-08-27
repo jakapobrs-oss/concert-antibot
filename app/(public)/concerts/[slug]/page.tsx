@@ -72,6 +72,7 @@ export default async function ConcertDetailPage({
     status: concert.status,
     saleStartAt: concert.saleStartAt,
     saleEndAt: concert.saleEndAt,
+    eventAt: concert.eventAt,
     zoneCount: concert.zones.length,
   });
   const isOnSale = display === "ON_SALE";

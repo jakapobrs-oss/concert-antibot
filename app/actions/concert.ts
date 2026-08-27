@@ -9,21 +9,12 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { assertVerifiedAdmin } from "@/lib/admin-guard";
 import { parseThaiDateTimeLocal } from "@/lib/local-datetime";
+import { slugifyTitle, resolveConcertSlug } from "@/lib/slug";
 
 // ตรวจสอบว่าเป็น admin จริง — throw ถ้าไม่ใช่
 // F2 (Codex §4 #2): เช็ค role กับ DB จริง (ไม่เชื่อ JWT ที่ค้างได้ถึง 30 วัน)
 async function requireAdmin() {
   return assertVerifiedAdmin();
-}
-
-// แปลง title → slug (ภาษาอังกฤษ/ตัวเลข + dash)
-function slugify(title: string): string {
-  return title
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, "") // ตัดอักขระพิเศษ
-    .replace(/[\s_-]+/g, "-") // space → dash
-    .replace(/^-+|-+$/g, "");
 }
 
 const concertSchema = z.object({
@@ -61,23 +52,33 @@ export async function createConcert(formData: FormData) {
   const saleEndAt = parseThaiDateTimeLocal(data.saleEndAt);
   if (!eventAt || !saleStartAt || !saleEndAt) throw new Error("วันเวลาไม่ถูกต้อง");
   if (saleEndAt <= saleStartAt) throw new Error("เวลาปิดขายต้องอยู่หลังเวลาเริ่มขาย");
-  // gen slug + กันซ้ำ (เติม timestamp ถ้าซ้ำ)
-  let slug = slugify(data.title);
-  const existing = await prisma.concert.findUnique({ where: { slug } });
-  if (existing) slug = `${slug}-${Date.now().toString(36)}`;
 
-  const concert = await prisma.concert.create({
-    data: {
-      title: data.title,
-      slug,
-      description: data.description,
-      venue: data.venue,
-      eventAt,
-      saleStartAt,
-      saleEndAt,
-      maxTicketsPerUser: data.maxTicketsPerUser,
-      status: "DRAFT",
-    },
+  // slug (lib/slug.ts): ชื่อไทยล้วนแปลงเป็น ASCII ไม่ได้ → ต้องใช้ concert-<id> จึงต้องรู้ id ก่อน
+  //   บั๊ก 2026-08-27: "คอนพี่เจี๊ยบ" ได้ slug "" → การ์ดลิงก์ไป /concerts กดเข้าคอนเสิร์ตไม่ได้ทั้งที่ขึ้น "กำลังขาย"
+  //   → สร้างด้วย slug ชั่วคราว (ไม่ชนแน่) แล้วตั้ง slug จริงจาก id ใน transaction เดียวกัน
+  const base = slugifyTitle(data.title);
+  const slugTaken = base
+    ? !!(await prisma.concert.findUnique({ where: { slug: base }, select: { id: true } }))
+    : false;
+
+  const concert = await prisma.$transaction(async (tx) => {
+    const created = await tx.concert.create({
+      data: {
+        title: data.title,
+        slug: `pending-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        description: data.description,
+        venue: data.venue,
+        eventAt,
+        saleStartAt,
+        saleEndAt,
+        maxTicketsPerUser: data.maxTicketsPerUser,
+        status: "DRAFT",
+      },
+    });
+    return tx.concert.update({
+      where: { id: created.id },
+      data: { slug: resolveConcertSlug({ title: data.title, id: created.id, slugTaken }) },
+    });
   });
 
   revalidatePath("/admin/concerts");

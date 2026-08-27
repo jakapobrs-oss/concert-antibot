@@ -32,6 +32,7 @@ export function ConcertCard({ concert }: { concert: Concert }) {
     status: concert.status,
     saleStartAt: concert.saleStartAt,
     saleEndAt: concert.saleEndAt,
+    eventAt: concert.eventAt,
     zoneCount: concert.zones.length,
   });
   const isOnSale = display === "ON_SALE";

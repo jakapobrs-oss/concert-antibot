@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, ShieldCheck, Users, ReceiptText, Star } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { deriveDisplayStatus } from "@/lib/concert-display";
 import { ConcertCard } from "@/components/concert-card";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
@@ -47,7 +48,19 @@ export default async function HomePage() {
     take: 6,
   });
 
-  const onSaleTitles = concerts.filter((c) => c.status === "ON_SALE").map((c) => c.title);
+  // "กำลังขาย" ต้องเป็นสถานะที่ผู้ชมเห็นจริง (lib/concert-display) — status ดิบ ON_SALE ที่ไม่มีโซน/เลยวันงาน เคยขึ้นแถบนี้
+  const onSaleTitles = concerts
+    .filter(
+      (c) =>
+        deriveDisplayStatus({
+          status: c.status,
+          saleStartAt: c.saleStartAt,
+          saleEndAt: c.saleEndAt,
+          eventAt: c.eventAt,
+          zoneCount: c.zones.length,
+        }) === "ON_SALE"
+    )
+    .map((c) => c.title);
   // ถ้ายังไม่มีงานกำลังขาย ใช้ข้อความระบบแทน — แถบไม่หาย แค่เปลี่ยนเนื้อ
   const tickerItems = onSaleTitles.length
     ? onSaleTitles.map((t) => `กำลังขาย — ${t}`)

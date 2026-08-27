@@ -1,5 +1,6 @@
 // Concert listing page — แสดงคอนเสิร์ตทั้งหมด (โทนเวทีมืด)
 import { prisma } from "@/lib/prisma";
+import { deriveDisplayStatus } from "@/lib/concert-display";
 import { ConcertBrowser, type BrowseConcert } from "@/components/concert-browser";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
@@ -13,7 +14,17 @@ export default async function ConcertsPage() {
     orderBy: [{ saleStartAt: "asc" }],
   });
 
-  const onSaleCount = concerts.filter((c) => c.status === "ON_SALE").length;
+  // นับเฉพาะที่ผู้ชมกดซื้อได้จริง (มีโซน + ในช่วงขาย + ยังไม่ถึงวันงาน) — ไม่ใช่ status ดิบ
+  const onSaleCount = concerts.filter(
+    (c) =>
+      deriveDisplayStatus({
+        status: c.status,
+        saleStartAt: c.saleStartAt,
+        saleEndAt: c.saleEndAt,
+        eventAt: c.eventAt,
+        zoneCount: c.zones.length,
+      }) === "ON_SALE"
+  ).length;
 
   // serialize ให้ client component (BigInt/Decimal ส่งข้ามไม่ได้)
   const browseList: BrowseConcert[] = concerts.map((c) => ({
