@@ -10,12 +10,18 @@
 //     (เบราว์เซอร์หน่วง setTimeout ตอนอยู่เบื้องหลัง — ของเดิมค้างภาพเก่าจนโดน "รหัสหมดอายุ")
 //   - ขอชุดใหม่เมื่อเหลือน้อย / กลับมาที่หน้า / เน็ตกลับมา · ขอไม่ได้ → โชว์ภาพสุดท้าย + ป้ายเตือน
 //   - ใช้นาฬิกาเครื่องแค่วัด "ผ่านไปกี่ ms" จากตอนได้ชุดมา (ไม่ใช่เวลาสัมบูรณ์) — เครื่องเพี้ยนก็ไม่กระทบ
+//
+// rev 42 hotfix (เทส `scripts/test-rev42-gaps.ts` ของ session เทส): ของเดิมตอนออฟไลน์ fetch ล้ม → .then(tick) → tick ยิง fetch ทันทีอีก
+//   = วนไม่มีดีเลย์ 59,153 คำขอใน 3 นาทีจากแท็บเดียว (เริ่มตั้งแต่เหลือภาพ ≤3 ช่วง ≈ นาที 3.5) และกินโควต้า getEntryCodes จนฟื้นไม่ได้
+//   กติกาใหม่: **fetch ที่ล้มจะไม่เรียก tick** · ยิงซ้ำได้เมื่อถึง `nextRetryAt` เท่านั้น (ถอยหลังทวีคูณ 10→20→40→…→120 วิ)
+//   · timer ตัวเดียว ตื่นที่ min(ขอบช่วงถัดไป, เวลา retry) · เน็ตกลับ (`online`) รีเซ็ต backoff แล้วขอทันที
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, WifiOff } from "lucide-react";
 import { getEntryCodes } from "@/app/actions/tickets";
 
 const LOW_FRAMES = 3; // เหลือภาพน้อยกว่านี้ → ขอชุดใหม่ล่วงหน้า
-const RETRY_MS = 10_000; // ขอไม่สำเร็จ → ลองใหม่ห่าง ๆ
+const RETRY_BASE_MS = 10_000; // ขอไม่สำเร็จครั้งแรก → รอ 10 วิ
+const RETRY_MAX_MS = 120_000; // ถอยหลังทวีคูณจนสุดที่ 2 นาที
 
 interface Batch {
   frames: string[]; // data URL ของ QR แต่ละช่วง (index 0 = ช่วงที่ได้มา)
@@ -36,90 +42,116 @@ export function TicketEntryQr({ ticketId, alt }: { ticketId: string; alt: string
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetching = useRef(false);
-  const alive = useRef(true); // false หลัง unmount — กัน promise chain (fetch→tick) ตั้ง timer ต่อจนกลายเป็น loop ผี (audit rev 42)
+  const alive = useRef(true); // false หลัง unmount — กัน promise chain ตั้ง timer ต่อ (audit rev 42)
   const lastIdx = useRef(0);
+  const nextRetryAt = useRef(0); // ห้ามยิง server ก่อนเวลานี้ (0 = ยิงได้)
+  const backoff = useRef(RETRY_BASE_MS);
   const batchRef = useRef<Batch | null>(null);
   batchRef.current = batch;
 
-  const fetchBatch = useCallback(async () => {
-    if (fetching.current || !alive.current) return;
+  // ขอชุดภาพ — คืน true เมื่อได้ชุดใหม่ · ล้ม = ตั้งเวลา retry แบบถอยหลัง และ "ไม่" ปลุก tick เอง
+  const fetchBatch = useCallback(async (): Promise<boolean> => {
+    if (fetching.current || !alive.current) return false;
     fetching.current = true;
+    let ok = false;
     try {
       const res = await getEntryCodes({ ticketId });
-      if (!alive.current) return;
+      if (!alive.current) return false;
       if (res.ok) {
         const next: Batch = { frames: res.frames, windowMs: res.windowMs, firstExpiresAt: Date.now() + res.msLeft };
-        // อัปเดต ref ทันที — tick() ที่ต่อท้าย fetch จะรันก่อน React commit state ใหม่
-        //   ถ้ารอ ref จาก render จะเห็น batch เก่า/null แล้วหลงไปตั้งรอบ retry + ยิง server ซ้ำ (เจอใน test:staff-checkin 5d)
-        batchRef.current = next;
+        batchRef.current = next; // อัปเดต ref ทันที — tick ที่ตามมารันก่อน React commit
         setBatch(next);
         setPos(0);
         setStale(false);
         setError(null);
+        ok = true;
       } else {
-        // ตั๋วไม่รองรับ/ไม่ใช่ของเรา — ไม่มีภาพให้โชว์เลย
-        if (!batchRef.current) setError(res.error);
+        if (!batchRef.current) setError(res.error); // ตั๋วไม่รองรับ/ไม่ใช่ของเรา — ไม่มีภาพให้โชว์เลย
         setStale(true);
       }
     } catch {
-      // ออฟไลน์/ล้ม — ถ้ามีชุดเดิมอยู่ก็หมุนต่อ แค่ติดป้าย
-      setStale(true);
+      setStale(true); // ออฟไลน์/ล้ม — ถ้ามีชุดเดิมอยู่ก็หมุนต่อ แค่ติดป้าย
     } finally {
       fetching.current = false;
     }
+    if (ok) {
+      backoff.current = RETRY_BASE_MS;
+      nextRetryAt.current = 0;
+    } else {
+      nextRetryAt.current = Date.now() + backoff.current;
+      backoff.current = Math.min(backoff.current * 2, RETRY_MAX_MS);
+    }
+    return ok;
   }, [ticketId]);
 
-  // จังหวะหมุน: ทุกครั้งที่ตื่น คิดตำแหน่งจากเวลา แล้วตั้งนาฬิกาปลุกที่ขอบช่วงถัดไป
+  // จังหวะหมุน: ทุกครั้งที่ตื่น คิดตำแหน่งจากเวลา แล้วตั้งนาฬิกาปลุกครั้งเดียวที่ min(ขอบช่วงถัดไป, เวลา retry)
   const tick = useCallback(() => {
     if (!alive.current) return;
-    const b = batchRef.current;
     if (timer.current) clearTimeout(timer.current);
-    if (!b) {
-      timer.current = setTimeout(() => void fetchBatch().then(tick), RETRY_MS);
-      return;
-    }
     const now = Date.now();
-    const idx = frameIndexAt(b, now);
-    // นาฬิกาเครื่องถอยหลัง (ตั้งเวลาใหม่/ซิงก์) → ตำแหน่งที่คิดได้ย้อนกลับ — ขอชุดใหม่ให้ตรงกับเวลา server แทนที่จะโชว์ภาพเก่า
-    if (idx < lastIdx.current) {
-      lastIdx.current = idx;
-      void fetchBatch().then(tick);
+    const b = batchRef.current;
+    const canFetch = !fetching.current && now >= nextRetryAt.current;
+    // ขอชุดใหม่ — สำเร็จค่อยปลุก tick (ล้มแล้วปล่อยให้ timer ตามเวลา retry เป็นคนปลุก ไม่วนทันที)
+    const refill = () => {
+      if (canFetch) void fetchBatch().then((got) => got && tick());
+    };
+    const wakeForRetry = () => Math.max(1_000, nextRetryAt.current - now, fetching.current ? 1_000 : 0);
+
+    if (!b) {
+      refill();
+      timer.current = setTimeout(tick, wakeForRetry());
       return;
     }
+
+    const idx = frameIndexAt(b, now);
+    // นาฬิกาเครื่องถอยหลัง (ตั้งเวลาใหม่/ซิงก์) → ขอชุดใหม่ให้ตรงกับเวลา server แทนที่จะโชว์ภาพเก่า
+    if (idx < lastIdx.current) refill();
     lastIdx.current = idx;
+
     if (idx >= b.frames.length) {
-      // ชุดนี้ใช้หมดแล้ว — โชว์ภาพสุดท้ายไว้ก่อน (อาจยังผ่านได้ด้วยกติกา ±1 ช่วง) แล้วขอชุดใหม่
+      // ชุดนี้ใช้หมดแล้ว — โชว์ภาพสุดท้ายไว้ก่อน (อาจยังผ่านได้ด้วยกติกา ±1 ช่วง) แล้วขอใหม่ตามจังหวะ retry
       setPos(b.frames.length - 1);
       setStale(true);
-      timer.current = setTimeout(() => void fetchBatch().then(tick), RETRY_MS);
-      void fetchBatch().then(tick);
+      refill();
+      timer.current = setTimeout(tick, wakeForRetry());
       return;
     }
+
     setPos(idx);
-    if (b.frames.length - idx <= LOW_FRAMES) void fetchBatch().then(tick); // เติมล่วงหน้าเงียบ ๆ
+    const low = b.frames.length - idx <= LOW_FRAMES;
+    if (low) refill(); // เติมล่วงหน้าเงียบ ๆ (ถ้ายังอยู่ในช่วง backoff จะไม่ยิง)
     const nextBoundary = b.firstExpiresAt + idx * b.windowMs;
-    timer.current = setTimeout(tick, Math.max(250, nextBoundary - now + 200)); // +200ms ข้ามรอยต่อ
+    let wait = nextBoundary - now + 200; // +200ms ข้ามรอยต่อ
+    if (low && nextRetryAt.current > now) wait = Math.min(wait, nextRetryAt.current - now); // ตื่นมาลอง retry ด้วย
+    timer.current = setTimeout(tick, Math.max(250, wait));
   }, [fetchBatch]);
 
   useEffect(() => {
     alive.current = true;
     lastIdx.current = 0;
-    void fetchBatch().then(tick);
-    // กลับมาที่หน้า / เน็ตกลับมา → คิดตำแหน่งใหม่ทันที (และเติมชุดถ้าจำเป็น)
+    nextRetryAt.current = 0;
+    backoff.current = RETRY_BASE_MS;
+    tick();
+    // กลับมาที่หน้า → คิดตำแหน่งใหม่ทันที (เคารพ backoff) · เน็ตกลับมา → ล้าง backoff แล้วขอทันที
     const wake = () => {
       if (document.visibilityState === "visible") tick();
     };
+    const online = () => {
+      nextRetryAt.current = 0;
+      backoff.current = RETRY_BASE_MS;
+      tick();
+    };
     document.addEventListener("visibilitychange", wake);
     window.addEventListener("focus", wake);
-    window.addEventListener("online", wake);
+    window.addEventListener("online", online);
     return () => {
       alive.current = false;
       if (timer.current) clearTimeout(timer.current);
       document.removeEventListener("visibilitychange", wake);
       window.removeEventListener("focus", wake);
-      window.removeEventListener("online", wake);
+      window.removeEventListener("online", online);
     };
-  }, [fetchBatch, tick]);
+  }, [tick]);
 
   if (error && !batch) {
     return (
