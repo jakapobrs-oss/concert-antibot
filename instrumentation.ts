@@ -7,12 +7,12 @@
 import type { Instrumentation } from "next";
 
 // register ถูกเรียกครั้งเดียวตอน server instance เริ่ม (ต่อ cold start บน Vercel)
-//   → เช็คสถานะแอป EasySlip (หมดอายุ/โควต้า) แบบไม่บล็อกการ boot — บทเรียน 2026-08-27: แอปหมดอายุเงียบ ๆ 2 เดือน
+//   → เช็คสถานะผู้ให้บริการตรวจสลิปที่เปิดใช้ (EasySlip หมดอายุ/โควต้า · SlipOK โควต้า) แบบไม่บล็อกการ boot — บทเรียน 2026-08-27: แอปหมดอายุเงียบ ๆ 2 เดือน
 //   จนโอนจริงครั้งแรกถึงรู้ · ทำเฉพาะ Node runtime บน production (edge ไม่มี env/fetch ชุดนี้)
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs" || process.env.NODE_ENV !== "production") return;
-  const { warnEasySlipAccountHealth } = await import("@/lib/easyslip");
-  void warnEasySlipAccountHealth().catch(() => {
+  const { warnSlipProviderHealth } = await import("@/lib/slip-verify");
+  void warnSlipProviderHealth().catch(() => {
     /* best-effort — ห้ามทำให้ boot ล้ม */
   });
 }

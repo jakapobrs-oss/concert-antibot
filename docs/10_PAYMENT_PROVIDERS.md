@@ -245,9 +245,10 @@ if (existing) throw new Error('สลิปนี้ถูกใช้แล้�
 
 **ตัดสินใจ:** ถ้าใน thesis demo ไม่จำเป็น — **ข้าม** ใช้ PromptPay พอ
 
-### 8.2 SlipOK — สำรองให้ EasySlip
-- Free tier 100 calls/วัน
-- ใช้เป็น fallback ถ้า EasySlip ล่ม
+### 8.2 SlipOK — ผู้ให้บริการเจ้าที่ 2 (ทำจริงแล้ว rev 40, 2026-08-27)
+- แพ็ก OK BASIC ฟรี **100 สลิป/เดือน** (ต่ออายุเอง เกิน ฿1/สลิป) — ฟรีถาวรเจ้าเดียวที่เจอ (EasySlip/Thunder/Slip2Go/Check Slip เป็นทดลองครั้งเดียว)
+- สลับด้วย env `SLIP_PROVIDER=slipok` + `SLIPOK_API_KEY` + `SLIPOK_BRANCH_ID` (`lib/slip-verify.ts` → `lib/slipok.ts`) กติกาเงินเหมือน EasySlip ทุกข้อ (`lib/slip-policy.ts`)
+- เหตุที่ทำ: แอปทดลอง EasySlip หมดอายุ (rev 39) ต่ออายุเสียเงิน ฿99+/เดือน
 
 ### 8.3 LINE Notify — แจ้งเตือนเงินเข้า
 - ฟรี

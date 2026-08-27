@@ -23,7 +23,7 @@ import { holdSeats, releaseSeats } from "@/lib/seat-hold";
 import { findSeatsInConcert } from "@/lib/booking-guards";
 import { isAdmitted, releaseAdmittedByUser } from "@/lib/queue";
 import { generatePromptPayQR } from "@/lib/promptpay";
-import { verifySlip } from "@/lib/easyslip";
+import { verifySlip } from "@/lib/slip-verify";
 import { isSlipFresh } from "@/lib/slip-freshness";
 import { MAX_SLIP_BASE64_LEN, isLikelyBase64Image } from "@/lib/slip-image";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -582,7 +582,7 @@ export async function submitSlip(input: {
 
   const expectedAmount = Number(order.totalAmount.toString());
 
-  // verify สลิปกับ EasySlip (dev mode = mock pass)
+  // verify สลิปกับผู้ให้บริการตาม SLIP_PROVIDER (EasySlip/SlipOK — dev ที่ไม่ตั้งคีย์ = mock pass)
   const verify = await verifySlip({
     slipImageBase64: parsed.data.slipImageBase64,
     expectedAmount,

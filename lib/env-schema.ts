@@ -48,6 +48,18 @@ export const envSchema = z.object({
   PROMPTPAY_ID: z.string().optional(),
   // EASYSLIP_API_KEY = key ตรวจสลิปจริง — ถ้าไม่ใส่: dev=mock(เตือน), production=ปฏิเสธ (fail-closed)
   EASYSLIP_API_KEY: z.string().optional(),
+  // ผู้ให้บริการตรวจสลิปที่เปิดใช้ (rev 40): easyslip (ค่าเริ่มต้น) | slipok — สลับด้วย env ไม่ต้องแก้โค้ด
+  //   ใช้คีย์ของเจ้าที่เปิดเท่านั้น (เจ้าที่ไม่ได้เปิดไม่ต้องตั้ง) — lib/slip-verify.ts
+  SLIP_PROVIDER: z.enum(["easyslip", "slipok"]).default("easyslip"),
+  // SlipOK (https://slipok.com — แพ็ก OK BASIC ฟรี 100 สลิป/เดือน): API key + ไอดีสาขา จากเมนู "API" ในไลน์ SlipOK
+  SLIPOK_API_KEY: z.string().optional(),
+  SLIPOK_BRANCH_ID: z.string().optional(),
+  // ให้ SlipOK บันทึกสลิปฝั่งเขา + กันสลิปซ้ำเอง (error 1012) — default ปิด: ระบบเรากันซ้ำด้วย slipRef UNIQUE อยู่แล้ว
+  //   และถ้าเปิด การส่งสลิปเดิมซ้ำหลังระบบเราล้มกลางทาง (จ่ายแล้วแต่ยังไม่ได้ตั๋ว) จะโดน SlipOK ปฏิเสธ
+  SLIPOK_LOG: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   // เปิด/ปิดการตรวจว่าเงินเข้าบัญชี PROMPTPAY_ID ของเราจริง (default เปิด)
   // ปิดได้ถ้าธนาคารบางเจ้า mask เลขบัญชีจน match ไม่ได้ — แต่ไม่แนะนำให้ปิดบน production
   PAYMENTS_RECEIVER_CHECK: z

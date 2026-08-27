@@ -7,33 +7,19 @@ import { EqBars } from "@/components/eq-bars";
 import { AdminChatPanel } from "@/components/admin-chat-panel";
 import { formatTHB } from "@/lib/format";
 import { getOverviewStats, getLiveQueueStats } from "@/lib/admin-stats";
-import { fetchEasySlipAccountStatus, EASYSLIP_EXPIRY_WARN_DAYS } from "@/lib/easyslip";
-import { formatThaiDate } from "@/lib/format";
+import { getSlipProviderStatus } from "@/lib/slip-verify";
 
 export const dynamic = "force-dynamic"; // admin ต้องเห็นข้อมูลล่าสุดเสมอ
 
 export default async function AdminDashboard() {
-  // สถานะแอป EasySlip ดึงสด (timeout 4 วิ ไม่ throw) — แอดมินต้องเห็นว่าแอปหมดอายุ/โควต้าหมด "ก่อน" ลูกค้าจ่ายไม่ได้
-  //   เหตุ 2026-08-27: แอปฟรีหมดอายุตั้งแต่ 10 มิ.ย. โดยไม่มีใครรู้ จนโอนจริงครั้งแรกแล้วสลิปถูกปฏิเสธ
-  const [stats, queues, easyslip] = await Promise.all([
+  // สถานะผู้ให้บริการตรวจสลิปที่เปิดใช้ (SLIP_PROVIDER) ดึงสด (timeout 4 วิ ไม่ throw)
+  //   แอดมินต้องเห็นว่าแอปหมดอายุ/โควต้าหมด "ก่อน" ลูกค้าจ่ายไม่ได้ —
+  //   เหตุ 2026-08-27: แอปฟรี EasySlip หมดอายุตั้งแต่ 10 มิ.ย. โดยไม่มีใครรู้ จนโอนจริงครั้งแรกแล้วสลิปถูกปฏิเสธ
+  const [stats, queues, slip] = await Promise.all([
     getOverviewStats(),
     getLiveQueueStats(),
-    fetchEasySlipAccountStatus({ timeoutMs: 4_000 }),
+    getSlipProviderStatus({ timeoutMs: 4_000 }),
   ]);
-  const expiredAtText = easyslip.expiredAt ? formatThaiDate(easyslip.expiredAt) : "?";
-  const easyslipLine = !easyslip.configured
-    ? "ยังไม่ได้ตั้ง EASYSLIP_API_KEY — จ่ายเงินจริงไม่ได้"
-    : easyslip.error
-      ? `ใช้งานไม่ได้: ${easyslip.error}`
-      : easyslip.expired
-        ? `แอป "${easyslip.application ?? "-"}" หมดอายุแล้วตั้งแต่ ${expiredAtText}`
-        : `แอป "${easyslip.application ?? "-"}" ใช้ได้ถึง ${expiredAtText} (อีก ${easyslip.daysLeft ?? "?"} วัน) · โควต้าเหลือ ${easyslip.remainingQuota ?? "?"}/${easyslip.maxQuota ?? "?"}`;
-  const easyslipTone: "danger" | "warning" | "success" =
-    !easyslip.configured || easyslip.error || easyslip.expired
-      ? "danger"
-      : (easyslip.daysLeft ?? 99) <= EASYSLIP_EXPIRY_WARN_DAYS || (easyslip.remainingQuota ?? 99) <= 10
-        ? "warning"
-        : "success";
 
   const queueLines =
     queues.length > 0
@@ -46,7 +32,7 @@ export default async function AdminDashboard() {
     `ผู้ใช้: ${stats.userCount} คน | ตั๋วขายได้: ${stats.totalTickets} ใบ`,
     `รายได้รวม: ${stats.revenue.toLocaleString()} บาท (${stats.paidOrders} คำสั่งซื้อ)`,
     `Anti-Bot — ผ่าน: ${stats.bot.ALLOW} | ท้าทาย: ${stats.bot.CHALLENGE} | บล็อก: ${stats.bot.BLOCK}`,
-    `ตรวจสลิป (EasySlip): ${easyslipLine}`,
+    `ตรวจสลิป (${slip.label}): ${slip.line}`,
     `  (block rate: ${stats.bot.blockRate.toFixed(1)}%, challenge rate: ${stats.bot.challengeRate.toFixed(1)}%)`,
     `คิว Real-time:\n${queueLines}`,
   ].join("\n");
@@ -122,31 +108,26 @@ export default async function AdminDashboard() {
           </div>
         </div>
 
-        {/* สถานะตรวจสลิป — แอป EasySlip ฟรีมีวันหมดอายุ+โควต้า ถ้าหมด = ลูกค้าจ่ายไม่ได้ทั้งเว็บ (เคยเกิด 2026-08-27) */}
+        {/* สถานะตรวจสลิป — แอปฟรีมีวันหมดอายุ/โควต้า ถ้าหมด = ลูกค้าจ่ายไม่ได้ทั้งเว็บ (เคยเกิด 2026-08-27) */}
         <div
           className={`mb-6 rounded-xl border p-5 ${
-            easyslipTone === "danger"
+            slip.tone === "danger"
               ? "border-danger/40 bg-danger/10"
-              : easyslipTone === "warning"
+              : slip.tone === "warning"
                 ? "border-warning/40 bg-warning/10"
                 : "border-fg/10 bg-ink-850"
           }`}
         >
-          <p className="text-sm text-fg-faint">ตรวจสลิปอัตโนมัติ (EasySlip)</p>
+          <p className="text-sm text-fg-faint">ตรวจสลิปอัตโนมัติ ({slip.label})</p>
           <p
             className={`mt-1 text-sm font-medium ${
-              easyslipTone === "danger" ? "text-danger" : easyslipTone === "warning" ? "text-warning" : "text-fg"
+              slip.tone === "danger" ? "text-danger" : slip.tone === "warning" ? "text-warning" : "text-fg"
             }`}
           >
-            {easyslipTone === "success" ? "✓ " : "⚠ "}
-            {easyslipLine}
+            {slip.tone === "success" ? "✓ " : "⚠ "}
+            {slip.line}
           </p>
-          {easyslipTone !== "success" && easyslip.configured && (
-            <p className="mt-1 text-xs text-fg-faint">
-              ต่ออายุ/สร้างแอปใหม่ที่ easyslip.com → อัปเดต EASYSLIP_API_KEY บน Vercel → redeploy
-              (ระหว่างนี้การจ่ายเงินทุกรายการจะถูกปฏิเสธ)
-            </p>
-          )}
+          {slip.hint && <p className="mt-1 text-xs text-fg-faint">{slip.hint}</p>}
         </div>
 
         {/* คิว real-time */}

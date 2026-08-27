@@ -102,6 +102,10 @@ const GROUP: Record<string, string> = {
   EMAIL_FROM: "Email",
   PROMPTPAY_ID: "Payment",
   EASYSLIP_API_KEY: "Payment",
+  SLIP_PROVIDER: "Payment",
+  SLIPOK_API_KEY: "Payment",
+  SLIPOK_BRANCH_ID: "Payment",
+  SLIPOK_LOG: "Payment",
   PAYMENTS_RECEIVER_CHECK: "Payment",
   PAYMENTS_FRESHNESS_CHECK: "Payment",
   PER_PAYER_TICKET_LIMIT: "Payment",
@@ -119,6 +123,7 @@ const SECRET = new Set([
   "TURNSTILE_SECRET_KEY",
   "RESEND_API_KEY",
   "EASYSLIP_API_KEY",
+  "SLIPOK_API_KEY",
   "GEMINI_API_KEY",
   "QUEUE_SCORE_SECRET",
   "POSTGRES_PASSWORD",
@@ -147,8 +152,15 @@ const DEV_PLACEHOLDERS = [
 const PROD_BAD_EMAIL = ["onboarding@resend.dev", "noreply@localhost"];
 
 // ขาดบน prod = แอป fail-closed (FAIL); dev ใช้ mock/test ได้ (PASS)
+// ผู้ให้บริการตรวจสลิปที่เปิดใช้ (rev 40) — ต้องมีคีย์ของเจ้าที่เปิดเท่านั้น (เจ้าที่ไม่ได้เปิดไม่ต้องตั้ง)
+const SLIP_PROVIDER = fileVars.SLIP_PROVIDER === "slipok" ? "slipok" : "easyslip";
 const PROD_FAIL_MISSING: Record<string, string> = {
-  EASYSLIP_API_KEY: "ปฏิเสธการจ่ายทั้งหมด (payment fail-closed)",
+  ...(SLIP_PROVIDER === "slipok"
+    ? {
+        SLIPOK_API_KEY: "ปฏิเสธการจ่ายทั้งหมด (payment fail-closed) — SLIP_PROVIDER=slipok",
+        SLIPOK_BRANCH_ID: "ปฏิเสธการจ่ายทั้งหมด (payment fail-closed) — SLIP_PROVIDER=slipok",
+      }
+    : { EASYSLIP_API_KEY: "ปฏิเสธการจ่ายทั้งหมด (payment fail-closed)" }),
   PROMPTPAY_ID: "สร้าง QR/ตรวจบัญชีผู้รับไม่ได้",
   TURNSTILE_SITE_KEY: "CAPTCHA fail-closed → บล็อกผู้ใช้ทุกคน (H1)",
   TURNSTILE_SECRET_KEY: "CAPTCHA fail-closed → บล็อกผู้ใช้ทุกคน (H1)",
@@ -437,7 +449,7 @@ function classifySchemaKey(key: string): Check {
   }
 
   // MANUAL (ตรวจ auto ไม่ได้ตามนโยบาย side-effect)
-  if (key === "EASYSLIP_API_KEY")
+  if (key === "EASYSLIP_API_KEY" || key === "SLIPOK_API_KEY")
     return mk(
       "MANUAL",
       "format",

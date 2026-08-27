@@ -19,6 +19,15 @@ export const isEmailVerificationRequired = env.EMAIL_VERIFICATION !== "skip";
 
 // helper: payment config พร้อมแค่ไหน
 export const isEasySlipConfigured = !!env.EASYSLIP_API_KEY;
+export const isSlipOkConfigured = !!(env.SLIPOK_API_KEY && env.SLIPOK_BRANCH_ID);
+// ผู้ให้บริการตรวจสลิปที่ "เปิดใช้" (SLIP_PROVIDER) ตั้งค่าครบไหม — ตัวตัดสิน fail-closed/boot-warn (rev 40)
+export const slipProvider = env.SLIP_PROVIDER;
+export const isSlipVerifierConfigured = slipProvider === "slipok" ? isSlipOkConfigured : isEasySlipConfigured;
+export const slipVerifierMissingEnv: string[] = (
+  slipProvider === "slipok"
+    ? [!env.SLIPOK_API_KEY && "SLIPOK_API_KEY", !env.SLIPOK_BRANCH_ID && "SLIPOK_BRANCH_ID"]
+    : [!env.EASYSLIP_API_KEY && "EASYSLIP_API_KEY"]
+).filter((v): v is string => typeof v === "string");
 export const isPromptPayConfigured = !!env.PROMPTPAY_ID;
 export const isProduction = env.NODE_ENV === "production";
 
@@ -28,13 +37,11 @@ export const isGeminiConfigured = !!env.GEMINI_API_KEY;
 
 // เตือนดังๆ ตอน boot ถ้า production แต่ payment ยังไม่พร้อม
 // ไม่ throw เพื่อไม่ให้ next build พัง แต่ตัว verifySlip จะ "ปฏิเสธการจ่าย" (fail-closed) เอง
-if (isProduction && (!isEasySlipConfigured || !isPromptPayConfigured)) {
+if (isProduction && (!isSlipVerifierConfigured || !isPromptPayConfigured)) {
   console.error(
-    "🚨 [PAYMENT] production แต่ยังไม่ได้ตั้งค่า " +
-      [!isPromptPayConfigured && "PROMPTPAY_ID", !isEasySlipConfigured && "EASYSLIP_API_KEY"]
-        .filter(Boolean)
-        .join(" + ") +
-      " — ระบบจะปฏิเสธการชำระเงินทั้งหมดจนกว่าจะตั้งค่าครบ (fail-closed)"
+    `🚨 [PAYMENT] production แต่ยังไม่ได้ตั้งค่า ` +
+      [!isPromptPayConfigured && "PROMPTPAY_ID", ...slipVerifierMissingEnv].filter(Boolean).join(" + ") +
+      ` (SLIP_PROVIDER=${slipProvider}) — ระบบจะปฏิเสธการชำระเงินทั้งหมดจนกว่าจะตั้งค่าครบ (fail-closed)`
   );
 }
 
@@ -134,8 +141,8 @@ if (isProduction && isEmailEnabled) {
 // ============================================================
 
 // #1-3: สวิตช์ป้องกันเงิน (§1) ถูกปิด/ไม่ตั้งบน production ทั้งที่เปิดตรวจสลิปจริง (EasySlip) แล้ว
-//   เตือนเฉพาะเมื่อ payment ทำงานจริง (isEasySlipConfigured) — ไม่งั้น payment fail-closed อยู่แล้ว
-if (isProduction && isEasySlipConfigured) {
+//   เตือนเฉพาะเมื่อ payment ทำงานจริง (ผู้ให้บริการที่เปิดใช้ตั้งค่าครบ) — ไม่งั้น payment fail-closed อยู่แล้ว
+if (isProduction && isSlipVerifierConfigured) {
   if (!env.PAYMENTS_RECEIVER_CHECK) {
     console.error(
       "🚨 [PAYMENT] PAYMENTS_RECEIVER_CHECK=false บน production — ข้ามการตรวจบัญชีผู้รับ = " +

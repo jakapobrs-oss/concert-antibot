@@ -5,6 +5,20 @@
 
 ---
 
+## [Revision 40 — สวิตช์ผู้ให้บริการตรวจสลิป `SLIP_PROVIDER` + adapter SlipOK (ฟรี 100 สลิป/เดือน) — EasySlip เป็นตัวสำรอง] — 2026-08-27
+
+**ที่มา:** rev 39 พบแอปทดลอง EasySlip หมดอายุ ต่ออายุต้องเสียเงิน (Start ฿99/250 สลิป) — user ถามหาเจ้าที่ฟรี → เทียบ 6 เจ้า (EasySlip · SlipOK · Thunder · Slip2Go · Check Slip · RDCW): **ฟรีถาวรมีแค่ SlipOK** (OK BASIC 100 สลิป/เดือน ต่ออายุเอง เกิน ฿1/สลิป) ที่เหลือเป็นทดลองครั้งเดียว → user เลือก SlipOK + ให้ทำสวิตช์ไว้เลย
+
+**ทำ**
+- `lib/slip-policy.ts` (ใหม่ — ด่านกลางทุกเจ้า): `SlipVerifyResult`/`SlipVerifyParams`/`ParsedSlip`/`SlipProviderAdapter` · `applySlipPolicy()` (บัญชีปลายทาง `PROMPTPAY_ID` + ชื่อผู้รับ `PAYMENTS_RECEIVER_NAME` + ต้องมี transRef — ย้ายมาจาก easyslip.ts ไม่เปลี่ยนกติกา) · `runSlipVerification()` (ต้องแนบสลิป → ตั้งค่าครบ? → ตรวจจริง / production fail-closed / dev mock) · `decodeSlipImage()`
+- `lib/slipok.ts` (ใหม่): `POST https://api.slipok.com/api/line/apikey/{branchId}` header `x-authorization`, multipart `files` + `amount` (ให้ SlipOK เทียบยอดซ้ำ → 1013 พร้อมยอดในสลิป) + `log` (default false — ระบบกันซ้ำด้วย `slipRef` UNIQUE อยู่แล้ว และถ้าเปิด การส่งสลิปเดิมซ้ำหลังระบบล้มกลางทางจะถูก SlipOK ปฏิเสธ) · แกะ `transDate "YYYYMMDD"+transTime` เป็นเวลาไทย (`parseSlipOkDateTime`) · ปลายทางใช้ `receiver.proxy.value` (พร้อมเพย์ masked) · รหัส error แยก **system** (1001–1004 → "ไม่ใช่ความผิดของสลิป ติดต่อผู้ดูแล") / **transient** (1009 รอ 15 นาที · 1010 บอกธนาคาร+นาทีที่ต้องรอ) / **slip** (1005–1008, 1011–1014 บอกวิธีแก้) + log `[PAYMENT][SLIPOK]` · `fetchSlipOkQuotaStatus()` (`GET …/quota` → quota+specialQuota, overQuota) + `slipOkHealthWarnings()`
+- `lib/slip-verify.ts` (ใหม่ — จุดเข้าเดียว): `verifySlip()` เลือก adapter ตาม `env.SLIP_PROVIDER` · `isSlipVerifierConfigured` · `getSlipProviderStatus()` (การ์ดแดชบอร์ด: label/line/tone/hint ของเจ้าที่เปิดใช้) · `warnSlipProviderHealth()` (boot-warn) — `app/actions/booking.ts` import จากไฟล์นี้แทน easyslip · `instrumentation.ts` + แดชบอร์ดแอดมินใช้สถานะรวม (การ์ดเปลี่ยนหัวเป็น "ตรวจสลิปอัตโนมัติ (SlipOK|EasySlip)")
+- `lib/easyslip.ts`: เหลือแค่คุยกับ EasySlip + แกะคำตอบ → `applySlipPolicy` · export `easySlipAdapter` · `verifySlip` เดิมยังอยู่ (เทส/สคริปต์เก่าไม่พัง)
+- env: `SLIP_PROVIDER` (easyslip|slipok, default easyslip) · `SLIPOK_API_KEY` · `SLIPOK_BRANCH_ID` · `SLIPOK_LOG` (default false) — `lib/env.ts` boot-warn ตรวจคีย์ของ "เจ้าที่เปิดใช้" เท่านั้น (`isSlipVerifierConfigured`/`slipVerifierMissingEnv`) · `scripts/check-env.ts` PROD_FAIL_MISSING เปลี่ยนตาม provider · `.env.example` อธิบายวิธีเอา API key + ไอดีสาขาจากเมนู API ในไลน์ SlipOK
+- ⚠️ ยังไม่ได้ยิง SlipOK จริง (user ยังไม่ได้สมัคร/ยังไม่มีคีย์) — shape ยืนยันจากเอกสาร v1.8 + SDK ชุมชน (`PrakritManStudio/slipok-sdk` types) · ขั้นถัดไปเมื่อได้คีย์: ตั้ง `SLIP_PROVIDER=slipok`+คีย์ใน `.env` → `pnpm check:env` → โอนจริง 1 ครั้งบน dev/preview ก่อน push env ขึ้น prod
+
+**หลักฐาน:** unit **56 ไฟล์ 691/691** (ใหม่: `slipok` 15 · `slip-verify` 6 · ของเดิม `easyslip`/`easyslip-errors` ผ่านโดยไม่แก้) · tsc 0 · lint 0 error · `next build` local ผ่าน
+
 ## [Revision 39 — โอนจริงครั้งแรกบน prod: แอป EasySlip หมดอายุแต่ระบบโทษ "สลิปไม่ถูกต้อง" · คอนเสิร์ตชื่อไทยล้วนได้ slug ว่าง กดเข้าไม่ได้ทั้งที่ขึ้น "กำลังขาย"] — 2026-08-27
 
 **ที่มา:** user เทสโอนจริง 2 บาทเข้าคอน `test` (#47) → "ตรวจสอบสลิปไม่สำเร็จ — สลิปอาจไม่ถูกต้อง" ทั้งที่สลิปถูกทุกอย่าง · สร้างคอน "คอนพี่เจี๊ยบ" (#48) แล้วขึ้น "กำลังขาย" แต่กดจากหน้ารายการแล้วเด้งกลับหน้าเดิม (user เดาว่า "คงยังไม่ถึงเวลา")
