@@ -43,6 +43,7 @@ export function TicketEntryQr({ ticketId, alt }: { ticketId: string; alt: string
   const [pos, setPos] = useState(0);
   const [stale, setStale] = useState(false); // ภาพที่โชว์อาจหมดอายุ (ขอชุดใหม่ไม่ได้)
   const [error, setError] = useState<string | null>(null);
+  const [big, setBig] = useState(false); // ขยาย QR เต็มจอ
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetching = useRef(false);
   const alive = useRef(true); // false หลัง unmount — กัน promise chain ตั้ง timer ต่อ (audit rev 42)
@@ -212,8 +213,44 @@ export function TicketEntryQr({ ticketId, alt }: { ticketId: string; alt: string
   const src = batch.frames[Math.min(pos, batch.frames.length - 1)];
   return (
     <div className="text-center">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={alt} className="size-28" />
+      {/* แตะเพื่อขยายเต็มจอ — QR 112px บนจอมือถือเล็กเกินให้กล้องอีกเครื่องอ่าน (user-test 27 ส.ค.) · ภาพยังหมุนตามชุดเดิม */}
+      <button
+        type="button"
+        onClick={() => setBig(true)}
+        className="block rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        aria-label="ขยาย QR เต็มจอเพื่อให้เจ้าหน้าที่สแกน"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt={alt} className="size-32" />
+      </button>
+      {big && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="QR เข้างานขนาดใหญ่"
+          onClick={() => setBig(false)}
+          className="fixed inset-0 z-[1000] flex flex-col items-center justify-center gap-4 bg-white p-6"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={alt}
+            onClick={(e) => e.stopPropagation()} // นิ้ว จนท./ผู้ถือโดนกลาง QR ต้องไม่หุบ — ปิดด้วยปุ่ม "ปิด" หรือแตะพื้นที่รอบ ๆ
+            style={{ width: "min(88vw, 70vh)", height: "min(88vw, 70vh)", imageRendering: "pixelated" }}
+          />
+          <p className="text-center text-sm text-gray-700">
+            เร่งความสว่างหน้าจอให้สุด แล้วหันให้เจ้าหน้าที่สแกน · QR หมุนเองทุก 30 วิ
+            {stale ? " · ออฟไลน์อยู่ — ถ้าสแกนไม่ผ่านให้ต่อเน็ตแล้วเปิดใหม่" : ""}
+          </p>
+          <button
+            type="button"
+            onClick={() => setBig(false)}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-800"
+          >
+            ปิด
+          </button>
+        </div>
+      )}
       {stale ? (
         <p className="mt-0.5 flex items-center justify-center gap-1 text-[10px] text-amber-600">
           <WifiOff className="size-2.5" /> ออฟไลน์ — QR อาจหมดอายุ

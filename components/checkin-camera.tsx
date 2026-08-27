@@ -61,18 +61,33 @@ export function CheckinCamera({ onScan, paused = false }: Props) {
 
   const [state, setState] = useState<CameraState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [seeking, setSeeking] = useState(false); // กล้องเปิดอยู่แต่ยังไม่เจอ QR สักพัก → โชว์คำแนะนำเล็ง
+  const lastDecodeAt = useRef(0);
+  const libRef = useRef<typeof import("qr-scanner") | null>(null);
+
+  // โหลดไลบรารีล่วงหน้าตั้งแต่เปิดหน้า (~16 KB) — ตอนกด "เปิดกล้อง" จะได้ไม่มี await ยาวคั่นก่อน scanner.start()
+  //   (iOS เข้มเรื่อง user gesture: play()/getUserMedia หลัง async boundary ยาว ๆ เสี่ยงถูกปฏิเสธ)
+  useEffect(() => {
+    let cancelled = false;
+    import("qr-scanner").then((m) => {
+      if (!cancelled) libRef.current = m;
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function start() {
     if (!videoRef.current || scannerRef.current) return;
     setState("starting");
     setError(null);
+    setSeeking(false);
     try {
-      const { default: QrScannerLib } = await import("qr-scanner");
-      if (!(await QrScannerLib.hasCamera())) {
-        setState("error");
-        setError("ไม่พบกล้องบนอุปกรณ์นี้ — ใช้ช่องพิมพ์หรือปืนสแกนแทน");
-        return;
-      }
+      // ให้ React วาดกล่อง video ให้เห็นก่อน (ของเดิมซ่อนด้วย display:none ระหว่างเริ่ม — iOS ไม่เล่น video ใต้ display:none)
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const { default: QrScannerLib } = libRef.current ?? (await import("qr-scanner"));
+      // ไม่เรียก hasCamera() ก่อน — บน iOS Safari enumerateDevices() ก่อนได้รับอนุญาตอาจไม่คืนกล้อง
+      //   ทำให้ตัดจบว่า "ไม่พบกล้อง" โดยไม่เคยขอสิทธิ์เลย → ให้ start() ขอสิทธิ์จริง แล้ว describeCameraError จัดการ NotFoundError
       const scanner = new QrScannerLib(
         videoRef.current,
         (result) => {
@@ -85,6 +100,8 @@ export function CheckinCamera({ onScan, paused = false }: Props) {
           if (now - seenAt < SAME_TICKET_WINDOW_MS) return;
           seenRef.current.set(key, now);
           lastAnyRef.current = now;
+          lastDecodeAt.current = now;
+          setSeeking(false);
           // ตัดรายการเก่าทิ้ง กัน map โตตลอดคืนงาน
           if (seenRef.current.size > 500) {
             for (const [k, at] of seenRef.current) if (now - at > SAME_TICKET_WINDOW_MS) seenRef.current.delete(k);
@@ -96,9 +113,23 @@ export function CheckinCamera({ onScan, paused = false }: Props) {
           preferredCamera: "environment", // กล้องหลัง — จ่อจอมือถือของผู้ถือบัตร
           highlightScanRegion: true,
           highlightCodeOutline: true,
-          maxScansPerSecond: 8,
+          maxScansPerSecond: 6, // ทั้งเฟรม 800px × 6 ครั้ง/วิ — สมดุลระหว่างอ่าน QR เล็กได้กับไม่ให้มือถือร้อน (รีวิว session เทส)
+          // สแกนทั้งเฟรม (ค่าเริ่มต้นของไลบรารีคือสี่เหลี่ยมกลางภาพ 2/3 ย่อเหลือ 400px — QR บนจอมือถืออีกเครื่องเล็กมาก
+          //   ย่อแล้วโมดูลเหลือไม่ถึง 2px อ่านไม่ออก) ย่อไม่เกิน 800px ด้านยาว
+          calculateScanRegion: (video) => {
+            const w = video.videoWidth || 1280;
+            const h = video.videoHeight || 720;
+            const ratio = Math.min(1, 800 / Math.max(w, h));
+            return { x: 0, y: 0, width: w, height: h, downScaledWidth: Math.round(w * ratio), downScaledHeight: Math.round(h * ratio) };
+          },
+          // ยังไม่เจอ QR ต่อเนื่อง ~3 วิ → โชว์คำแนะนำเล็ง (ไลบรารีเรียกทุกเฟรมที่ถอดรหัสไม่ได้)
+          onDecodeError: () => {
+            const now = Date.now();
+            if (now - lastDecodeAt.current > 3_000 && !pausedRef.current) setSeeking(true);
+          },
         },
       );
+      lastDecodeAt.current = Date.now();
       scannerRef.current = scanner;
       await scanner.start();
       setState("on");
@@ -151,17 +182,22 @@ export function CheckinCamera({ onScan, paused = false }: Props) {
         )}
       </div>
 
-      {/* video ต้องอยู่ใน DOM ตลอด (scanner ผูกกับ element) — ซ่อนด้วย class เมื่อยังไม่เปิด */}
-      <div className={showVideo ? "mt-3" : "hidden"}>
+      {/* video ต้องอยู่ใน DOM ตลอด (scanner ผูกกับ element) — ตอนยังไม่เปิดใช้ความสูง 0 ไม่ใช่ display:none (iOS ไม่เล่น video ใต้ display:none) */}
+      <div className={showVideo ? "relative mt-3" : "relative h-0 overflow-hidden"} aria-hidden={!showVideo}>
+        {/* object-contain ให้ภาพที่ จนท. เห็น = พื้นที่ที่สแกนจริงทั้งเฟรม (object-cover จะครอปแล้วเล็งเพี้ยน) */}
         <video
           ref={videoRef}
           muted
           playsInline
-          className="aspect-[4/3] w-full rounded-lg bg-black object-cover"
+          className="max-h-[70vh] w-full rounded-lg bg-black object-contain"
           aria-label="ภาพจากกล้องสำหรับสแกน QR"
         />
         <p className="mt-2 text-xs text-fg-faint" aria-live="polite">
-          {paused ? "กำลังตรวจบัตร…" : "จ่อกล้องที่ QR บนหน้า \"ตั๋วของฉัน\" ของผู้ถือ — อ่านได้แล้วจะเช็คอินให้ทันที"}
+          {paused
+            ? "กำลังตรวจบัตร…"
+            : seeking
+              ? "ยังไม่เจอ QR — ให้ผู้ถือเร่งความสว่างจอ แล้วถือห่าง ~15–20 ซม. ให้ QR ชัดเต็มกรอบ"
+              : "จ่อกล้องที่ QR บนหน้า \"ตั๋วของฉัน\" ของผู้ถือ — อ่านได้แล้วจะเช็คอินให้ทันที"}
         </p>
       </div>
 

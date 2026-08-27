@@ -34,6 +34,8 @@ const nextConfig: NextConfig = {
       "font-src 'self' data:",
       "connect-src 'self'",
       "frame-src https://challenges.cloudflare.com",
+      // qr-scanner (จุดสแกน rev 42) สร้าง Web Worker ถอดรหัสจาก blob: URL — ไม่มีบรรทัดนี้ CSP บล็อกเงียบ ๆ กล้องเปิดแต่ไม่เคยอ่าน QR
+      "worker-src 'self' blob:",
       "object-src 'none'",    // กัน Flash/plugin
       "base-uri 'self'",      // กัน base-tag injection
       "form-action 'self'",   // กัน cross-origin form submit
@@ -44,7 +46,8 @@ const nextConfig: NextConfig = {
       { key: "X-Frame-Options", value: "DENY" },
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+      // camera=(self): จุดสแกน /staff/checkin ใช้กล้องอ่าน QR (rev 42) — ของเดิม camera=() ปิดทุกหน้า ทำให้ "กล้องเปิดแต่ไม่สแกน"/ขอสิทธิ์ไม่ได้
+      { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
     ];
 
     if (isProd) {
