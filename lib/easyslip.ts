@@ -123,6 +123,7 @@ async function verifyWithEasySlip(params: SlipVerifyParams): Promise<SlipVerifyR
     }
 
     const d = data.data;
+    console.info(`[PAYMENT][EASYSLIP] verify ผ่าน ref=${String(d.transRef ?? d.ref ?? "-")} amount=${String(d.amount?.amount ?? d.amount ?? "?")}`);
     return applySlipPolicy({
       amount: d.amount?.amount ?? d.amount,
       ref: d.transRef ?? d.ref,

@@ -155,6 +155,7 @@ async function verifyWithSlipOk(params: SlipVerifyParams): Promise<SlipVerifyRes
     }
 
     const d = body.data as Record<string, unknown>;
+    console.info(`[PAYMENT][SLIPOK] verify ผ่าน ref=${String(d.transRef ?? "-")} amount=${String(d.amount ?? "?")} bank=${String(d.sendingBank ?? "-")}`);
     const sender = (d.sender ?? {}) as Record<string, unknown>;
     const receiver = (d.receiver ?? {}) as Record<string, unknown>;
     const senderProxy = (sender.proxy ?? {}) as Record<string, unknown>;
@@ -209,6 +210,7 @@ export interface SlipOkQuotaStatus {
   specialQuota?: number; // โควต้าพิเศษ/แถม
   overQuota?: number; // จำนวนที่ใช้เกินไปแล้ว (คิดเงินเพิ่มต่อรายการ)
   remaining?: number; // quota + specialQuota
+  periodEndsAt?: Date; // วันสิ้นรอบแพ็กเกจ (SlipOK: endDate "YYYY-MM-DD" — ยิงจริง 2026-08-27 ได้ 2026-09-27)
   error?: string;
 }
 
@@ -232,7 +234,19 @@ export async function fetchSlipOkQuotaStatus(opts: { timeoutMs?: number } = {}):
     const specialQuota = typeof d.specialQuota === "number" ? d.specialQuota : undefined;
     const overQuota = typeof d.overQuota === "number" ? d.overQuota : undefined;
     const remaining = quota === undefined ? undefined : quota + (specialQuota ?? 0);
-    return { configured: true, ok: remaining === undefined || remaining > 0, quota, specialQuota, overQuota, remaining };
+    const periodEndsAt =
+      typeof d.endDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.endDate)
+        ? new Date(`${d.endDate}T23:59:59+07:00`)
+        : undefined;
+    return {
+      configured: true,
+      ok: remaining === undefined || remaining > 0,
+      quota,
+      specialQuota,
+      overQuota,
+      remaining,
+      periodEndsAt,
+    };
   } catch (err) {
     return { configured: true, ok: false, error: err instanceof Error ? err.message : String(err) };
   }

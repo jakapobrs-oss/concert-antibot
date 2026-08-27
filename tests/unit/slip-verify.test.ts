@@ -92,10 +92,11 @@ describe("getSlipProviderStatus / warnSlipProviderHealth", () => {
 
   it("slipok โควต้าปกติ → success + บอกโควต้าเหลือ · โควต้าหมด → danger + boot-warn log [SLIPOK]", async () => {
     const mod = await loadSlipVerify({ provider: "slipok", okKey: "sk", branch: "777" });
-    stubFetchJson({ success: true, data: { quota: 95, specialQuota: 5, overQuota: 0 } });
+    stubFetchJson({ success: true, data: { quota: 95, specialQuota: 5, overQuota: 0, endDate: "2026-09-27" } });
     const fine = await mod.getSlipProviderStatus();
     expect(fine.tone).toBe("success");
     expect(fine.line).toContain("โควต้าเหลือ 100");
+    expect(fine.line).toContain("รอบนี้ถึง");
     expect(fine.hint).toBeUndefined();
 
     stubFetchJson({ success: true, data: { quota: 0, specialQuota: 0, overQuota: 2 } });

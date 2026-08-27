@@ -278,10 +278,14 @@ describe("parseSlipOkDateTime", () => {
 describe("fetchSlipOkQuotaStatus / slipOkHealthWarnings", () => {
   it("โควต้าปกติ → ok ไม่เตือน · เรียก GET /quota ด้วย header เดียวกัน", async () => {
     const { fetchSlipOkQuotaStatus, slipOkHealthWarnings } = await loadSlipOk();
-    const fetchMock = stubFetchJson({ success: true, data: { quota: 90, specialQuota: 10, overQuota: 0 } });
+    const fetchMock = stubFetchJson({
+      success: true,
+      data: { quota: 90, specialQuota: 10, overQuota: 0, endDate: "2026-09-27", specialEndDate: null },
+    });
     const s = await fetchSlipOkQuotaStatus();
     expect(s.ok).toBe(true);
     expect(s.remaining).toBe(100);
+    expect(s.periodEndsAt?.toISOString()).toBe("2026-09-27T16:59:59.000Z"); // สิ้นวัน 27 ก.ย. เวลาไทย
     expect(slipOkHealthWarnings(s)).toEqual([]);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://api.slipok.com/api/line/apikey/12345/quota");

@@ -72,7 +72,9 @@ export async function getSlipProviderStatus(opts: { timeoutMs?: number; now?: Da
       ? `ใช้งานไม่ได้: ${s.error}`
       : `สาขา ${env.SLIPOK_BRANCH_ID} · โควต้าเหลือ ${s.remaining ?? "?"} สลิป${
           s.specialQuota ? ` (รวมพิเศษ ${s.specialQuota})` : ""
-        }${s.overQuota ? ` · ใช้เกินมา ${s.overQuota}` : ""}`;
+        }${s.overQuota ? ` · ใช้เกินมา ${s.overQuota}` : ""}${
+          s.periodEndsAt ? ` · รอบนี้ถึง ${formatThaiDate(s.periodEndsAt)}` : ""
+        }`;
     const tone: SlipProviderStatus["tone"] = s.error
       ? "danger"
       : (s.remaining ?? 99) <= 0
