@@ -87,17 +87,28 @@ export type EntryCodeBatchResult =
 export async function getEntryCodes(input: { ticketId: string }): Promise<EntryCodeBatchResult> {
   // rate-limit ต่อผู้ใช้ (audit rev 42): 1 ครั้ง = วาด QR 10 ภาพ — หน้าตั๋วปกติขอทุก ~3.5 นาที/ใบ, 30/นาที เผื่อหลายใบ+รีเฟรช
   const userId = await sessionUserId();
-  if (!userId) return { ok: false, error: "กรุณาเข้าสู่ระบบ" };
+  if (!userId) {
+    console.warn("[entry-codes] reject no-session", { ticketId: input.ticketId });
+    return { ok: false, error: "กรุณาเข้าสู่ระบบ" };
+  }
   const rl = await checkRateLimit({ key: `entry_codes:user:${userId}`, limit: 30, windowMs: 60_000 });
-  if (!rl.allowed) return { ok: false, error: "ขอ QR ถี่เกินไป — รอสักครู่แล้วรีเฟรชหน้า" };
+  if (!rl.allowed) {
+    console.warn("[entry-codes] reject rate-limit", { userId, ticketId: input.ticketId, retryAfterMs: rl.retryAfterMs });
+    return { ok: false, error: "ขอ QR ถี่เกินไป — รอสักครู่แล้วรีเฟรชหน้า" };
+  }
 
   const ticket = await ownedTicketSecret(input.ticketId);
-  if (!ticket.ok) return ticket;
+  if (!ticket.ok) {
+    console.warn("[entry-codes] reject", { userId, ticketId: input.ticketId, error: ticket.error });
+    return ticket;
+  }
 
   const { msLeft, codes } = entryCodeBatch(ticket.qrSecret);
   const frames = await Promise.all(
     codes.map((code) => QRCode.toDataURL(buildEntryQrText(ticket.id, code), { width: 200, margin: 1 })),
   );
+  // log ระดับ info — หน้าตั๋วขอทุก ~3.5 นาที/ใบ ปริมาณต่ำ ไว้ไล่เคส "ออฟไลน์แล้วฟื้นไหม" จากฝั่ง server (probe rev 42)
+  console.info("[entry-codes] ok", { userId, ticketId: ticket.id, frames: frames.length, msLeft });
   return { ok: true, windowMs: ENTRY_CODE_WINDOW_MS, msLeft, frames };
 }
 

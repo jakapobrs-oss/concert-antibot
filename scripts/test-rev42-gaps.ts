@@ -313,8 +313,15 @@ async function main() {
     const qrCount = await holder.locator('img[alt^="QR ตั๋ว"]').count();
     await holder.waitForTimeout(3_000);
     const burst = await holder.evaluate(() => (window as unknown as { __n: number }).__n);
-    const bodyAfter = await holder.locator("body").innerText();
-    check("G3a ออฟไลน์เกิน 5 นาที → ติดป้าย 'ออฟไลน์ — QR อาจหมดอายุ'", /ออฟไลน์/.test(bodyAfter), bodyAfter.slice(0, 200));
+    // อ่านป้ายจาก <p> ใต้รูป QR ตรง ๆ — body.innerText เคยให้ผลบวกลวง (มีคำว่า "ออฟไลน์" ค้างทั้งที่ป้ายจริงเป็น "QR หมุนอัตโนมัติ")
+    const qrBadges = async () =>
+      (await holder.locator("p").allInnerTexts()).filter((t) => /ออฟไลน์|QR หมุนอัตโนมัติ/.test(t));
+    const badgesAfter = await qrBadges();
+    check(
+      "G3a ออฟไลน์เกิน 5 นาที → ติดป้าย 'ออฟไลน์ — QR อาจหมดอายุ'",
+      badgesAfter.some((t) => /ออฟไลน์/.test(t)),
+      badgesAfter.join(" | ").slice(0, 200),
+    );
     check(
       "G3b ชุด QR หมดตอนออฟไลน์ → ต้องไม่ยิง server รัวเป็น loop (คาด ≤ 1 ครั้งต่อตั๋ว ใน 3 วิ)",
       burst <= Math.max(1, qrCount),
@@ -334,7 +341,8 @@ async function main() {
       (async () => {
         await holder.evaluate(() => window.dispatchEvent(new Event("online")));
         await holder.waitForTimeout(8_000);
-        return !/ออฟไลน์/.test(await holder.locator("body").innerText());
+        const badges = await qrBadges();
+        return badges.length > 0 && badges.every((t) => !/ออฟไลน์/.test(t));
       })(),
       new Promise<null>((r) => setTimeout(() => r(null), 25_000)),
     ]);
