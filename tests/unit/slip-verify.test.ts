@@ -108,6 +108,17 @@ describe("getSlipProviderStatus / warnSlipProviderHealth", () => {
     expect(String(err.mock.calls[0][0])).toContain("[PAYMENT][SLIPOK]");
   });
 
+  it("slipok ติดต่อไม่ได้ชั่วคราว (timeout) → tone warning ไม่ใช่ danger + บอกว่าไม่ได้แปลว่าคีย์ผิด", async () => {
+    const mod = await loadSlipVerify({ provider: "slipok", okKey: "sk", branch: "777" });
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(timeout));
+    const s = await mod.getSlipProviderStatus();
+    expect(s.tone).toBe("warning");
+    expect(s.line).toContain("ชั่วคราว");
+    expect(s.line).toContain("ไม่ได้แปลว่าคีย์ผิด");
+  });
+
   it("easyslip แอปหมดอายุ → danger + hint ชวนสลับ SLIP_PROVIDER", async () => {
     const mod = await loadSlipVerify({ provider: "easyslip", easyKey: "easy" });
     stubFetchJson({

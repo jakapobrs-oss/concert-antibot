@@ -69,14 +69,18 @@ export async function getSlipProviderStatus(opts: { timeoutMs?: number; now?: Da
     const s = await fetchSlipOkQuotaStatus({ timeoutMs: opts.timeoutMs });
     const warnings = slipOkHealthWarnings(s);
     const line = s.error
-      ? `ใช้งานไม่ได้: ${s.error}`
+      ? s.transient
+        ? `ติดต่อ SlipOK ไม่ได้ชั่วคราว (${s.error}) — ไม่ได้แปลว่าคีย์ผิด ลองรีเฟรช`
+        : `SlipOK ปฏิเสธคีย์/สาขา: ${s.error}`
       : `สาขา ${env.SLIPOK_BRANCH_ID} · โควต้าเหลือ ${s.remaining ?? "?"} สลิป${
           s.specialQuota ? ` (รวมพิเศษ ${s.specialQuota})` : ""
         }${s.overQuota ? ` · ใช้เกินมา ${s.overQuota}` : ""}${
           s.periodEndsAt ? ` · รอบนี้ถึง ${formatThaiDate(s.periodEndsAt)}` : ""
         }`;
     const tone: SlipProviderStatus["tone"] = s.error
-      ? "danger"
+      ? s.transient
+        ? "warning"
+        : "danger"
       : (s.remaining ?? 99) <= 0
         ? "danger"
         : (s.remaining ?? 99) <= SLIPOK_QUOTA_WARN_REMAINING
@@ -100,15 +104,19 @@ export async function getSlipProviderStatus(opts: { timeoutMs?: number; now?: Da
   const warnings = easySlipHealthWarnings(s);
   const expiredAtText = s.expiredAt ? formatThaiDate(s.expiredAt) : "?";
   const line = s.error
-    ? `ใช้งานไม่ได้: ${s.error}`
+    ? s.transient
+      ? `ติดต่อ EasySlip ไม่ได้ชั่วคราว (${s.error}) — ไม่ได้แปลว่าคีย์ผิด ลองรีเฟรช`
+      : `EasySlip ปฏิเสธคีย์/แอป: ${s.error}`
     : s.expired
       ? `แอป "${s.application ?? "-"}" หมดอายุแล้วตั้งแต่ ${expiredAtText}`
       : `แอป "${s.application ?? "-"}" ใช้ได้ถึง ${expiredAtText} (อีก ${s.daysLeft ?? "?"} วัน) · โควต้าเหลือ ${
           s.remainingQuota ?? "?"
         }/${s.maxQuota ?? "?"}`;
   const tone: SlipProviderStatus["tone"] =
-    s.error || s.expired
-      ? "danger"
+    s.error && s.transient
+      ? "warning"
+      : s.error || s.expired
+        ? "danger"
       : (s.daysLeft ?? 99) <= EASYSLIP_EXPIRY_WARN_DAYS || (s.remainingQuota ?? 99) <= EASYSLIP_QUOTA_WARN_REMAINING
         ? "warning"
         : "success";
@@ -128,7 +136,8 @@ export async function getSlipProviderStatus(opts: { timeoutMs?: number; now?: Da
 
 // เตือนใน log ตอน boot (production) — ไม่ throw ไม่บล็อกการ boot
 export async function warnSlipProviderHealth(): Promise<void> {
-  const status = await getSlipProviderStatus();
+  // cold start บน Vercel (iad1 → ไทย) เคย timeout ที่ 5 วิ ทั้งที่ verify จริงผ่าน → ให้เวลามากกว่าการ์ดแดชบอร์ด
+  const status = await getSlipProviderStatus({ timeoutMs: 10_000 });
   const tag = status.provider === "slipok" ? "SLIPOK" : "EASYSLIP";
   if (!status.configured) {
     console.error(`🚨 [PAYMENT][${tag}] ${status.line}`);

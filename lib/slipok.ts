@@ -14,6 +14,7 @@ import { parseSlipDate } from "@/lib/slip-date";
 import {
   applySlipPolicy,
   decodeSlipImage,
+  describeFetchFailure,
   runSlipVerification,
   type SlipProviderAdapter,
   type SlipVerifyParams,
@@ -212,6 +213,7 @@ export interface SlipOkQuotaStatus {
   remaining?: number; // quota + specialQuota
   periodEndsAt?: Date; // วันสิ้นรอบแพ็กเกจ (SlipOK: endDate "YYYY-MM-DD" — ยิงจริง 2026-08-27 ได้ 2026-09-27)
   error?: string;
+  transient?: boolean; // ติดต่อไม่ได้ชั่วคราว (timeout/network) — ไม่ใช่คีย์/สาขาผิด (cold start บน Vercel เคย timeout 5 วิ ทั้งที่ verify ผ่าน)
 }
 
 export const SLIPOK_QUOTA_WARN_REMAINING = 10;
@@ -248,14 +250,18 @@ export async function fetchSlipOkQuotaStatus(opts: { timeoutMs?: number } = {}):
       periodEndsAt,
     };
   } catch (err) {
-    return { configured: true, ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { configured: true, ok: false, error: describeFetchFailure(err), transient: true };
   }
 }
 
 export function slipOkHealthWarnings(s: SlipOkQuotaStatus): string[] {
   if (!s.configured) return [];
+  if (s.error && s.transient) {
+    // ไม่ได้คำตอบจาก SlipOK เลย = บอกไม่ได้ว่าคีย์ผิด — การตรวจสลิปแต่ละครั้งมี timeout 20 วิแยกต่างหาก
+    return [`ติดต่อ SlipOK ไม่ได้ชั่วคราว (${s.error}) — ไม่ได้แปลว่าคีย์ผิด ถ้าเห็นซ้ำหลายครั้งติดกันค่อยตรวจเครือข่าย/สถานะ SlipOK`];
+  }
   if (s.error) {
-    return [`ติดต่อ SlipOK ไม่ได้ / คีย์หรือสาขาไม่ถูกต้อง (${s.error}) — การจ่ายเงินจะถูกปฏิเสธทุกรายการจนกว่าจะแก้`];
+    return [`SlipOK ปฏิเสธคีย์/สาขา (${s.error}) — การจ่ายเงินจะถูกปฏิเสธทุกรายการจนกว่าจะแก้ SLIPOK_API_KEY/SLIPOK_BRANCH_ID`];
   }
   const warnings: string[] = [];
   if (s.remaining !== undefined && s.remaining <= 0) {

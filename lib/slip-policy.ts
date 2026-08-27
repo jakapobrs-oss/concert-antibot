@@ -159,6 +159,16 @@ export async function runSlipVerification(
   };
 }
 
+// อธิบายสาเหตุที่ fetch ล้ม (timeout/abort/network) สั้น ๆ สำหรับ log — ไม่ใช่คำตอบจากผู้ให้บริการ จึงไม่ใช่ "คีย์ผิด"
+export function describeFetchFailure(err: unknown): string {
+  if (err instanceof Error) {
+    if (err.name === "TimeoutError") return "timeout";
+    if (err.name === "AbortError") return "aborted";
+    return err.message;
+  }
+  return String(err);
+}
+
 // แกะ base64 ของรูปสลิปจาก client (FileReader.readAsDataURL ให้ "data:image/jpeg;base64,....")
 //   → bytes + mime สำหรับส่งเป็นไฟล์ (multipart) — ผู้ให้บริการอ่านรูปไบนารีตรง ๆ ไม่ต้องเดาว่ารับ prefix ไหม
 export function decodeSlipImage(input: string): { bytes: Uint8Array; mime: string; ext: string } {

@@ -12,6 +12,7 @@ import { parseSlipDate } from "@/lib/slip-date";
 import {
   applySlipPolicy,
   decodeSlipImage,
+  describeFetchFailure,
   runSlipVerification,
   type SlipProviderAdapter,
   type SlipVerifyParams,
@@ -185,6 +186,7 @@ export interface EasySlipAccountStatus {
   expired?: boolean;
   daysLeft?: number; // จำนวนวันก่อนหมดอายุ (ติดลบ = หมดแล้ว)
   error?: string; // รหัส/สาเหตุที่ติดต่อไม่ได้ (เช่น application_expired, unauthorized, timeout)
+  transient?: boolean; // ติดต่อไม่ได้ชั่วคราว (timeout/network) — ไม่ใช่คีย์/แอปมีปัญหา
 }
 
 export async function fetchEasySlipAccountStatus(
@@ -220,7 +222,7 @@ export async function fetchEasySlipAccountStatus(
       daysLeft,
     };
   } catch (err) {
-    return { configured: true, ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { configured: true, ok: false, error: describeFetchFailure(err), transient: true };
   }
 }
 
@@ -232,9 +234,13 @@ export const EASYSLIP_QUOTA_WARN_REMAINING = 10;
 export function easySlipHealthWarnings(s: EasySlipAccountStatus): string[] {
   if (!s.configured) return [];
   const warnings: string[] = [];
+  if (s.error && s.transient) {
+    warnings.push(`ติดต่อ EasySlip ไม่ได้ชั่วคราว (${s.error}) — ไม่ได้แปลว่าคีย์ผิด ถ้าเห็นซ้ำหลายครั้งติดกันค่อยตรวจ`);
+    return warnings;
+  }
   if (s.error) {
     warnings.push(
-      `ติดต่อ EasySlip ไม่ได้ / คีย์ใช้ไม่ได้ (${s.error}) — การจ่ายเงินจะถูกปฏิเสธทุกรายการจนกว่าจะแก้`
+      `EasySlip ปฏิเสธคีย์/แอป (${s.error}) — การจ่ายเงินจะถูกปฏิเสธทุกรายการจนกว่าจะแก้ EASYSLIP_API_KEY`
     );
     return warnings;
   }

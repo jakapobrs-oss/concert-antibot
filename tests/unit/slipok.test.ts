@@ -315,4 +315,24 @@ describe("fetchSlipOkQuotaStatus / slipOkHealthWarnings", () => {
     expect(s.configured).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("timeout/network (ไม่ได้คำตอบเลย) → transient: เตือนว่า 'ชั่วคราว' ไม่ใช่ 'คีย์ผิด' (เคสจริง cold start prod 2026-08-27)", async () => {
+    const mod = await loadSlipOk();
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(timeout));
+    const s = await mod.fetchSlipOkQuotaStatus();
+    expect(s.ok).toBe(false);
+    expect(s.transient).toBe(true);
+    expect(s.error).toBe("timeout");
+    const w = mod.slipOkHealthWarnings(s);
+    expect(w[0]).toContain("ชั่วคราว");
+    expect(w[0]).not.toContain("ปฏิเสธทุกรายการ");
+
+    // ส่วน 1002 (คำตอบจริงจาก SlipOK) ยังต้องเป็นเรื่องคีย์
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({ success: false, code: "1002", message: "bad" }) }));
+    const bad = await mod.fetchSlipOkQuotaStatus();
+    expect(bad.transient).toBeUndefined();
+    expect(mod.slipOkHealthWarnings(bad)[0]).toContain("คีย์");
+  });
 });
