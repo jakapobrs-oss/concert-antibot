@@ -30,6 +30,7 @@
     "test:queue-soldout-ui": "tsx scripts/test-queue-soldout-ui.ts",
     "test:staff-checkin": "tsx scripts/test-staff-checkin.ts",
     "test:rev42-gaps": "tsx scripts/test-rev42-gaps.ts",
+    "probe:offline-loop": "tsx scripts/probe-offline-loop.ts",
     "test:e2e": "tsx scripts/e2e-booking.ts",
     "test:load": "k6 run tests/load/queue.js"
   },
