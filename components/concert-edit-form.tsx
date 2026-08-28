@@ -202,12 +202,15 @@ export function ConcertEditForm({ concertId, initial, orderCount, paidOrderCount
 
         <div className="space-y-2">
           <Label htmlFor="coverImageUrl">ลิงก์รูปโปสเตอร์ (ไม่บังคับ)</Label>
+          {/* type="text" ไม่ใช่ "url" — เบราว์เซอร์จะปฏิเสธ path ในเว็บ (/posters/…) ก่อนถึง server และฟ้องเป็นอังกฤษ
+              "Please enter a URL." จนบันทึกอะไรไม่ได้ทั้งฟอร์ม (user-test 2026-08-28 BUG-1) · กติกาจริงอยู่ที่ lib/concert-form */}
           <Input
             id="coverImageUrl"
             name="coverImageUrl"
-            type="url"
+            type="text"
+            inputMode="url"
             defaultValue={initial.coverImageUrl}
-            placeholder="https://…/poster.jpg"
+            placeholder="https://…/poster.jpg หรือ /posters/poster.jpg"
             error={errorField === "coverImageUrl"}
           />
         </div>

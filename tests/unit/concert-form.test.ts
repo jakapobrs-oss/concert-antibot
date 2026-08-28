@@ -79,6 +79,15 @@ describe("parseConcertForm — กติกา", () => {
     expect(parseConcertForm(validForm({ maxTicketsPerUser: "20" })).ok).toBe(true);
   });
 
+  it("โปสเตอร์รับ path ในเว็บที่ขึ้นต้นด้วย / (ค่าที่ seed ไว้) แต่ไม่รับ //host (BUG-1 user-test 2026-08-28)", () => {
+    const r = parseConcertForm(validForm({ coverImageUrl: "/posters/ed-sheeran-2026.svg" }));
+    expect(r.ok && r.data.coverImageUrl).toBe("/posters/ed-sheeran-2026.svg");
+    const r2 = parseConcertForm(validForm({ coverImageUrl: "//evil.example/p.jpg" }));
+    expect(!r2.ok && r2.field).toBe("coverImageUrl");
+    const r3 = parseConcertForm(validForm({ coverImageUrl: "/" }));
+    expect(!r3.ok && r3.field).toBe("coverImageUrl");
+  });
+
   it("โปสเตอร์ต้องเป็นลิงก์ http(s)", () => {
     const r = parseConcertForm(validForm({ coverImageUrl: "poster.jpg" }));
     expect(!r.ok && r.field).toBe("coverImageUrl");

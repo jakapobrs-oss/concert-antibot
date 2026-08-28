@@ -96,11 +96,13 @@ export function parseConcertForm(
     return fail(`จำกัดตั๋วต่อบัญชีต้องเป็นจำนวนเต็ม 1–${MAX_TICKETS_PER_USER_LIMIT}`, "maxTicketsPerUser");
   }
 
-  // โปสเตอร์: ลิงก์ http(s) หรือเว้นว่าง (ระบบไม่ได้โฮสต์รูปเอง)
+  // โปสเตอร์: ลิงก์ http(s) · หรือ path ในเว็บที่ขึ้นต้นด้วย "/" (เช่น /posters/x.svg ที่ seed ไว้) · หรือเว้นว่าง
+  //   user-test 2026-08-28 (BUG-1): เดิมรับแค่ http(s) แต่คอนที่ seed มีค่า /posters/… → แก้ช่องไหนก็บันทึกไม่ได้ทั้งฟอร์ม
+  //   "//host/x" (protocol-relative) ไม่รับ — เป็นลิงก์ออกนอกเว็บที่ดูเหมือน path ในเว็บ
   const coverRaw = field(raw, "coverImageUrl");
   if (coverRaw.length > COVER_URL_MAX) return fail(`ลิงก์รูปโปสเตอร์ยาวเกิน ${COVER_URL_MAX} ตัวอักษร`, "coverImageUrl");
-  if (coverRaw && !/^https?:\/\/\S+$/i.test(coverRaw)) {
-    return fail("ลิงก์รูปโปสเตอร์ต้องขึ้นต้นด้วย http:// หรือ https:// (หรือเว้นว่าง)", "coverImageUrl");
+  if (coverRaw && !/^(https?:\/\/\S+|\/(?!\/)\S+)$/i.test(coverRaw)) {
+    return fail("ลิงก์รูปโปสเตอร์ต้องขึ้นต้นด้วย http:// https:// หรือ / (ไฟล์ในเว็บ) — หรือเว้นว่าง", "coverImageUrl");
   }
 
   const data: ConcertFormData = {

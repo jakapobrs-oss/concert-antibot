@@ -2,6 +2,8 @@
 // user เข้าหน้านี้ก่อนถึงจะไปเลือกที่นั่งได้ (กันคนแห่กดพร้อมกัน + fairness)
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { LogIn } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { SiteHeader } from "@/components/site-header";
@@ -96,22 +98,43 @@ export default async function QueuePage({
         )}
 
         <div className="animate-fade-in-up relative overflow-hidden rounded-2xl border border-fg/10 bg-ink-850 px-6 py-10 shadow-lg sm:px-10">
-          {display === "ON_SALE" ? (
+          {display !== "ON_SALE" ? (
+            <p className="text-center text-fg-faint">
+              {/* บัตรหมด ≠ ยังไม่เปิดขาย — สถานะ SOLD_OUT ถูกติดอัตโนมัติหลังออกตั๋ว (docs/23 §3) */}
+              {closedMessage[display as Exclude<typeof display, "ON_SALE">]}
+            </p>
+          ) : !userId ? (
+            /* ยังไม่ล็อกอิน: บอกทางไปต่อตรงนี้ — เดิมปล่อย WaitingRoom ยิง join แล้วได้ 401 "กรุณาเข้าสู่ระบบ"
+               แต่มีแค่ปุ่ม "เข้าคิวใหม่" ที่วนกลับมา 401 เดิม = ทางตัน (user-test 2026-08-28 OBS-2)
+               คิวผูกกับบัญชี → ล็อกอินแล้วเด้งกลับมาหน้านี้ผ่าน callbackUrl · ไม่เริ่มเก็บ fingerprint/พฤติกรรมของคนที่ยังไม่ล็อกอิน */
+            <div className="space-y-4 text-center">
+              <div className="mx-auto grid size-16 place-items-center rounded-full border border-fg/15 bg-fg/5 text-fg-dim">
+                <LogIn className="size-8" />
+              </div>
+              <h2 className="font-display text-xl font-semibold text-fg">เข้าสู่ระบบก่อนเข้าคิว</h2>
+              <p className="text-sm leading-relaxed text-fg-dim">
+                คิวผูกกับบัญชีของคุณ — เข้าสู่ระบบแล้วระบบจะพากลับมาหน้านี้ให้
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Link href={`/login?callbackUrl=${encodeURIComponent(`/concerts/${slug}/queue`)}`}>
+                  <Button>เข้าสู่ระบบเพื่อเข้าคิว</Button>
+                </Link>
+                <Link href="/register">
+                  <Button variant="outline">สมัครบัญชีใหม่</Button>
+                </Link>
+              </div>
+            </div>
+          ) : (
             <WaitingRoom
               concertId={concert.id.toString()}
               slug={slug}
               turnstileSiteKey={getTurnstileSiteKey()}
             />
-          ) : (
-            <p className="text-center text-fg-faint">
-              {/* บัตรหมด ≠ ยังไม่เปิดขาย — สถานะ SOLD_OUT ถูกติดอัตโนมัติหลังออกตั๋ว (docs/23 §3) */}
-              {closedMessage[display as Exclude<typeof display, "ON_SALE">]}
-            </p>
           )}
         </div>
 
         {/* แจ้งการเก็บข้อมูลกันบอท ณ จุดที่เริ่มเก็บจริง (fingerprint + พฤติกรรมเมาส์/คีย์เริ่มใน WaitingRoom) — PDPA */}
-        {display === "ON_SALE" && (
+        {display === "ON_SALE" && userId && (
           <p className="relative mt-4 text-center text-xs leading-relaxed text-fg-faint">
             ระหว่างอยู่ในห้องรอ ระบบเก็บลายนิ้วมือเบราว์เซอร์และรูปแบบการขยับเมาส์/กดคีย์ (เป็นตัวเลขสรุป ไม่เก็บสิ่งที่พิมพ์)
             เพื่อคัดกรองบอท —{" "}

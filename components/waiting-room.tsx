@@ -64,7 +64,12 @@ export function WaitingRoom({
   const [challengeError, setChallengeError] = useState<string | null>(null);
   const [challengeKey, setChallengeKey] = useState(0);
   // "ไม่มีคิวให้รอ" — บัตรหมด / ยังไม่เปิดขาย / ยังไม่ถึงรอบ: ทางออกคือกลับหน้าคอนเสิร์ต ไม่ใช่เข้าคิวใหม่ (วนลูป)
-  const [closed, setClosed] = useState<{ title: string; message: string } | null>(null);
+  //   cta = ทางไปต่อที่ตรงกับเหตุผล (เช่น "สมัครสมาชิก (ฟรี)" เมื่อยังไม่เป็นสมาชิก — user-test 2026-08-28 OBS-3)
+  const [closed, setClosed] = useState<{
+    title: string;
+    message: string;
+    cta?: { label: string; href: string };
+  } | null>(null);
   const tokenRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stoppedRef = useRef(false); // หยุด poll เมื่อ admitted/expired/unmount
@@ -144,8 +149,23 @@ export function WaitingRoom({
         if (res.status === 403) {
           const body = await res.json().catch(() => ({}));
           const title = CLOSED_TITLE[String(body.action)];
-          if (title) setClosed({ title, message: body.error ?? "" });
-          else setBlocked(true);
+          if (title) {
+            // ยังไม่เป็นสมาชิก/ไม่ใช่พรีเมียม → ชี้ทางสมัคร (ฟรี ได้สิทธิ์ทันที) แทนที่จะมีแค่ "กลับหน้าคอนเสิร์ต"
+            const cta =
+              body.reason === "NOT_MEMBER" || body.reason === "NEED_PREMIUM"
+                ? { label: "สมัครสมาชิก (ฟรี)", href: "/account/membership" }
+                : undefined;
+            setClosed({ title, message: body.error ?? "", cta });
+          } else setBlocked(true);
+          return;
+        }
+        // 401 = เซสชันหมดระหว่างทาง → ทางไปต่อคือล็อกอิน (ไม่ใช่ "เข้าคิวใหม่" ที่วนกลับมา 401 เดิม)
+        if (res.status === 401) {
+          setClosed({
+            title: "เข้าสู่ระบบก่อนเข้าคิว",
+            message: "เซสชันของคุณหมดอายุ — เข้าสู่ระบบแล้วระบบจะพากลับมาหน้านี้ให้",
+            cta: { label: "เข้าสู่ระบบเพื่อเข้าคิว", href: `/login?callbackUrl=${encodeURIComponent(`/concerts/${slug}/queue`)}` },
+          });
           return;
         }
         // CHALLENGE — ต้องทำ Turnstile ก่อน
@@ -248,6 +268,7 @@ export function WaitingRoom({
   }
 
   if (closed) {
+    const cta = closed.cta;
     return (
       <div className="space-y-4 text-center">
         <div className="mx-auto grid size-16 place-items-center rounded-full border border-fg/15 bg-fg/5 text-fg-dim">
@@ -255,9 +276,12 @@ export function WaitingRoom({
         </div>
         <h2 className="font-display text-xl font-semibold text-fg">{closed.title}</h2>
         {closed.message && <p className="text-sm leading-relaxed text-fg-dim">{closed.message}</p>}
-        <Button variant="outline" onClick={() => router.push(`/concerts/${slug}`)}>
-          กลับหน้าคอนเสิร์ต
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          {cta && <Button onClick={() => router.push(cta.href)}>{cta.label}</Button>}
+          <Button variant="outline" onClick={() => router.push(`/concerts/${slug}`)}>
+            กลับหน้าคอนเสิร์ต
+          </Button>
+        </div>
       </div>
     );
   }
