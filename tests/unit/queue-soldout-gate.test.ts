@@ -8,6 +8,11 @@ const { db } = vi.hoisted(() => ({
   db: {
     seat: { count: vi.fn() },
     saleRound: { findMany: vi.fn() },
+    // เส้นทางที่มีรอบ: บริบทผู้ใช้ (สมาชิก/ลงทะเบียน/โค้ด) + ยอดโควต้าต่อรอบ
+    membership: { findFirst: vi.fn() },
+    preRegistration: { findMany: vi.fn() },
+    accessCodeRedemption: { findMany: vi.fn() },
+    orderItem: { count: vi.fn() },
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
@@ -51,5 +56,76 @@ describe("resolveEntryForUser — คอนเสิร์ตไม่มีร�
     await resolveEntryForUser("70", "1");
     expect(db.saleRound.findMany).toHaveBeenCalledTimes(1);
     expect(db.seat.count).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ============================================================
+// คอนเสิร์ตที่มีรอบสมาชิกตั้งโควต้า — โควต้าหมดต้องปิดประตูตั้งแต่ตอนขอเข้าคิว
+//   (เดิมสมาชิกเข้าคิว → ถูกปล่อย → เลือกที่นั่ง → เพิ่งมาตกที่ "โควต้าเต็ม" ตอนจอง)
+// ============================================================
+describe("resolveEntryForUser — รอบสมาชิกตั้งโควต้า", () => {
+  const H = 3_600_000;
+  const memberRound = {
+    id: 11n,
+    name: "รอบสมาชิก",
+    audience: "MEMBER_ONLY",
+    startAt: new Date(Date.now() - H),
+    endAt: new Date(Date.now() + H),
+    requiresPreRegistration: false,
+    preRegisterStartAt: null,
+    preRegisterEndAt: null,
+    maxTicketsPerUser: 2,
+    seatQuota: 10,
+  };
+  const publicRound = {
+    ...memberRound,
+    id: 12n,
+    name: "รอบทั่วไป",
+    audience: "PUBLIC",
+    startAt: new Date(Date.now() + H),
+    endAt: new Date(Date.now() + 5 * H),
+    maxTicketsPerUser: null,
+    seatQuota: null,
+  };
+
+  beforeEach(() => {
+    seats(100, 0);
+    db.saleRound.findMany.mockResolvedValue([memberRound, publicRound]);
+    db.membership.findFirst.mockResolvedValue({
+      id: 1n,
+      userId: 1n,
+      source: "SELF_SIGNUP",
+      tier: "STANDARD",
+      startedAt: new Date(),
+      expiresAt: null,
+    });
+    db.preRegistration.findMany.mockResolvedValue([]);
+    db.accessCodeRedemption.findMany.mockResolvedValue([]);
+  });
+
+  it("🔑 ขายครบโควต้า 10/10 → ปฏิเสธ ROUND_QUOTA_FULL + บอกว่ารอบทั่วไปเริ่มเมื่อไร", async () => {
+    db.orderItem.count.mockResolvedValue(10);
+    const res = await resolveEntryForUser("70", "1");
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("ROUND_QUOTA_FULL");
+      expect(res.nextRound?.name).toBe("รอบทั่วไป");
+    }
+    // นับยอดเฉพาะรอบที่ตั้งโควต้า (รอบทั่วไปไม่ตั้ง → ไม่นับ)
+    expect(db.orderItem.count).toHaveBeenCalledTimes(1);
+  });
+
+  it("ยังเหลือโควต้า 9/10 → เข้ารอบสมาชิกได้", async () => {
+    db.orderItem.count.mockResolvedValue(9);
+    const res = await resolveEntryForUser("70", "1");
+    expect(res.ok && res.round?.id).toBe("11");
+  });
+
+  it("บัตรหมดทั้งงานชนะโควต้า → SOLD_OUT", async () => {
+    seats(0, 0);
+    db.orderItem.count.mockResolvedValue(10);
+    const res = await resolveEntryForUser("70", "1");
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("SOLD_OUT");
   });
 });

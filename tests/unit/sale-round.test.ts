@@ -12,6 +12,11 @@ import {
   nextEligibleRound,
   effectiveTicketLimit,
   exceedsRoundQuota,
+  isRoundQuotaFull,
+  planStandardRounds,
+  saleWindowCovering,
+  roundsOutsideSaleWindow,
+  describeRoundTimeline,
   describeRounds,
   type RoundLike,
   type RoundAudience,
@@ -331,5 +336,193 @@ describe("describeRounds — สถานะรายรอบสำหรับ
     const got = describeRounds(rounds, { ...premium, preRegisteredRoundIds: ["soon"] }, now);
     expect(got[2].preRegistered).toBe(true);
     expect(got[2].canPreRegisterNow).toBe(false);
+  });
+});
+
+// ============================================================
+// 5. โควต้ารอบสมาชิกหมด (ROUND_QUOTA_FULL) — "ขายในรอบสมาชิกไม่หมด → ที่เหลือไปรอบทั่วไป / หมด → บอกหน้าเว็บ"
+// ============================================================
+describe("isRoundQuotaFull — โควต้าของรอบขายครบหรือยัง", () => {
+  const r = round({ id: "m", audience: "MEMBER_ONLY", seatQuota: 10 });
+  it("ยอดถึงโควต้าพอดี → หมด (ขอเพิ่มอีก 1 ก็เกิน)", () => {
+    expect(isRoundQuotaFull(r, { m: 10 })).toBe(true);
+  });
+  it("ยังไม่ถึง → ไม่หมด", () => {
+    expect(isRoundQuotaFull(r, { m: 9 })).toBe(false);
+  });
+  it("รอบไม่ตั้งโควต้า / ไม่มีข้อมูลยอด → ไม่หมด (ไม่กระทบคอนเสิร์ตแบบเดิม)", () => {
+    expect(isRoundQuotaFull(round({ id: "p", audience: "PUBLIC" }), { p: 999 })).toBe(false);
+    expect(isRoundQuotaFull(r)).toBe(false);
+    expect(isRoundQuotaFull(r, {})).toBe(false);
+  });
+});
+
+describe("resolveRoundEntry — โควต้ารอบสมาชิกหมดต้องถูกกันตั้งแต่ประตูคิว", () => {
+  const rounds = [
+    round({ id: "m", audience: "MEMBER_ONLY", startAt: T("19:00"), endAt: T("19:30"), seatQuota: 10 }),
+    round({ id: "p", audience: "PUBLIC", startAt: T("19:30"), endAt: T("23:00") }),
+  ];
+
+  it("🔑 สมาชิก + โควต้ารอบสมาชิกเต็ม → ROUND_QUOTA_FULL พร้อมบอกว่ารอบทั่วไปเริ่มกี่โมง (ที่เหลือไปขายรอบนั้น)", () => {
+    const res = resolveRoundEntry(rounds, member, now, { quotaUsage: { m: 10 } });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("ROUND_QUOTA_FULL");
+      expect(res.message).toContain("รอบ m");
+      expect(res.nextRound?.startAt).toEqual(T("19:30"));
+      expect(res.nextRound?.audience).toBe("PUBLIC");
+    }
+  });
+
+  it("โควต้ายังเหลือ → เข้ารอบสมาชิกได้ตามปกติ", () => {
+    const res = resolveRoundEntry(rounds, member, now, { quotaUsage: { m: 9 } });
+    expect(res.ok && res.round?.id).toBe("m");
+  });
+
+  it("ไม่ส่งยอดโควต้ามา → พฤติกรรมเดิม (ผู้เรียกเก่าไม่พัง)", () => {
+    expect(resolveRoundEntry(rounds, member, now).ok).toBe(true);
+  });
+
+  it("คนทั่วไปตอนรอบสมาชิกโควต้าเต็ม → เหตุผลยังเป็น NOT_MEMBER (ไม่ใช่เรื่องโควต้าของเขา)", () => {
+    const res = resolveRoundEntry(rounds, guest, now, { quotaUsage: { m: 10 } });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("NOT_MEMBER");
+  });
+
+  it("รอบสมาชิกโควต้าเต็มแต่รอบทั่วไปเปิดพร้อมกัน → สมาชิกไหลไปซื้อในรอบทั่วไป (order บันทึกเข้ารอบทั่วไป)", () => {
+    const overlapping = [
+      round({ id: "m", audience: "MEMBER_ONLY", seatQuota: 10 }),
+      round({ id: "p", audience: "PUBLIC" }),
+    ];
+    const res = resolveRoundEntry(overlapping, member, now, { quotaUsage: { m: 10 } });
+    expect(res.ok && res.round?.id).toBe("p");
+  });
+
+  it("บัตรหมดทั้งงานชนะโควต้า → SOLD_OUT", () => {
+    const res = resolveRoundEntry(rounds, member, now, { soldOut: true, quotaUsage: { m: 10 } });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("SOLD_OUT");
+  });
+});
+
+describe("describeRounds — โควต้าหมดต้องขึ้นบนหน้าเว็บให้ทุกคนเห็น", () => {
+  const rounds = [
+    round({ id: "m", audience: "MEMBER_ONLY", startAt: T("19:00"), endAt: T("19:30"), seatQuota: 10 }),
+    round({ id: "p", audience: "PUBLIC", startAt: T("19:30"), endAt: T("23:00") }),
+  ];
+
+  it("โควต้าเต็ม → QUOTA_FULL (ทั้งสมาชิกและคนทั่วไปเห็นเหมือนกัน) · รอบทั่วไปที่ยังไม่เริ่มยังเป็น UPCOMING", () => {
+    const forMember = describeRounds(rounds, member, now, { quotaUsage: { m: 10 } });
+    expect(forMember.map((d) => d.state)).toEqual(["QUOTA_FULL", "UPCOMING"]);
+    const forGuest = describeRounds(rounds, guest, now, { quotaUsage: { m: 10 } });
+    expect(forGuest[0].state).toBe("QUOTA_FULL");
+  });
+
+  it("โควต้ายังเหลือ → สถานะตามสิทธิ์ตามเดิม", () => {
+    expect(describeRounds(rounds, member, now, { quotaUsage: { m: 3 } })[0].state).toBe("OPEN_ELIGIBLE");
+    expect(describeRounds(rounds, guest, now, { quotaUsage: { m: 3 } })[0].state).toBe("OPEN_DENIED");
+  });
+
+  it("บัตรหมดทั้งงานชนะทุกอย่าง → SOLD_OUT ไม่ใช่ QUOTA_FULL", () => {
+    const d = describeRounds(rounds, member, now, { soldOut: true, quotaUsage: { m: 10 } });
+    expect(d.map((x) => x.state)).toEqual(["SOLD_OUT", "SOLD_OUT"]);
+  });
+});
+
+// ============================================================
+// 6. พรีเซ็ต "สมาชิกกดก่อน N วัน" ยึดช่วงขายเดิม + ช่วงขายต้องครอบรอบ
+// ============================================================
+describe("planStandardRounds — ช่วงขายเดิม = รอบทั่วไป, รอบสมาชิกมาก่อน N วัน", () => {
+  const saleStartAt = new Date("2026-09-01T10:00:00+07:00");
+  const saleEndAt = new Date("2026-09-30T23:59:00+07:00");
+
+  it("กดก่อน 3 วัน → รอบสมาชิก 29 ส.ค. 10:00 จบตรงเวลาที่รอบทั่วไปเริ่ม · รอบทั่วไปยาวถึงปิดขาย", () => {
+    const plan = planStandardRounds({ saleStartAt, saleEndAt, leadDays: 3 });
+    expect(plan.memberStartAt).toEqual(new Date("2026-08-29T10:00:00+07:00"));
+    expect(plan.publicStartAt).toEqual(saleStartAt);
+    expect(plan.publicEndAt).toEqual(saleEndAt);
+  });
+
+  it("รอบต่อกันพอดี ไม่ทับ ไม่มีช่องว่าง (ช่วงรอบเป็น [start, end))", () => {
+    const plan = planStandardRounds({ saleStartAt, saleEndAt, leadDays: 1 });
+    const memberRound = round({ id: "m", audience: "MEMBER_ONLY", startAt: plan.memberStartAt, endAt: plan.publicStartAt });
+    const publicRound = round({ id: "p", audience: "PUBLIC", startAt: plan.publicStartAt, endAt: plan.publicEndAt });
+    const justBefore = new Date(saleStartAt.getTime() - 1);
+    expect(isRoundOpen(memberRound, justBefore)).toBe(true);
+    expect(isRoundOpen(publicRound, justBefore)).toBe(false);
+    expect(isRoundOpen(memberRound, saleStartAt)).toBe(false);
+    expect(isRoundOpen(publicRound, saleStartAt)).toBe(true);
+  });
+});
+
+describe("saleWindowCovering — ขยายช่วงขายให้ครอบรอบ (ขยายอย่างเดียว ไม่หด, ไม่เกินวันแสดง)", () => {
+  const window = {
+    saleStartAt: new Date("2026-09-01T10:00:00+07:00"),
+    saleEndAt: new Date("2026-09-20T10:00:00+07:00"),
+    eventAt: new Date("2026-10-10T19:00:00+07:00"),
+  };
+
+  it("🔑 รอบสมาชิกเริ่มก่อน 'เริ่มขาย' → เลื่อนเริ่มขายมาเท่ารอบ (ไม่งั้นสมาชิกกดไม่ถึง)", () => {
+    const r = saleWindowCovering(window, {
+      startAt: new Date("2026-08-29T10:00:00+07:00"),
+      endAt: new Date("2026-09-01T10:00:00+07:00"),
+    });
+    expect(r.changed).toBe(true);
+    expect(r.saleStartAt).toEqual(new Date("2026-08-29T10:00:00+07:00"));
+    expect(r.saleEndAt).toEqual(window.saleEndAt);
+  });
+
+  it("รอบจบหลัง 'ปิดขาย' → ขยายปิดขาย แต่ไม่เกินเวลาแสดง", () => {
+    const r = saleWindowCovering(window, {
+      startAt: new Date("2026-09-01T10:00:00+07:00"),
+      endAt: new Date("2026-12-01T10:00:00+07:00"),
+    });
+    expect(r.changed).toBe(true);
+    expect(r.saleEndAt).toEqual(window.eventAt);
+  });
+
+  it("รอบอยู่ในช่วงขายอยู่แล้ว → ไม่แตะอะไร", () => {
+    const r = saleWindowCovering(window, {
+      startAt: new Date("2026-09-05T10:00:00+07:00"),
+      endAt: new Date("2026-09-06T10:00:00+07:00"),
+    });
+    expect(r.changed).toBe(false);
+    expect(r.saleStartAt).toEqual(window.saleStartAt);
+    expect(r.saleEndAt).toEqual(window.saleEndAt);
+  });
+});
+
+describe("roundsOutsideSaleWindow — รอบที่ยื่นออกนอกช่วงขาย (เตือนแอดมิน)", () => {
+  const window = {
+    saleStartAt: new Date("2026-09-01T10:00:00+07:00"),
+    saleEndAt: new Date("2026-09-20T10:00:00+07:00"),
+  };
+  it("คืนเฉพาะรอบที่หลุดช่วง (บางส่วนก็นับ)", () => {
+    const inside = { name: "รอบทั่วไป", startAt: window.saleStartAt, endAt: window.saleEndAt };
+    const before = { name: "รอบสมาชิก", startAt: new Date("2026-08-29T10:00:00+07:00"), endAt: window.saleStartAt };
+    const after = { name: "รอบพิเศษ", startAt: new Date("2026-09-19T10:00:00+07:00"), endAt: new Date("2026-09-25T10:00:00+07:00") };
+    expect(roundsOutsideSaleWindow(window, [inside, before, after]).map((r) => r.name)).toEqual([
+      "รอบสมาชิก",
+      "รอบพิเศษ",
+    ]);
+  });
+});
+
+describe("describeRoundTimeline — บรรทัดสรุปรอบบนแผง CTA (ไม่ผูกผู้ใช้ แคชได้)", () => {
+  const rounds = [
+    { name: "รอบสมาชิก", audience: "MEMBER_ONLY" as const, startAt: T("19:00"), endAt: T("19:30") },
+    { name: "รอบทั่วไป", audience: "PUBLIC" as const, startAt: T("19:30"), endAt: T("23:00") },
+  ];
+  it("ระหว่างรอบสมาชิก → บอกว่าตอนนี้รอบสมาชิก (เฉพาะสมาชิก) และรอบทั่วไปเริ่มเมื่อไร", () => {
+    const text = describeRoundTimeline(rounds, now)!;
+    expect(text).toContain("ตอนนี้: รอบสมาชิก (เฉพาะสมาชิก)");
+    expect(text).toContain("รอบทั่วไป เริ่ม");
+  });
+  it("ระหว่างรอบทั่วไป → ไม่มีรอบถัดไป บอกแค่ตอนนี้", () => {
+    expect(describeRoundTimeline(rounds, T("20:00"))).toBe("ตอนนี้: รอบทั่วไป");
+  });
+  it("ไม่มีรอบ / จบหมดแล้ว → null (หน้าเดิมไม่เปลี่ยน)", () => {
+    expect(describeRoundTimeline([], now)).toBeNull();
+    expect(describeRoundTimeline(rounds, T("23:30"))).toBeNull();
   });
 });

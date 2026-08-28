@@ -10,6 +10,16 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { assertVerifiedAdmin } from "@/lib/admin-guard";
 import { normalizeCode } from "@/lib/access-code";
+import { formatThaiDate } from "@/lib/format";
+import { planStandardRounds, saleWindowCovering } from "@/lib/sale-round";
+
+// หน้าสาธารณะเป็น ISR — เปลี่ยนรอบ/ช่วงขายต้องล้างทั้งหน้ารายการ หน้าแรก และหน้าคอนเสิร์ต (slug)
+function revalidateRoundPages(concertId: string, slug: string) {
+  revalidatePath(`/admin/concerts/${concertId}`);
+  revalidatePath("/concerts");
+  revalidatePath("/");
+  revalidatePath(`/concerts/${slug}`);
+}
 
 export type AdminRoundResult = { ok: true; message: string } | { ok: false; error: string };
 
@@ -74,30 +84,58 @@ export async function createSaleRound(input: {
 
   const concert = await prisma.concert.findUnique({
     where: { id: BigInt(d.concertId) },
-    select: { id: true },
+    select: { id: true, slug: true, saleStartAt: true, saleEndAt: true, eventAt: true },
   });
   if (!concert) return { ok: false, error: "ไม่พบคอนเสิร์ต" };
 
-  await prisma.saleRound.create({
-    data: {
-      concertId: concert.id,
-      name: d.name,
-      audience: d.audience,
-      startAt: new Date(d.startAt),
-      endAt: new Date(d.endAt),
-      requiresPreRegistration: d.requiresPreRegistration,
-      // ปิดลงทะเบียนล่วงหน้า = ล้างหน้าต่างเวลาทิ้งเสมอ (กันค่าค้างจากฟอร์มติดไปกับรอบที่ไม่ได้ใช้)
-      preRegisterStartAt: d.requiresPreRegistration ? optionalDate(d.preRegisterStartAt) : null,
-      preRegisterEndAt: d.requiresPreRegistration ? optionalDate(d.preRegisterEndAt) : null,
-      // 0 = ไม่จำกัด → เก็บเป็น null ให้ logic ฝั่งอ่านตีความง่าย
-      maxTicketsPerUser: d.maxTicketsPerUser && d.maxTicketsPerUser > 0 ? d.maxTicketsPerUser : null,
-      seatQuota: d.seatQuota && d.seatQuota > 0 ? d.seatQuota : null,
-    },
-  });
+  const startAt = new Date(d.startAt);
+  const endAt = new Date(d.endAt);
+  // ขายบัตรหลังงานเริ่มไม่ได้ — กติกาเดียวกับ "ปิดขาย" ของฟอร์มคอนเสิร์ต (lib/concert-form)
+  if (endAt.getTime() > concert.eventAt.getTime()) {
+    return {
+      ok: false,
+      error: `รอบต้องจบก่อนเวลาแสดง (${formatThaiDate(concert.eventAt)})`,
+    };
+  }
 
-  revalidatePath(`/admin/concerts/${d.concertId}`);
-  revalidatePath("/concerts");
-  return { ok: true, message: "เพิ่มรอบขายแล้ว" };
+  // รอบที่อยู่นอกช่วงขายของคอนเสิร์ต = ไม่มีใครกดถึง (หน้าเว็บโชว์ปุ่มเข้าคิวเฉพาะในช่วงขาย)
+  //   → ขยายช่วงขายให้ครอบรอบนี้ในทรานแซกชันเดียวกัน (ขยายอย่างเดียว ไม่หด)
+  const window = saleWindowCovering(concert, { startAt, endAt });
+
+  await prisma.$transaction([
+    prisma.saleRound.create({
+      data: {
+        concertId: concert.id,
+        name: d.name,
+        audience: d.audience,
+        startAt,
+        endAt,
+        requiresPreRegistration: d.requiresPreRegistration,
+        // ปิดลงทะเบียนล่วงหน้า = ล้างหน้าต่างเวลาทิ้งเสมอ (กันค่าค้างจากฟอร์มติดไปกับรอบที่ไม่ได้ใช้)
+        preRegisterStartAt: d.requiresPreRegistration ? optionalDate(d.preRegisterStartAt) : null,
+        preRegisterEndAt: d.requiresPreRegistration ? optionalDate(d.preRegisterEndAt) : null,
+        // 0 = ไม่จำกัด → เก็บเป็น null ให้ logic ฝั่งอ่านตีความง่าย
+        maxTicketsPerUser: d.maxTicketsPerUser && d.maxTicketsPerUser > 0 ? d.maxTicketsPerUser : null,
+        seatQuota: d.seatQuota && d.seatQuota > 0 ? d.seatQuota : null,
+      },
+    }),
+    ...(window.changed
+      ? [
+          prisma.concert.update({
+            where: { id: concert.id },
+            data: { saleStartAt: window.saleStartAt, saleEndAt: window.saleEndAt },
+          }),
+        ]
+      : []),
+  ]);
+
+  revalidateRoundPages(d.concertId, concert.slug);
+  return {
+    ok: true,
+    message: window.changed
+      ? `เพิ่มรอบขายแล้ว — ขยายช่วงขายของคอนเสิร์ตเป็น ${formatThaiDate(window.saleStartAt)} – ${formatThaiDate(window.saleEndAt)} ให้ครอบรอบนี้`
+      : "เพิ่มรอบขายแล้ว",
+  };
 }
 
 export async function deleteSaleRound(input: { saleRoundId: string }): Promise<AdminRoundResult> {
@@ -197,25 +235,30 @@ export async function deleteAccessCode(input: { accessCodeId: string }): Promise
 //   ทำเป็นปุ่มสำเร็จรูปเพราะรูปแบบนี้คือสิ่งที่ผู้จัดใช้จริงเกือบทุกงาน — ไม่ควรให้กรอกฟอร์มยาว 2 รอบ
 const standardSchema = z.object({
   concertId: idSchema,
-  memberStartAt: z.string().min(1, "กรุณาระบุเวลาเริ่มรอบสมาชิก"),
   leadDays: z.number().int().min(1, "รอบสมาชิกต้องมาก่อนอย่างน้อย 1 วัน").max(14),
-  publicDays: z.number().int().min(1).max(60).default(7),
   memberMaxTickets: z.number().int().min(0).max(20).nullable().default(null),
+  memberSeatQuota: z.number().int().min(0).max(100000).nullable().default(null),
 });
 
+// พรีเซ็ต "สมาชิกกดก่อน N วัน" — ยึด "ช่วงขาย" ที่แอดมินตั้งไว้ในคอนเสิร์ตเป็นรอบทั่วไปทั้งช่วง
+//   รอบสมาชิก [เริ่มขาย − N วัน, เริ่มขาย) → รอบทั่วไป [เริ่มขาย, ปิดขาย)
+//   แล้วเลื่อน Concert.saleStartAt มาเป็นเวลาเริ่มรอบสมาชิก (ไม่งั้นหน้าเว็บโชว์ "เร็ว ๆ นี้" ไม่มีปุ่มเข้าคิว
+//   → สมาชิกกดไม่ถึง) · ไม่หมดในรอบสมาชิก = ที่นั่งที่เหลือขายต่อรอบทั่วไปเอง (pool เดียวกัน)
+//   · หมดตั้งแต่รอบสมาชิก = ประกาศ SOLD OUT อัตโนมัติ รอบทั่วไปไม่เปิด (lib/sold-out, docs/23)
+//   เดิมพรีเซ็ตรับ "เวลาเริ่มรอบสมาชิก" แล้วสร้างรอบทั่วไปยาว 7 วันโดยไม่สนช่วงขาย → รอบทั่วไปจบก่อน
+//   "ปิดขาย" แล้วไม่มีใครกดได้ (ROUND_CLOSED) ทั้งที่หน้าเว็บยังขึ้น "กำลังขาย"
 export async function createStandardRounds(input: {
   concertId: string;
-  memberStartAt: string;
   leadDays: number;
-  publicDays?: number;
   memberMaxTickets?: number | null;
+  memberSeatQuota?: number | null;
 }): Promise<AdminRoundResult> {
   if (!(await requireAdmin())) return { ok: false, error: "ต้องเป็นแอดมิน" };
 
   const parsed = standardSchema.safeParse({
     ...input,
-    publicDays: input.publicDays ?? 7,
     memberMaxTickets: input.memberMaxTickets ?? null,
+    memberSeatQuota: input.memberSeatQuota ?? null,
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.errors[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
@@ -224,45 +267,66 @@ export async function createStandardRounds(input: {
 
   const concert = await prisma.concert.findUnique({
     where: { id: BigInt(d.concertId) },
-    select: { id: true, _count: { select: { saleRounds: true } } },
+    select: {
+      id: true,
+      slug: true,
+      saleStartAt: true,
+      saleEndAt: true,
+      _count: { select: { saleRounds: true } },
+    },
   });
   if (!concert) return { ok: false, error: "ไม่พบคอนเสิร์ต" };
   if (concert._count.saleRounds > 0) {
     return { ok: false, error: "คอนเสิร์ตนี้มีรอบอยู่แล้ว — ลบรอบเดิมก่อน หรือเพิ่มทีละรอบเอง" };
   }
 
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const memberStart = new Date(d.memberStartAt);
-  if (Number.isNaN(memberStart.getTime())) return { ok: false, error: "เวลาเริ่มไม่ถูกต้อง" };
-  // รอบสมาชิกจบตรงเวลาที่รอบทั่วไปเริ่มพอดี — ช่วงรอบเป็น [start, end) จึงไม่ทับกัน
-  const publicStart = new Date(memberStart.getTime() + d.leadDays * DAY_MS);
-  const publicEnd = new Date(publicStart.getTime() + d.publicDays * DAY_MS);
+  // ถึงเวลาเริ่มขายไปแล้ว = รอบสมาชิกที่ต้อง "มาก่อน" จะอยู่ในอดีตทั้งรอบ → ไม่มีประโยชน์ บอกให้เลื่อนก่อน
+  if (concert.saleStartAt.getTime() <= Date.now()) {
+    return {
+      ok: false,
+      error: `คอนเสิร์ตนี้ถึงเวลาเริ่มขายแล้ว (${formatThaiDate(concert.saleStartAt)}) — รอบสมาชิกต้องมาก่อนช่วงขาย: เลื่อน "เริ่มขาย" ในหน้าแก้ไขคอนเสิร์ตไปเป็นอนาคตก่อน หรือเพิ่มรอบเองด้วย "+ เพิ่มรอบ"`,
+    };
+  }
 
-  await prisma.saleRound.createMany({
-    data: [
-      {
-        concertId: concert.id,
-        name: "รอบสมาชิก",
-        audience: "MEMBER_ONLY",
-        startAt: memberStart,
-        endAt: publicStart,
-        maxTicketsPerUser:
-          d.memberMaxTickets && d.memberMaxTickets > 0 ? d.memberMaxTickets : null,
-      },
-      {
-        concertId: concert.id,
-        name: "รอบทั่วไป",
-        audience: "PUBLIC",
-        startAt: publicStart,
-        endAt: publicEnd,
-      },
-    ],
+  const plan = planStandardRounds({
+    saleStartAt: concert.saleStartAt,
+    saleEndAt: concert.saleEndAt,
+    leadDays: d.leadDays,
   });
 
-  revalidatePath(`/admin/concerts/${d.concertId}`);
-  revalidatePath("/concerts");
+  await prisma.$transaction([
+    prisma.saleRound.createMany({
+      data: [
+        {
+          concertId: concert.id,
+          name: "รอบสมาชิก",
+          audience: "MEMBER_ONLY",
+          startAt: plan.memberStartAt,
+          endAt: plan.publicStartAt, // จบตรงเวลาที่รอบทั่วไปเริ่มพอดี — ช่วงรอบเป็น [start, end) จึงไม่ทับกัน
+          maxTicketsPerUser:
+            d.memberMaxTickets && d.memberMaxTickets > 0 ? d.memberMaxTickets : null,
+          // โควต้าที่นั่งของรอบสมาชิก (ไม่ตั้ง = สมาชิกซื้อได้ทุกที่นั่งที่ว่าง)
+          seatQuota: d.memberSeatQuota && d.memberSeatQuota > 0 ? d.memberSeatQuota : null,
+        },
+        {
+          concertId: concert.id,
+          name: "รอบทั่วไป",
+          audience: "PUBLIC",
+          startAt: plan.publicStartAt,
+          endAt: plan.publicEndAt,
+        },
+      ],
+    }),
+    // เลื่อน "เริ่มขาย" มาเป็นเวลาเริ่มรอบสมาชิก ให้ปุ่มเข้าคิวโผล่ตั้งแต่รอบสมาชิก (ด่านรอบคัดคนที่ไม่ใช่สมาชิกเอง)
+    prisma.concert.update({
+      where: { id: concert.id },
+      data: { saleStartAt: plan.memberStartAt },
+    }),
+  ]);
+
+  revalidateRoundPages(d.concertId, concert.slug);
   return {
     ok: true,
-    message: `ตั้งรอบแล้ว — สมาชิกกดก่อน ${d.leadDays} วัน แล้วเปิดรอบทั่วไป`,
+    message: `ตั้งรอบแล้ว — รอบสมาชิก ${formatThaiDate(plan.memberStartAt)} → รอบทั่วไป ${formatThaiDate(plan.publicStartAt)} ถึง ${formatThaiDate(plan.publicEndAt)} · เลื่อน "เริ่มขาย" ของคอนเสิร์ตมาเป็น ${formatThaiDate(plan.memberStartAt)} ให้แล้ว`,
   };
 }

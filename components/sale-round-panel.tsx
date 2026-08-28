@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { preRegisterForRound, redeemRoundAccessCode } from "@/app/actions/sale-round";
 import { Countdown } from "@/components/countdown";
 
-type RoundState = "OPEN_ELIGIBLE" | "OPEN_DENIED" | "UPCOMING" | "ENDED" | "SOLD_OUT";
+type RoundState = "OPEN_ELIGIBLE" | "OPEN_DENIED" | "UPCOMING" | "ENDED" | "SOLD_OUT" | "QUOTA_FULL";
 
 type RoundView = {
   id: string;
@@ -60,7 +60,16 @@ const stateBadge: Record<RoundState, { text: string; tone: "success" | "danger" 
   UPCOMING: { text: "ยังไม่เริ่ม", tone: "info" },
   ENDED: { text: "จบรอบแล้ว", tone: "neutral" },
   SOLD_OUT: { text: "ไม่เปิดขาย — บัตรหมดก่อน", tone: "neutral" },
+  QUOTA_FULL: { text: "โควต้ารอบนี้หมดแล้ว", tone: "danger" },
 };
+
+// รอบถัดไปหลังจากรอบที่ให้มา (เรียงตามเวลาเริ่ม) — ใช้บอกว่าที่นั่งที่เหลือจากโควต้าไปขายรอบไหน
+function nextRoundAfter(rounds: RoundView[], current: RoundView): RoundView | null {
+  const after = rounds
+    .filter((r) => new Date(r.startAt).getTime() >= new Date(current.endAt).getTime() && r.id !== current.id)
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  return after[0] ?? null;
+}
 
 export function SaleRoundPanel({ concertId }: { concertId: string }) {
   const [data, setData] = useState<RoundsResponse | null>(null);
@@ -148,6 +157,7 @@ export function SaleRoundPanel({ concertId }: { concertId: string }) {
       <ol className="space-y-3">
         {data.rounds.map((r) => {
           const badge = stateBadge[r.state];
+          const nextAfterQuota = r.state === "QUOTA_FULL" ? nextRoundAfter(data.rounds, r) : null;
           return (
             <li
               key={r.id}
@@ -156,7 +166,9 @@ export function SaleRoundPanel({ concertId }: { concertId: string }) {
                   ? "border-success/30"
                   : r.state === "ENDED" || r.state === "SOLD_OUT"
                     ? "border-fg/5 opacity-60"
-                    : "border-fg/10"
+                    : r.state === "QUOTA_FULL"
+                      ? "border-danger/30"
+                      : "border-fg/10"
               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -188,8 +200,17 @@ export function SaleRoundPanel({ concertId }: { concertId: string }) {
                 )}
               </div>
 
+              {/* โควต้าของรอบขายครบ — บอกให้ชัดว่าที่นั่งที่เหลือไปไหนต่อ (ไม่ใช่ "บัตรหมด" ทั้งงาน) */}
+              {r.state === "QUOTA_FULL" && (
+                <p className="mt-3 text-sm text-fg-dim">
+                  {nextAfterQuota
+                    ? `ที่นั่งที่เหลือจะเปิดขายใน${nextAfterQuota.name} เริ่ม ${timeFmt.format(new Date(nextAfterQuota.startAt))}`
+                    : "ที่นั่งในโควต้าของรอบนี้ขายครบแล้ว"}
+                </p>
+              )}
+
               {/* สิ่งที่ผู้ใช้ต้องทำต่อ */}
-              {r.state !== "ENDED" && r.state !== "SOLD_OUT" && (
+              {r.state !== "ENDED" && r.state !== "SOLD_OUT" && r.state !== "QUOTA_FULL" && (
                 <div className="mt-3 space-y-2">
                   {r.preRegistered && r.preRegCode && (
                     <p className="flex items-center gap-1.5 text-sm text-success">

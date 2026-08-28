@@ -15,6 +15,7 @@ import { EqBars } from "@/components/eq-bars";
 import { SetChatContext } from "@/components/chat-context";
 import { SaleRoundPanel } from "@/components/sale-round-panel";
 import { Countdown } from "@/components/countdown";
+import { describeRoundTimeline } from "@/lib/sale-round";
 
 export const revalidate = 60;
 
@@ -62,6 +63,12 @@ export default async function ConcertDetailPage({
         },
         orderBy: { price: "desc" },
       },
+      // รอบกดบัตร (ถ้ามี) — เอาไว้บอกบนแผง CTA ว่าตอนนี้รอบไหนเปิด/รอบทั่วไปเริ่มเมื่อไร
+      //   ข้อมูลระดับ "รอบ" ไม่ผูกกับผู้ใช้ จึงอยู่ในหน้าแคชได้ (สถานะรายบุคคลอยู่ใน SaleRoundPanel ที่โหลดสด)
+      saleRounds: {
+        select: { name: true, audience: true, startAt: true, endAt: true },
+        orderBy: { startAt: "asc" },
+      },
     },
   });
 
@@ -82,6 +89,9 @@ export default async function ConcertDetailPage({
   const isSoldOut = display === "SOLD_OUT";
   const notReady = display === "NOT_READY";
 
+  // สรุปรอบแบบไม่ผูกผู้ใช้: "ตอนนี้: รอบสมาชิก (เฉพาะสมาชิก) · รอบทั่วไป เริ่ม …" — null เมื่อไม่มีรอบ/บัตรหมด
+  const roundTimeline = isSoldOut ? null : describeRoundTimeline(concert.saleRounds, new Date());
+
   const zonesSummary = concert.zones
     .map((z) => `- ${z.name}: ${Number(z.price).toLocaleString()} บาท (เหลือ ${z._count.seats} ที่นั่ง)`)
     .join("\n");
@@ -92,6 +102,7 @@ export default async function ConcertDetailPage({
     `วันงาน: ${concert.eventAt.toLocaleDateString("th-TH", { dateStyle: "full" })}`,
     `สถานะ: ${isOnSale ? "กำลังขาย" : saleNotYet ? "ยังไม่เปิดขาย" : "ปิดการขาย"}`,
     `จำกัด: ${concert.maxTicketsPerUser} ใบ/บัญชี`,
+    ...(roundTimeline ? [`รอบกดบัตร: ${roundTimeline}`] : []),
     `โซนที่นั่ง:\n${zonesSummary}`,
   ].join("\n");
 
@@ -274,6 +285,16 @@ export default async function ConcertDetailPage({
                   </div>
                 )}
               </div>
+
+              {/* งานที่แบ่งรอบ: บอกตรงปุ่มเลยว่าตอนนี้รอบไหนเปิด / รอบทั่วไปเริ่มเมื่อไร (รายละเอียดรายบุคคลอยู่แผง "รอบกดบัตร" ด้านล่าง) */}
+              {roundTimeline && (
+                <p
+                  data-testid="round-timeline"
+                  className="mt-3 rounded-lg border border-brand-500/20 bg-brand-500/5 px-3 py-2 text-xs leading-relaxed text-fg-dim"
+                >
+                  {roundTimeline}
+                </p>
+              )}
 
               <p className="mt-4 flex items-start gap-2 border-t border-fg/10 pt-4 text-xs leading-relaxed text-fg-faint">
                 <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-brand-400" />

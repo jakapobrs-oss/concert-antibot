@@ -61,6 +61,7 @@ export type UserRoundContext = {
 
 export type DenyReason =
   | "SOLD_OUT" // บัตรหมดทั้งงาน — รอบที่ยังไม่เปิดก็ไม่ได้ขายแล้ว
+  | "ROUND_QUOTA_FULL" // โควต้าที่นั่งของรอบที่ผู้ใช้มีสิทธิ์ขายครบแล้ว — ที่นั่งที่เหลือไปขายรอบถัดไป
   | "ROUND_CLOSED" // ยังไม่ถึงเวลา / หมดเวลารอบแล้ว
   | "NOT_MEMBER"
   | "NEED_PREMIUM"
@@ -69,6 +70,7 @@ export type DenyReason =
 
 export const DENY_MESSAGE: Record<DenyReason, string> = {
   SOLD_OUT: "บัตรหมดแล้ว",
+  ROUND_QUOTA_FULL: "โควต้าที่นั่งของรอบนี้หมดแล้ว",
   ROUND_CLOSED: "ยังไม่ถึงเวลาเปิดขายรอบที่คุณมีสิทธิ์",
   NOT_MEMBER: "รอบนี้สำหรับสมาชิกเท่านั้น",
   NEED_PREMIUM: "รอบนี้สำหรับสมาชิกระดับพรีเมียมเท่านั้น",
@@ -138,6 +140,22 @@ export function checkRoundEligibility(
   return meetsRoundRequirements(round, ctx);
 }
 
+// ที่นั่งที่ "ผูกพันแล้ว" ต่อรอบ (roundId → จำนวน) — ใช้ตัดสินว่าโควต้าของรอบหมดหรือยัง
+//   ใส่เฉพาะรอบที่ตั้ง seatQuota ไว้ก็พอ รอบที่ไม่มีในนี้ถือว่ายังไม่ได้ขาย (0)
+export type RoundQuotaUsage = Record<string, number>;
+
+export type RoundEntryOptions = {
+  soldOut?: boolean;
+  quotaUsage?: RoundQuotaUsage;
+};
+
+// โควต้าของรอบนี้ขายครบแล้วหรือยัง — รอบไม่ตั้งโควต้า / ไม่มีข้อมูลยอด = ยังไม่หมด
+//   "หมด" = ขอเพิ่มอีก 1 ที่นั่งก็เกินโควต้าแล้ว (นิยามเดียวกับ exceedsRoundQuota ที่ใช้ตอนจองจริง)
+export function isRoundQuotaFull(round: RoundLike, usage?: RoundQuotaUsage): boolean {
+  if (!usage) return false;
+  return exceedsRoundQuota({ sold: usage[round.id] ?? 0, requested: 1, quota: round.seatQuota });
+}
+
 export type EntryDecision =
   // round = null → คอนเสิร์ตนี้ไม่มีระบบรอบ (พฤติกรรมเดิม)
   | { ok: true; round: RoundLike | null }
@@ -154,7 +172,7 @@ export function resolveRoundEntry(
   rounds: RoundLike[],
   ctx: UserRoundContext,
   now: Date,
-  opts: { soldOut?: boolean } = {}
+  opts: RoundEntryOptions = {}
 ): EntryDecision {
   // 🎫 บัตรหมดทั้งงาน → จบตั้งแต่ตรงนี้ ไม่ต้องดูรอบเลย
   //   (ตรงกับพฤติกรรมจริง: หมดตั้งแต่รอบสมาชิก = รอบทั่วไปไม่เปิดขาย)
@@ -170,12 +188,28 @@ export function resolveRoundEntry(
     .sort((a, b) => audienceRank(a.audience) - audienceRank(b.audience));
 
   // เข้าได้รอบไหนก็ใช้รอบนั้น — ไล่จากรอบที่จำกัดที่สุดก่อน เพื่อให้ order ถูกบันทึกเข้ารอบที่ถูกต้อง
+  //   รอบที่มีสิทธิ์แต่โควต้าขายครบแล้ว = ข้ามไปดูรอบที่เปิดกว้างกว่าที่เปิดพร้อมกัน (ถ้ามี)
+  //   ไม่มี → ปฏิเสธด้วย ROUND_QUOTA_FULL ตั้งแต่ประตูคิว ไม่ปล่อยให้ต่อคิว/เลือกที่นั่งแล้วค่อยไปตกตอนจอง
+  let quotaFullRound: RoundLike | null = null;
   for (const round of open) {
-    if (meetsRoundRequirements(round, ctx).ok) return { ok: true, round };
+    if (!meetsRoundRequirements(round, ctx).ok) continue;
+    if (isRoundQuotaFull(round, opts.quotaUsage)) {
+      quotaFullRound ??= round;
+      continue;
+    }
+    return { ok: true, round };
   }
 
   // เข้าไม่ได้ — เลือกเหตุผลจาก "รอบที่เปิดกว้างที่สุดที่กำลังเปิดอยู่" (ใกล้เคียงกับสิ่งที่ผู้ใช้ต้องทำที่สุด)
   const nextRound = nextEligibleRound(rounds, ctx, now);
+  if (quotaFullRound) {
+    return {
+      ok: false,
+      reason: "ROUND_QUOTA_FULL",
+      message: `โควต้าที่นั่งของ${quotaFullRound.name}หมดแล้ว`,
+      nextRound,
+    };
+  }
   if (open.length === 0) {
     return {
       ok: false,
@@ -227,8 +261,95 @@ export function exceedsRoundQuota(params: {
   return params.sold + params.requested > params.quota;
 }
 
+// ------------------------------------------------------------
+// ช่วงขายของคอนเสิร์ต (Concert.saleStartAt–saleEndAt) กับรอบต้อง "ซ้อนกันพอดี"
+//   หน้าเว็บโชว์ปุ่ม "เข้าคิว" เฉพาะเมื่อ now อยู่ในช่วงขาย (lib/concert-display) แล้วค่อยให้ด่านรอบตัดสิน
+//   → รอบที่อยู่นอกช่วงขาย = ไม่มีใครกดถึงเลย (รอบสมาชิกที่เริ่มก่อน "เริ่มขาย" เคยเป็นแบบนี้)
+// ------------------------------------------------------------
+
+export type SaleWindow = { saleStartAt: Date; saleEndAt: Date };
+export type RoundSpan = { name: string; startAt: Date; endAt: Date };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// แผนรอบมาตรฐาน "สมาชิกกดก่อน N วัน" — ยึดช่วงขายเดิมของคอนเสิร์ตเป็น "รอบทั่วไป" ทั้งช่วง
+//   รอบสมาชิก [เริ่มขาย − N วัน, เริ่มขาย) → รอบทั่วไป [เริ่มขาย, ปิดขาย)
+//   ผู้เรียกต้องเลื่อน Concert.saleStartAt มาเป็น memberStartAt ด้วย ไม่งั้นสมาชิกกดไม่ถึง (ดูข้างบน)
+export function planStandardRounds(params: SaleWindow & { leadDays: number }): {
+  memberStartAt: Date;
+  publicStartAt: Date;
+  publicEndAt: Date;
+} {
+  const publicStartAt = params.saleStartAt;
+  return {
+    memberStartAt: new Date(publicStartAt.getTime() - params.leadDays * DAY_MS),
+    publicStartAt,
+    publicEndAt: params.saleEndAt,
+  };
+}
+
+// ขยายช่วงขายให้ครอบรอบที่เพิ่ม (ขยายอย่างเดียว ไม่หด) — ปิดขายไม่เกินเวลาแสดง (กติกาเดียวกับฟอร์มคอนเสิร์ต)
+export function saleWindowCovering(
+  window: SaleWindow & { eventAt: Date },
+  round: { startAt: Date; endAt: Date }
+): SaleWindow & { changed: boolean } {
+  const saleStartAt = new Date(Math.min(window.saleStartAt.getTime(), round.startAt.getTime()));
+  const saleEndAt = new Date(
+    Math.min(Math.max(window.saleEndAt.getTime(), round.endAt.getTime()), window.eventAt.getTime())
+  );
+  return {
+    saleStartAt,
+    saleEndAt,
+    changed:
+      saleStartAt.getTime() !== window.saleStartAt.getTime() ||
+      saleEndAt.getTime() !== window.saleEndAt.getTime(),
+  };
+}
+
+// รอบที่ยื่นออกนอกช่วงขาย (บางส่วนหรือทั้งหมด) — เอาไปเตือนแอดมินว่าช่วงนั้นไม่มีใครกดถึง
+export function roundsOutsideSaleWindow<R extends RoundSpan>(window: SaleWindow, rounds: R[]): R[] {
+  return rounds.filter(
+    (r) =>
+      r.startAt.getTime() < window.saleStartAt.getTime() ||
+      r.endAt.getTime() > window.saleEndAt.getTime()
+  );
+}
+
+// ป้ายกลุ่มผู้มีสิทธิ์แบบสั้น (ต่อท้ายชื่อรอบ) — PUBLIC ไม่ต้องบอก
+const AUDIENCE_SHORT: Record<RoundAudience, string> = {
+  FANCLUB: " (เฉพาะสมาชิกพรีเมียม)",
+  PARTNER: " (ต้องมีโค้ดสิทธิ์)",
+  MEMBER_ONLY: " (เฉพาะสมาชิก)",
+  PUBLIC: "",
+};
+
+// บรรทัดสรุปรอบแบบ "ไม่ผูกผู้ใช้" สำหรับหน้าแคช: "ตอนนี้: รอบสมาชิก (เฉพาะสมาชิก) · รอบทั่วไป เริ่ม 1 กันยายน 2569 10:00"
+//   ไม่มีรอบ / รอบจบหมดแล้ว → null (หน้าเดิมไม่เปลี่ยน)
+export function describeRoundTimeline(
+  rounds: { name: string; audience: RoundAudience; startAt: Date; endAt: Date }[],
+  now: Date
+): string | null {
+  if (rounds.length === 0) return null;
+  const open = rounds.filter((r) => r.startAt.getTime() <= now.getTime() && now.getTime() < r.endAt.getTime());
+  const upcoming = rounds
+    .filter((r) => r.startAt.getTime() > now.getTime())
+    .sort((a, b) => a.startAt.getTime() - b.startAt.getTime())[0];
+  const parts: string[] = [];
+  if (open.length > 0) {
+    parts.push(`ตอนนี้: ${open.map((r) => `${r.name}${AUDIENCE_SHORT[r.audience]}`).join(" / ")}`);
+  }
+  if (upcoming) parts.push(`${upcoming.name} เริ่ม ${formatThaiDate(upcoming.startAt)}`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 // สถานะรายรอบสำหรับหน้าจอ (ไทม์ไลน์รอบขายในหน้าคอนเสิร์ต)
-export type RoundState = "OPEN_ELIGIBLE" | "OPEN_DENIED" | "UPCOMING" | "ENDED" | "SOLD_OUT";
+export type RoundState =
+  | "OPEN_ELIGIBLE"
+  | "OPEN_DENIED"
+  | "UPCOMING"
+  | "ENDED"
+  | "SOLD_OUT"
+  | "QUOTA_FULL"; // รอบเปิดอยู่แต่โควต้าที่นั่งของรอบขายครบแล้ว (ที่นั่งที่เหลือไปรอบถัดไป)
 
 export type RoundStatusForUser = {
   round: RoundLike;
@@ -243,7 +364,7 @@ export function describeRounds(
   rounds: RoundLike[],
   ctx: UserRoundContext,
   now: Date,
-  opts: { soldOut?: boolean } = {}
+  opts: RoundEntryOptions = {}
 ): RoundStatusForUser[] {
   return [...rounds]
     .sort((a, b) => a.startAt.getTime() - b.startAt.getTime())
@@ -254,6 +375,8 @@ export function describeRounds(
       // บัตรหมดแล้ว → รอบที่ยังไม่ถึงเวลา "ไม่ได้ขายแล้ว" ไม่ใช่แค่ยังไม่เริ่ม
       else if (opts.soldOut) state = "SOLD_OUT";
       else if (now.getTime() < round.startAt.getTime()) state = "UPCOMING";
+      // โควต้าของรอบหมด = สถานะของ "รอบ" ไม่ใช่ของผู้ใช้ → โชว์ให้ทุกคนเห็นเหมือนกัน (ไม่ต้องล็อกอินก็รู้ว่าหมด)
+      else if (isRoundQuotaFull(round, opts.quotaUsage)) state = "QUOTA_FULL";
       else state = requirements.ok ? "OPEN_ELIGIBLE" : "OPEN_DENIED";
 
       return {
@@ -361,13 +484,28 @@ export async function resolveEntryForUser(
   now: Date = new Date()
 ): Promise<EntryDecision> {
   const rounds = await loadRounds(concertId);
-  const [ctx, availability] = await Promise.all([
+  const [ctx, availability, quotaUsage] = await Promise.all([
     rounds.length > 0
       ? loadUserRoundContext(userId, concertId, now)
       : Promise.resolve(NO_ROUND_CONTEXT),
     getConcertAvailability(concertId),
+    loadRoundQuotaUsage(rounds, now),
   ]);
-  return resolveRoundEntry(rounds, ctx, now, { soldOut: availability.soldOut });
+  return resolveRoundEntry(rounds, ctx, now, { soldOut: availability.soldOut, quotaUsage });
+}
+
+// ยอดที่นั่งที่ผูกพันแล้วของ "รอบที่ตั้งโควต้า" (รอบไม่ตั้งโควต้าไม่นับ — ไม่แตะ DB เพิ่มให้คอนเสิร์ตแบบเดิม)
+//   ใช้ทั้งประตูคิว/จอง (resolveEntryForUser) และ API ไทม์ไลน์รอบ → ตัวเลขเดียวกันทั้งสองที่
+//   นี่เป็นแค่ "fast-reject" นอก transaction — ชั้นที่กัน race จริงยังอยู่ใน reserveSeatsForOrder (lock ต่อรอบ)
+export async function loadRoundQuotaUsage(
+  rounds: RoundLike[],
+  now: Date = new Date()
+): Promise<RoundQuotaUsage> {
+  const quotaRounds = rounds.filter((r) => r.seatQuota != null && r.seatQuota > 0);
+  const entries = await Promise.all(
+    quotaRounds.map(async (r) => [r.id, await countRoundSeatsCommitted(r.id, now)] as const)
+  );
+  return Object.fromEntries(entries);
 }
 
 // นับที่นั่งที่ "ผูกพันแล้ว" ในรอบนี้ (จ่ายแล้ว + ค้างจ่ายที่ยังไม่หมดอายุ) — ใช้คุมโควต้ารอบ

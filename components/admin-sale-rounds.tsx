@@ -62,12 +62,20 @@ function toLocalInput(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+export type SaleWindowView = { saleStartAt: string; saleEndAt: string };
+
 export function AdminSaleRounds({
   concertId,
   rounds,
+  saleWindow,
+  windowWarning,
 }: {
   concertId: string;
   rounds: AdminRoundView[];
+  // ช่วงขายของคอนเสิร์ต — พรีเซ็ตใช้เป็น "รอบทั่วไป" และโชว์พรีวิวให้แอดมินเห็นก่อนกด
+  saleWindow: SaleWindowView;
+  // รอบที่ยื่นออกนอกช่วงขาย (คำนวณฝั่ง server ด้วย roundsOutsideSaleWindow) — null = ไม่มี
+  windowWarning: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -132,8 +140,20 @@ export function AdminSaleRounds({
         </Button>
       </div>
 
+      {/* รอบที่อยู่นอกช่วงขาย = ไม่มีใครกดถึง (หน้าเว็บโชว์ปุ่มเข้าคิวเฉพาะในช่วงขาย) — เตือนให้แก้ก่อนถึงวันจริง */}
+      {windowWarning && (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning"
+        >
+          {windowWarning}
+        </p>
+      )}
+
       {/* ทางลัดที่ผู้จัดใช้จริงเกือบทุกงาน: สมาชิกกดก่อน N วัน แล้วต่อด้วยรอบทั่วไป */}
-      {rounds.length === 0 && <StandardRoundsForm concertId={concertId} busy={busy} run={run} />}
+      {rounds.length === 0 && (
+        <StandardRoundsForm concertId={concertId} busy={busy} run={run} saleWindow={saleWindow} />
+      )}
 
       {open && (
         <form
@@ -400,36 +420,60 @@ function StandardRoundsForm({
   concertId,
   busy,
   run,
+  saleWindow,
 }: {
   concertId: string;
   busy: boolean;
   run: (fn: () => Promise<{ ok: boolean; message?: string; error?: string }>) => Promise<void>;
+  saleWindow: SaleWindowView;
 }) {
-  const [startAt, setStartAt] = useState(() =>
-    toLocalInput(new Date(Date.now() + 24 * 60 * 60 * 1000))
-  );
   const [leadDays, setLeadDays] = useState(3);
   const [memberMax, setMemberMax] = useState("");
+  const [memberQuota, setMemberQuota] = useState("");
+
+  // ช่วงขายเดิมของคอนเสิร์ต = รอบทั่วไป · รอบสมาชิก = ก่อนหน้านั้น N วัน (server คำนวณซ้ำด้วย planStandardRounds)
+  const saleStart = new Date(saleWindow.saleStartAt);
+  const saleEnd = new Date(saleWindow.saleEndAt);
+  const memberStart = new Date(saleStart.getTime() - leadDays * 24 * 60 * 60 * 1000);
+  // ถึงเวลาเริ่มขายไปแล้ว → รอบสมาชิกที่ "มาก่อน" จะอยู่ในอดีตทั้งรอบ — บอกให้เลื่อนก่อน ไม่ให้กดเปล่า ๆ
+  const saleAlreadyStarted = saleStart.getTime() <= Date.now();
 
   return (
     <div className="mb-4 rounded-xl border border-brand-500/25 bg-brand-500/5 p-4">
       <p className="font-display text-sm font-semibold text-fg">ตั้งรอบมาตรฐาน (สมาชิกกดก่อน)</p>
       <p className="mb-3 text-xs text-fg-faint">
-        สร้าง 2 รอบให้อัตโนมัติ: รอบสมาชิกเปิดก่อน แล้วต่อด้วยรอบทั่วไปทันทีเมื่อครบกำหนด
+        ใช้ช่วงขายที่ตั้งไว้เป็น &ldquo;รอบทั่วไป&rdquo; แล้วเปิดรอบสมาชิกก่อนหน้านั้น —
+        ขายไม่หมดในรอบสมาชิก ที่นั่งที่เหลือขายต่อรอบทั่วไปเอง · หมดตั้งแต่รอบสมาชิก ระบบประกาศบัตรหมดและรอบทั่วไปไม่เปิด
       </p>
+
+      {/* พรีวิวไทม์ไลน์ให้เห็นก่อนกด — แอดมินไม่ต้องคำนวณเวลาต่อกันเอง */}
+      <dl className="mb-3 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+        <dt className="text-fg-faint">รอบสมาชิก</dt>
+        <dd className="text-fg">
+          {dt.format(memberStart)} – {dt.format(saleStart)}
+        </dd>
+        <dt className="text-fg-faint">รอบทั่วไป</dt>
+        <dd className="text-fg">
+          {dt.format(saleStart)} – {dt.format(saleEnd)}{" "}
+          <span className="text-xs text-fg-faint">(= ช่วงขายเดิม)</span>
+        </dd>
+      </dl>
+
+      {saleAlreadyStarted ? (
+        <p className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          คอนเสิร์ตนี้ถึงเวลาเริ่มขายแล้ว ({dt.format(saleStart)}) — รอบสมาชิกต้องมาก่อนช่วงขาย
+          ให้เลื่อน &ldquo;เริ่มขาย&rdquo; ในหน้าแก้ไขคอนเสิร์ตไปเป็นอนาคตก่อน หรือเพิ่มรอบเองด้วย &ldquo;+ เพิ่มรอบ&rdquo;
+        </p>
+      ) : (
+        <p className="mb-3 text-xs text-fg-faint">
+          ระบบจะเลื่อน &ldquo;เริ่มขาย&rdquo; ของคอนเสิร์ตมาเป็น {dt.format(memberStart)} ให้ ปุ่มเข้าคิวจึงโผล่ตั้งแต่รอบสมาชิก
+          (คนที่ไม่ใช่สมาชิกจะเห็นว่ารอบทั่วไปเริ่มเมื่อไร)
+        </p>
+      )}
 
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-sm">
-          <span className="mb-1 block text-fg-dim">รอบสมาชิกเริ่ม</span>
-          <Input
-            type="datetime-local"
-            value={startAt}
-            onChange={(e) => setStartAt(e.target.value)}
-            className="min-w-52"
-          />
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-fg-dim">กดก่อนรอบทั่วไป</span>
+          <span className="mb-1 block text-fg-dim">สมาชิกกดก่อนรอบทั่วไป</span>
           <select
             value={leadDays}
             onChange={(e) => setLeadDays(Number(e.target.value))}
@@ -455,16 +499,28 @@ function StandardRoundsForm({
             className="w-44"
           />
         </label>
+        <label className="text-sm">
+          <span className="mb-1 block text-fg-dim">โควต้าที่นั่งรอบสมาชิก</span>
+          <Input
+            type="number"
+            min={1}
+            value={memberQuota}
+            onChange={(e) => setMemberQuota(e.target.value)}
+            placeholder="เว้นว่าง = ไม่จำกัด"
+            className="w-44"
+          />
+        </label>
         <Button
           size="sm"
           loading={busy}
+          disabled={saleAlreadyStarted}
           onClick={() =>
             run(() =>
               createStandardRounds({
                 concertId,
-                memberStartAt: new Date(startAt).toISOString(),
                 leadDays,
                 memberMaxTickets: memberMax ? Number(memberMax) : null,
+                memberSeatQuota: memberQuota ? Number(memberQuota) : null,
               })
             )
           }

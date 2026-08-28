@@ -11,7 +11,7 @@ import {
   describeRounds,
   resolveRoundEntry,
   entryDenyMessage,
-  countRoundSeatsCommitted,
+  loadRoundQuotaUsage,
   AUDIENCE_LABEL,
   DENY_MESSAGE,
   type UserRoundContext,
@@ -46,26 +46,17 @@ export async function GET(
   const userId = (session?.user as { id?: string } | undefined)?.id ?? null;
 
   const now = new Date();
-  const [ctx, availability] = await Promise.all([
+  // ยอดโควต้าต่อรอบโหลดจาก helper เดียวกับประตูคิว (resolveEntryForUser) → หน้าเว็บกับด่านเห็นเลขเดียวกัน
+  const [ctx, availability, quotaUsage] = await Promise.all([
     userId ? loadUserRoundContext(userId, concertId, now) : Promise.resolve(GUEST_CTX),
     getConcertAvailability(concertId),
+    loadRoundQuotaUsage(rounds, now),
   ]);
   const codes = userId ? await preRegistrationCodes(userId, concertId) : {};
 
   const soldOut = availability.soldOut;
-  const described = describeRounds(rounds, ctx, now, { soldOut });
-  const entry = resolveRoundEntry(rounds, ctx, now, { soldOut });
-
-  // จำนวนที่นั่งที่ผูกพันแล้วต่อรอบ — โชว์ความคืบหน้าโควต้าเฉพาะรอบที่ตั้งโควต้าไว้
-  //   (รอบมีไม่กี่รอบต่อคอนเสิร์ต → นับทีละรอบอ่านง่ายกว่า groupBy แล้ว map กลับ)
-  const quotaRounds = rounds.filter((r) => r.seatQuota != null && r.seatQuota > 0);
-  const soldByRound = new Map<string, number>(
-    await Promise.all(
-      quotaRounds.map(
-        async (r) => [r.id, await countRoundSeatsCommitted(r.id, now)] as [string, number]
-      )
-    )
-  );
+  const described = describeRounds(rounds, ctx, now, { soldOut, quotaUsage });
+  const entry = resolveRoundEntry(rounds, ctx, now, { soldOut, quotaUsage });
 
   return NextResponse.json({
     hasRounds: true,
@@ -102,7 +93,7 @@ export async function GET(
       unlocked: d.unlocked,
       maxTicketsPerUser: d.round.maxTicketsPerUser,
       seatQuota: d.round.seatQuota,
-      seatsTaken: d.round.seatQuota ? (soldByRound.get(d.round.id) ?? 0) : null,
+      seatsTaken: d.round.seatQuota ? (quotaUsage[d.round.id] ?? 0) : null,
     })),
   });
 }

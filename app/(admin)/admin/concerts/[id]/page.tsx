@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { updateConcertStatus } from "@/app/actions/concert";
 import { publicStatusHint } from "@/lib/concert-display";
 import { AdminSaleRounds, type AdminRoundView } from "@/components/admin-sale-rounds";
+import { roundsOutsideSaleWindow } from "@/lib/sale-round";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +68,13 @@ export default async function AdminConcertDetailPage({
     eventAt: concert.eventAt,
     zoneCount: concert.zones.length,
   });
+
+  // รอบที่ยื่นออกนอกช่วงขาย = ช่วงนั้นไม่มีใครกดถึง (หน้าเว็บโชว์ปุ่มเข้าคิวเฉพาะในช่วงขาย) — เตือนแอดมิน
+  const outside = roundsOutsideSaleWindow(concert, concert.saleRounds);
+  const windowWarning =
+    outside.length > 0
+      ? `รอบ ${outside.map((r) => `"${r.name}"`).join(", ")} อยู่นอกช่วงขาย (${formatThaiDate(concert.saleStartAt)} – ${formatThaiDate(concert.saleEndAt)}) — ช่วงที่หลุดออกไปไม่มีใครกดบัตรได้ ให้แก้ "เริ่มขาย/ปิดขาย" ในหน้าแก้ไขคอนเสิร์ต หรือลบรอบแล้วตั้งใหม่`
+      : null;
 
   const rounds: AdminRoundView[] = concert.saleRounds.map((r) => ({
     id: r.id.toString(),
@@ -194,7 +202,15 @@ export default async function AdminConcertDetailPage({
           </div>
         )}
 
-        <AdminSaleRounds concertId={concert.id.toString()} rounds={rounds} />
+        <AdminSaleRounds
+          concertId={concert.id.toString()}
+          rounds={rounds}
+          saleWindow={{
+            saleStartAt: concert.saleStartAt.toISOString(),
+            saleEndAt: concert.saleEndAt.toISOString(),
+          }}
+          windowWarning={windowWarning}
+        />
       </main>
     </>
   );
